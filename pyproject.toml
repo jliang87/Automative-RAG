@@ -1,0 +1,76 @@
+[tool.poetry]
+name = "auto-specs-rag"
+version = "0.1.0"
+description = "Automotive Specifications RAG System with Late Interaction Retrieval and GPU Acceleration"
+authors = ["Your Name <your.email@example.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = ">=3.10,<3.11"
+langchain = "^0.1.8"
+langchain-community = "^0.0.19"
+langchain-openai = "^0.0.6"
+langchainhub = "^0.1.14"
+langchain-core = "^0.1.16"
+pydantic = "^2.5.2"
+pydantic-settings = "^2.1.0"
+fastapi = "^0.109.0"
+uvicorn = {extras = ["standard"], version = "^0.25.0"}
+streamlit = "^1.30.0"
+qdrant-client = "^1.7.0"
+sentence-transformers = "^2.3.1"
+torch = {version = "^2.1.2", extras = ["cuda"]}
+transformers = "^4.36.2"
+pytube = "^15.0.0"
+yt-dlp = "^2023.11.16"  # For Bilibili and enhanced YouTube downloading
+python-dotenv = "^1.0.0"
+pytest = "^7.4.3"
+colbert-ai = "^0.2.19"
+pypdf = "^3.17.2"
+faiss-cpu = "^1.7.4"
+tqdm = "^4.66.1"
+ffmpeg-python = "^0.2.0"
+moviepy = "^1.0.3"
+httpx = "^0.26.0"
+python-multipart = "^0.0.6"
+deepseek-ai = "^0.11.1"
+beautifulsoup4 = "^4.12.2"
+tiktoken = "^0.5.2"
+openai-whisper = "^20231117"  # GPU-accelerated transcription
+paddlepaddle-gpu = "^2.5.2"  # GPU-accelerated OCR
+paddleocr = "^2.7.0"  # OCR for PDFs
+camelot-py = "^0.11.0"  # Table extraction from PDFs
+opencv-python = "^4.8.1"  # Required for camelot
+ghostscript = "^0.7"  # Required for camelot
+pymupdf = "^1.23.5"  # PDF processing with GPU support
+
+[tool.poetry.group.dev.dependencies]
+black = "^23.12.0"
+isort = "^5.13.2"
+flake8 = "^6.1.0"
+pytest = "^7.4.3"
+pytest-cov = "^4.1.0"
+mypy = "^1.7.1"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.black]
+line-length = 88
+target-version = ["py310"]
+
+[tool.isort]
+profile = "black"
+line_length = 88
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
