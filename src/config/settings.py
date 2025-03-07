@@ -26,11 +26,11 @@ class Settings(BaseSettings):
     batch_size: int = 16  # Batch size for GPU operations
     
     # Model settings
-    embedding_model: str = "BAAI/bge-small-en-v1.5"
-    colbert_model: str = "colbert-ir/colbertv2.0"
+    embedding_model: str = "/root/bge-small-en-v1.5"
+    colbert_model: str = "/root/colbertv2.0"
     
     # LLM settings (local DeepSeek model)
-    deepseek_model: str = "deepseek-ai/deepseek-coder-6.7b-instruct"  # Path or HF model name
+    deepseek_model: str = "/root/DeepSeek-R1-Distill-Qwen-7B"  # Path or HF model name
     llm_use_4bit: bool = True  # 4-bit quantization (saves VRAM)
     llm_use_8bit: bool = False  # 8-bit quantization (alternative)
     llm_temperature: float = 0.1
@@ -53,7 +53,7 @@ class Settings(BaseSettings):
     # Chunking settings
     chunk_size: int = 1000
     chunk_overlap: int = 200
-    
+
     # Embedding function
     @property
     def embedding_function(self) -> Callable:
