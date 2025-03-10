@@ -16,9 +16,9 @@ The system now uses a local DeepSeek model for inference instead of relying on t
 
 The system supports various DeepSeek models including:
 
-- `deepseek-ai/deepseek-coder-6.7b-instruct` (recommended balance of performance/VRAM)
-- `deepseek-ai/deepseek-coder-1.3b-instruct` (for lower VRAM requirements)
-- `deepseek-ai/deepseek-coder-33b-instruct` (highest quality, requires >24GB VRAM)
+- `deepseek-ai/DeepSeek-R1-Distill-Qwen-7B` (recommended balance of performance/VRAM)
+- `deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B` (for lower VRAM requirements)
+- `deepseek-ai/DeepSeek-R1-Distill-Qwen-32B` (highest quality, requires >24GB VRAM)
 
 ## Hardware Requirements
 
@@ -44,7 +44,7 @@ You can configure the local LLM through the `.env` file or environment variables
 
 ```
 # Model Selection
-DEEPSEEK_MODEL=deepseek-ai/deepseek-coder-6.7b-instruct
+DEEPSEEK_MODEL=deepseek-ai/DeepSeek-R1-Distill-Qwen-7B
 
 # Quantization Options
 LLM_USE_4BIT=true  # Enable 4-bit quantization
@@ -110,7 +110,7 @@ from src.core.local_llm import LocalDeepSeekLLM
 
 # Initialize with GPU support
 llm = LocalDeepSeekLLM(
-    model_name="deepseek-ai/deepseek-coder-6.7b-instruct",
+    model_name="deepseek-ai/DeepSeek-R1-Distill-Qwen-7B",
     device="cuda:0",
     temperature=0.1,
     max_tokens=512,

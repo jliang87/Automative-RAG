@@ -196,7 +196,7 @@ def test_llm_info_endpoint(test_client: TestClient):
     with patch("src.api.dependencies.get_local_llm") as mock_get_llm:
         # Configure mock
         mock_llm = MagicMock()
-        mock_llm.model_name = "deepseek-ai/deepseek-coder-6.7b-instruct"
+        mock_llm.model_name = "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B"
         mock_llm.device = "cuda:0"
         mock_llm.temperature = 0.1
         mock_llm.max_tokens = 512
@@ -216,7 +216,7 @@ def test_llm_info_endpoint(test_client: TestClient):
         # Verify response
         assert response.status_code == 200
         data = response.json()
-        assert data["model_name"] == "deepseek-ai/deepseek-coder-6.7b-instruct"
+        assert data["model_name"] == "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B"
         assert data["device"] == "cuda:0"
         assert data["temperature"] == 0.1
         assert data["max_tokens"] == 512

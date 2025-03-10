@@ -25,7 +25,7 @@ class LocalDeepSeekLLM:
 
     def __init__(
             self,
-            model_name: str = "deepseek-ai/deepseek-coder-6.7b-instruct",
+            model_name: str = "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B",
             device: Optional[str] = None,
             temperature: float = 0.1,
             max_tokens: int = 512,

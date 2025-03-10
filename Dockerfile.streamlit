@@ -25,6 +25,10 @@ WORKDIR /app
 # Copy pyproject.toml and poetry.lock
 COPY pyproject.toml poetry.lock* ./
 
+# Copy .env.example and rename to .env if .env doesn't exist
+COPY .env.example ./.env.example
+RUN if [ ! -f .env ]; then cp .env.example .env; fi
+
 # Install dependencies
 RUN poetry config virtualenvs.create false \
     && poetry install --no-interaction --no-ansi --no-root --no-dev

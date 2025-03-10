@@ -4,73 +4,86 @@ from typing import Callable, Dict, List, Optional, Union
 import torch
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 class Settings(BaseSettings):
     # API settings
-    api_key: str = "default-api-key"
-    api_auth_enabled: bool = True
+    api_key: str = os.getenv("API_KEY", "default-api-key")
+    api_auth_enabled: bool = os.getenv("API_AUTH_ENABLED", "true").lower() == "true"
 
     # Server settings
-    host: str = "0.0.0.0"
-    port: int = 8000
+    host: str = os.getenv("HOST", "0.0.0.0")
+    port: int = int(os.getenv("PORT", "8000"))
 
     # Qdrant settings
-    qdrant_host: str = "localhost"
-    qdrant_port: int = 6333
-    qdrant_collection: str = "automotive_specs"
+    qdrant_host: str = os.getenv("QDRANT_HOST", "localhost")
+    qdrant_port: int = int(os.getenv("QDRANT_PORT", "6333"))
+    qdrant_collection: str = os.getenv("QDRANT_COLLECTION", "automotive_specs")
 
     # GPU settings
-    device: str = "cuda:0" if torch.cuda.is_available() else "cpu"
-    use_fp16: bool = True
-    batch_size: int = 16  # Batch size for GPU operations
+    device: str = os.getenv("DEVICE", "cuda:0" if torch.cuda.is_available() else "cpu")
+    use_fp16: bool = os.getenv("USE_FP16", "true").lower() == "true"
+    batch_size: int = int(os.getenv("BATCH_SIZE", "16"))
 
-    # Model settings - can be HuggingFace IDs or local paths
-    embedding_model: str = "BAAI/bge-small-en-v1.5"
-    colbert_model: str = "colbert-ir/colbertv2.0"
+    # Model settings - these can be HuggingFace IDs or local paths
+    embedding_model: str = os.getenv("EMBEDDING_MODEL", "/app/models/embeddings")
+    colbert_model: str = os.getenv("COLBERT_MODEL", "/app/models/colbert")
 
     # LLM settings (local DeepSeek model)
-    deepseek_model: str = "deepseek-ai/deepseek-coder-6.7b-instruct"  # Path or HF model name
-    llm_use_4bit: bool = True  # 4-bit quantization (saves VRAM)
-    llm_use_8bit: bool = False  # 8-bit quantization (alternative)
-    llm_temperature: float = 0.1
-    llm_max_tokens: int = 512
+    deepseek_model: str = os.getenv("DEEPSEEK_MODEL", "/app/models/llm")
+    llm_use_4bit: bool = os.getenv("LLM_USE_4BIT", "true").lower() == "true"
+    llm_use_8bit: bool = os.getenv("LLM_USE_8BIT", "false").lower() == "true"
+    llm_temperature: float = float(os.getenv("LLM_TEMPERATURE", "0.1"))
+    llm_max_tokens: int = int(os.getenv("LLM_MAX_TOKENS", "512"))
 
     # Whisper settings for YouTube transcription
-    whisper_model_size: str = "medium"  # tiny, base, small, medium, large
-    whisper_model_path: Optional[str] = None  # Local path to Whisper model
-    use_youtube_captions: bool = True
-    use_whisper_as_fallback: bool = True
+    whisper_model_size: str = os.getenv("WHISPER_MODEL_SIZE", "medium")
+    whisper_model_path: Optional[str] = os.getenv("WHISPER_MODEL_PATH", None)
+    use_youtube_captions: bool = os.getenv("USE_YOUTUBE_CAPTIONS", "true").lower() == "true"
+    use_whisper_as_fallback: bool = os.getenv("USE_WHISPER_AS_FALLBACK", "true").lower() == "true"
 
     # PDF OCR settings
-    use_pdf_ocr: bool = True
-    ocr_languages: str = "eng"
+    use_pdf_ocr: bool = os.getenv("USE_PDF_OCR", "true").lower() == "true"
+    ocr_languages: str = os.getenv("OCR_LANGUAGES", "eng")
 
     # Retrieval settings
-    retriever_top_k: int = 20
-    reranker_top_k: int = 5
-    colbert_batch_size: int = 16
+    retriever_top_k: int = int(os.getenv("RETRIEVER_TOP_K", "20"))
+    reranker_top_k: int = int(os.getenv("RERANKER_TOP_K", "5"))
+    colbert_batch_size: int = int(os.getenv("COLBERT_BATCH_SIZE", "16"))
 
     # Chunking settings
-    chunk_size: int = 1000
-    chunk_overlap: int = 200
+    chunk_size: int = int(os.getenv("CHUNK_SIZE", "1000"))
+    chunk_overlap: int = int(os.getenv("CHUNK_OVERLAP", "200"))
 
     # Data and model paths
-    data_dir: str = "data"
-    upload_dir: str = "data/uploads"
-    models_dir: str = "models"
-    embedding_cache_dir: str = "models/embeddings"
-    llm_cache_dir: str = "models/llm"
-    whisper_cache_dir: str = "models/whisper"
+    data_dir: str = os.getenv("DATA_DIR", "data")
+    upload_dir: str = os.getenv("UPLOAD_DIR", "data/uploads")
+    models_dir: str = os.getenv("MODELS_DIR", "models")
+    embedding_cache_dir: str = os.getenv("EMBEDDING_CACHE_DIR", "models/embeddings")
+    llm_cache_dir: str = os.getenv("LLM_CACHE_DIR", "models/llm")
+    whisper_cache_dir: str = os.getenv("WHISPER_CACHE_DIR", "models/whisper")
 
     # Embedding function
     @property
     def embedding_function(self) -> Callable:
+        # Get the complete embedding model path
+        embedding_model_path = self.embedding_model
+
+        # Check if the path is a directory without a model config
+        if os.path.isdir(embedding_model_path) and not os.path.exists(
+                os.path.join(embedding_model_path, "config.json")):
+            # Assume it's a directory and append default model name
+            embedding_model_path = os.path.join(embedding_model_path, "bge-small-en-v1.5")
+
         # Check if embedding_model is a local path
-        if os.path.exists(self.embedding_model):
+        if os.path.exists(embedding_model_path):
             # Use local model path
             return HuggingFaceEmbeddings(
-                model_name=self.embedding_model,
+                model_name=embedding_model_path,
                 model_kwargs={"device": self.device},
                 encode_kwargs={"batch_size": self.batch_size, "normalize_embeddings": True},
                 cache_folder=self.embedding_cache_dir
@@ -95,8 +108,8 @@ class Settings(BaseSettings):
         os.makedirs(self.whisper_cache_dir, exist_ok=True)
 
         # Set environment variables to control model caching
-        os.environ["TRANSFORMERS_CACHE"] = os.path.join(self.models_dir, "cache")
-        os.environ["HF_HOME"] = os.path.join(self.models_dir, "hub")
+        os.environ["TRANSFORMERS_CACHE"] = os.getenv("TRANSFORMERS_CACHE", os.path.join(self.models_dir, "cache"))
+        os.environ["HF_HOME"] = os.getenv("HF_HOME", os.path.join(self.models_dir, "hub"))
 
     # GPU configuration
     def get_gpu_info(self) -> Dict[str, any]:

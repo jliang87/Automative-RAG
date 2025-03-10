@@ -46,6 +46,10 @@ WORKDIR /app
 # Copy pyproject.toml and poetry.lock
 COPY pyproject.toml poetry.lock* ./
 
+# Copy .env.example and rename to .env if .env doesn't exist
+COPY .env.example ./.env.example
+RUN if [ ! -f .env ]; then cp .env.example .env; fi
+
 # Install dependencies with GPU support
 RUN poetry config virtualenvs.create false \
     && poetry install --no-interaction --no-ansi --no-root --no-dev
@@ -55,23 +59,12 @@ RUN pip install --no-cache-dir bitsandbytes==0.43.0 accelerate==0.28.0 \
     && pip install --no-cache-dir paddlepaddle-gpu==2.5.2 --index-url https://mirror.baidu.com/pypi/simple
 
 # Create necessary directories
-RUN mkdir -p /app/data/youtube /app/data/bilibili /app/data/uploads /app/models/cache /app/models/hub
+RUN mkdir -p /app/data/youtube /app/data/bilibili /app/data/uploads \
+    /app/models/cache /app/models/hub \
+    /app/models/embeddings /app/models/colbert /app/models/llm /app/models/whisper
 
-# Download and cache models
-RUN python -c "import torch; print(f'PyTorch CUDA available: {torch.cuda.is_available()}')" \
-    && python -c "from transformers import AutoTokenizer; AutoTokenizer.from_pretrained('colbert-ir/colbertv2.0', use_fast=True)" \
-    && python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('BAAI/bge-small-en-v1.5')" \
-    && python -c "import whisper; whisper.load_model('base')"
-
-# Download DeepSeek model
-RUN python -c "from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig; \
-    import torch; \
-    model_name='deepseek-ai/deepseek-coder-6.7b-instruct'; \
-    print(f'Downloading {model_name}...'); \
-    tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True); \
-    quantization_config = BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_compute_dtype=torch.float16); \
-    model = AutoModelForCausalLM.from_pretrained(model_name, quantization_config=quantization_config, device_map='auto', trust_remote_code=True); \
-    print('Model downloaded successfully!')"
+# Run a script to check if models exist at specified paths
+COPY ./scripts/check_models.py /app/scripts/check_models.py
 
 # Copy the rest of the application
 COPY . .
