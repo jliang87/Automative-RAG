@@ -1,56 +1,62 @@
 [tool.poetry]
-name = "auto-specs-rag"
+name = "automotive_rag"
+packages = [{ include = "*", from = "src" }] 
 version = "0.1.0"
-description = "Automotive Specifications RAG System with Late Interaction Retrieval and GPU Acceleration"
+description = "Automotive Specifications RAG System with Local LLM and GPU Acceleration"
 authors = ["Your Name <your.email@example.com>"]
-readme = "README.md"
+readme = "readme.md"
 
 [tool.poetry.dependencies]
 python = ">=3.10,<3.11"
-langchain = "^0.1.8"
-langchain-community = "^0.0.19"
-langchain-openai = "^0.0.6"
-langchainhub = "^0.1.14"
-langchain-core = "^0.1.16"
-pydantic = "^2.5.2"
-pydantic-settings = "^2.1.0"
-fastapi = "^0.109.0"
-uvicorn = {extras = ["standard"], version = "^0.25.0"}
-streamlit = "^1.30.0"
-qdrant-client = "^1.7.0"
-sentence-transformers = "^2.3.1"
-torch = {version = "^2.1.2", extras = ["cuda"]}
-transformers = "^4.36.2"
-pytube = "^15.0.0"
-yt-dlp = "^2023.11.16"  # For Bilibili and enhanced YouTube downloading
-python-dotenv = "^1.0.0"
-pytest = "^7.4.3"
-colbert-ai = "^0.2.19"
-pypdf = "^3.17.2"
-faiss-cpu = "^1.7.4"
-tqdm = "^4.66.1"
-ffmpeg-python = "^0.2.0"
-moviepy = "^1.0.3"
-httpx = "^0.26.0"
-python-multipart = "^0.0.6"
-deepseek-ai = "^0.11.1"
-beautifulsoup4 = "^4.12.2"
-tiktoken = "^0.5.2"
-openai-whisper = "^20231117"  # GPU-accelerated transcription
-paddlepaddle-gpu = "^2.5.2"  # GPU-accelerated OCR
-paddleocr = "^2.7.0"  # OCR for PDFs
-camelot-py = "^0.11.0"  # Table extraction from PDFs
-opencv-python = "^4.8.1"  # Required for camelot
-ghostscript = "^0.7"  # Required for camelot
-pymupdf = "^1.23.5"  # PDF processing with GPU support
+langchain = "==0.3.20"
+langchain-community = ">=0.3.19,<0.4.0"
+langchain-core = "*"
+pydantic = "*"
+pydantic-settings = "*"
+fastapi = "*"
+uvicorn = {extras = ["standard"], version = "*" }
+streamlit = "*"
+qdrant-client = "*"
+sentence-transformers = "*"
+torch = {version = "*", extras = ["cuda"]}
+transformers = "*"
+pytube = "*"
+yt-dlp = "*"  # For Bilibili and enhanced YouTube downloading
+python-dotenv = "*"
+pytest = "*"
+colbert-ai = "*"
+pypdf = "*"
+faiss-cpu = "*"
+tqdm = "*"
+ffmpeg-python = "*"
+moviepy = "*"
+httpx = "*"
+python-multipart = "*"
+deepseek-ai = "*"
+beautifulsoup4 = "*"
+tiktoken = "*"
+openai-whisper = "*"  # GPU-accelerated transcription
+paddlepaddle-gpu = "*"  # GPU-accelerated OCR
+paddleocr = "*"  # OCR for PDFs
+camelot-py = "*"  # Table extraction from PDFs
+opencv-python = "*"  # Required for camelot
+ghostscript = "*"  # Required for camelot
+pymupdf = "*"  # PDF processing with GPU support
+bitsandbytes = "*"
+accelerate = "*"
 
 [tool.poetry.group.dev.dependencies]
-black = "^23.12.0"
-isort = "^5.13.2"
-flake8 = "^6.1.0"
-pytest = "^7.4.3"
-pytest-cov = "^4.1.0"
-mypy = "^1.7.1"
+black = "*"
+isort = "*"
+flake8 = "*"
+pytest = "*"
+pytest-cov = "*"
+mypy = "*"
+
+[[tool.poetry.source]]
+name = "tsinghua"
+url = "https://pypi.tuna.tsinghua.edu.cn/simple"
+priority = "primary"
 
 [build-system]
 requires = ["poetry-core"]
