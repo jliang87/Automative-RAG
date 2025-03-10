@@ -1,3 +1,70 @@
+## Quick Start
+
+### Standard Installation (Global Access)
+
+```bash
+# Make scripts executable
+chmod +x install.sh run_api.sh run_ui.sh download_models.sh
+
+# Install dependencies
+./install.sh
+
+# Download required models
+./download_models.sh
+
+# Run the application in two separate terminals
+./run_api.sh  # in one terminal
+./run_ui.sh   # in another terminal
+```
+
+### Installation in China (Where Hugging Face is blocked)
+
+If you're in a region where Hugging Face is blocked, use the China-specific download script:
+
+```bash
+# Make scripts executable
+chmod +x install.sh run_api.sh run_ui.sh download_models_cn.sh
+
+# Install dependencies using mirrors
+pip install -i https://mirror.baidu.com/pypi/simple/ -r requirements.txt
+
+# Download required models using China mirrors
+./download_models_cn.sh
+
+# Run the application in two separate terminals
+./run_api.sh  # in one terminal
+./run_ui.sh   # in another terminal
+```
+
+### Docker Installation
+
+For a containerized setup:
+
+```bash
+# Copy environment file and modify as needed
+cp .env.example .env
+
+# Edit .env with your preferred settings
+nano .env
+
+# Build and start the containers
+docker-compose up -d
+
+# Access the UI at http://localhost:8501
+# API runs on http://localhost:8000
+```
+
+## Model Configuration
+
+The system uses the following AI models:
+
+- **Embedding Model**: BAAI/bge-small-en-v1.5
+- **Retrieval Model**: colbert-ir/colbertv2.0
+- **Language Model**: deepseek-ai/DeepSeek-R1-Distill-Qwen-7B
+- **Speech-to-Text**: OpenAI Whisper (medium)
+
+You can configure model paths and other settings in the `.env` file.
+
 # GPU Acceleration in Automotive Specs RAG
 
 This document outlines the GPU acceleration capabilities in the Automotive Specs RAG system and how to take full advantage of them.
@@ -123,12 +190,4 @@ documents = pdf_loader.process_pdf(
     file_path="path/to/document.pdf",
     extract_tables=True  # Extract tables using GPU acceleration
 )
-```
-## To Get started 
-```shell
-chmod +x install.sh run_api.sh run_ui.sh download_models.sh
-./install.sh
-./download_models.sh
-./run_api.sh  # in one terminal
-./run_ui.sh   # in another terminal
 ```
