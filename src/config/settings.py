@@ -10,64 +10,79 @@ class Settings(BaseSettings):
     # API settings
     api_key: str = "default-api-key"
     api_auth_enabled: bool = True
-    
+
     # Server settings
     host: str = "0.0.0.0"
     port: int = 8000
-    
+
     # Qdrant settings
     qdrant_host: str = "localhost"
     qdrant_port: int = 6333
     qdrant_collection: str = "automotive_specs"
-    
+
     # GPU settings
     device: str = "cuda:0" if torch.cuda.is_available() else "cpu"
     use_fp16: bool = True
     batch_size: int = 16  # Batch size for GPU operations
-    
-    # Model settings
-    embedding_model: str = "/root/bge-small-en-v1.5"
-    colbert_model: str = "/root/colbertv2.0"
-    
+
+    # Model settings - can be HuggingFace IDs or local paths
+    embedding_model: str = "BAAI/bge-small-en-v1.5"
+    colbert_model: str = "colbert-ir/colbertv2.0"
+
     # LLM settings (local DeepSeek model)
-    deepseek_model: str = "/root/DeepSeek-R1-Distill-Qwen-7B"  # Path or HF model name
+    deepseek_model: str = "deepseek-ai/deepseek-coder-6.7b-instruct"  # Path or HF model name
     llm_use_4bit: bool = True  # 4-bit quantization (saves VRAM)
     llm_use_8bit: bool = False  # 8-bit quantization (alternative)
     llm_temperature: float = 0.1
     llm_max_tokens: int = 512
-    
+
     # Whisper settings for YouTube transcription
     whisper_model_size: str = "medium"  # tiny, base, small, medium, large
+    whisper_model_path: Optional[str] = None  # Local path to Whisper model
     use_youtube_captions: bool = True
     use_whisper_as_fallback: bool = True
-    
+
     # PDF OCR settings
     use_pdf_ocr: bool = True
     ocr_languages: str = "eng"
-    
+
     # Retrieval settings
     retriever_top_k: int = 20
     reranker_top_k: int = 5
     colbert_batch_size: int = 16
-    
+
     # Chunking settings
     chunk_size: int = 1000
     chunk_overlap: int = 200
 
+    # Data and model paths
+    data_dir: str = "data"
+    upload_dir: str = "data/uploads"
+    models_dir: str = "models"
+    embedding_cache_dir: str = "models/embeddings"
+    llm_cache_dir: str = "models/llm"
+    whisper_cache_dir: str = "models/whisper"
+
     # Embedding function
     @property
     def embedding_function(self) -> Callable:
-        return HuggingFaceEmbeddings(
-            model_name=self.embedding_model,
-            model_kwargs={"device": self.device},
-            encode_kwargs={"batch_size": self.batch_size, "normalize_embeddings": True},
-        )
-    
-    # Data paths
-    data_dir: str = "data"
-    upload_dir: str = "data/uploads"
-    models_dir: str = "models"  # Directory for downloaded models
-    
+        # Check if embedding_model is a local path
+        if os.path.exists(self.embedding_model):
+            # Use local model path
+            return HuggingFaceEmbeddings(
+                model_name=self.embedding_model,
+                model_kwargs={"device": self.device},
+                encode_kwargs={"batch_size": self.batch_size, "normalize_embeddings": True},
+                cache_folder=self.embedding_cache_dir
+            )
+        else:
+            # Use HuggingFace model ID
+            return HuggingFaceEmbeddings(
+                model_name=self.embedding_model,
+                model_kwargs={"device": self.device},
+                encode_kwargs={"batch_size": self.batch_size, "normalize_embeddings": True},
+            )
+
     # Ensure required directories exist
     def initialize_directories(self) -> None:
         os.makedirs(self.data_dir, exist_ok=True)
@@ -75,7 +90,14 @@ class Settings(BaseSettings):
         os.makedirs(os.path.join(self.data_dir, "youtube"), exist_ok=True)
         os.makedirs(os.path.join(self.data_dir, "bilibili"), exist_ok=True)
         os.makedirs(self.models_dir, exist_ok=True)
-    
+        os.makedirs(self.embedding_cache_dir, exist_ok=True)
+        os.makedirs(self.llm_cache_dir, exist_ok=True)
+        os.makedirs(self.whisper_cache_dir, exist_ok=True)
+
+        # Set environment variables to control model caching
+        os.environ["TRANSFORMERS_CACHE"] = os.path.join(self.models_dir, "cache")
+        os.environ["HF_HOME"] = os.path.join(self.models_dir, "hub")
+
     # GPU configuration
     def get_gpu_info(self) -> Dict[str, any]:
         """Get GPU information if available."""
@@ -83,7 +105,7 @@ class Settings(BaseSettings):
             "device": self.device,
             "available": torch.cuda.is_available()
         }
-        
+
         if torch.cuda.is_available():
             gpu_info.update({
                 "device_count": torch.cuda.device_count(),
@@ -93,9 +115,9 @@ class Settings(BaseSettings):
                 "memory_cached": f"{torch.cuda.memory_reserved(0) / 1024 ** 3:.2f} GB",
                 "max_memory": f"{torch.cuda.get_device_properties(0).total_memory / 1024 ** 3:.2f} GB",
             })
-            
+
         return gpu_info
-    
+
     # Model config
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

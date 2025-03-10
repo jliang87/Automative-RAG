@@ -124,3 +124,11 @@ documents = pdf_loader.process_pdf(
     extract_tables=True  # Extract tables using GPU acceleration
 )
 ```
+## To Get started 
+```shell
+chmod +x install.sh run_api.sh run_ui.sh download_models.sh
+./install.sh
+./download_models.sh
+./run_api.sh  # in one terminal
+./run_ui.sh   # in another terminal
+```

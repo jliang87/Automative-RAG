@@ -1,5 +1,6 @@
 import json
 import time
+import os
 from typing import Dict, List, Optional, Tuple, Union
 
 import torch
@@ -8,26 +9,29 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate, PromptTemplate
 from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline, BitsAndBytesConfig
 
+from src.config.settings import settings
+
 
 class LocalDeepSeekLLM:
     """
     Local DeepSeek LLM integration for RAG with GPU acceleration.
-    
+
     This class handles:
     1. Formatting contexts from retrieved documents
     2. Creating prompts with automotive context
     3. Generating responses with source attribution using local model
+    4. Loading models from local paths or Hugging Face
     """
 
     def __init__(
-        self,
-        model_name: str = "deepseek-ai/deepseek-coder-6.7b-instruct",
-        device: Optional[str] = None,
-        temperature: float = 0.1,
-        max_tokens: int = 512,
-        use_4bit: bool = True,
-        use_8bit: bool = False,
-        torch_dtype: Optional[torch.dtype] = None,
+            self,
+            model_name: str = "deepseek-ai/deepseek-coder-6.7b-instruct",
+            device: Optional[str] = None,
+            temperature: float = 0.1,
+            max_tokens: int = 512,
+            use_4bit: bool = True,
+            use_8bit: bool = False,
+            torch_dtype: Optional[torch.dtype] = None,
     ):
         """
         Initialize the local DeepSeek LLM with GPU support.
@@ -47,32 +51,40 @@ class LocalDeepSeekLLM:
         self.max_tokens = max_tokens
         self.use_4bit = use_4bit and self.device.startswith("cuda")
         self.use_8bit = use_8bit and self.device.startswith("cuda") and not self.use_4bit
-        
+
         # Set default torch dtype based on device
         if torch_dtype is None:
             self.torch_dtype = torch.float16 if self.device.startswith("cuda") else torch.float32
         else:
             self.torch_dtype = torch_dtype
-            
+
+        # Check if model_name is a local path
+        self.is_local_path = os.path.exists(model_name)
+        if self.is_local_path:
+            print(f"Using local model path: {model_name}")
+        else:
+            print(f"Using model from Hugging Face: {model_name}")
+
         # Initialize tokenizer and model
         self._load_model()
-        
+
         # Define prompt templates
         self.qa_prompt_template = self._create_qa_prompt_template()
 
     def _load_model(self):
         """Load the local DeepSeek model with appropriate configuration."""
         print(f"Loading DeepSeek model {self.model_name} on {self.device}...")
-        
+
         # Start timing
         start_time = time.time()
-        
+
         # Load tokenizer
         self.tokenizer = AutoTokenizer.from_pretrained(
             self.model_name,
-            trust_remote_code=True
+            trust_remote_code=True,
+            local_files_only=self.is_local_path
         )
-        
+
         # Configure quantization
         if self.use_4bit:
             print("Using 4-bit quantization")
@@ -89,7 +101,7 @@ class LocalDeepSeekLLM:
             )
         else:
             quantization_config = None
-        
+
         # Load model
         self.model = AutoModelForCausalLM.from_pretrained(
             self.model_name,
@@ -97,8 +109,9 @@ class LocalDeepSeekLLM:
             torch_dtype=self.torch_dtype,
             device_map=self.device,
             trust_remote_code=True,
+            local_files_only=self.is_local_path
         )
-        
+
         # Create generation pipeline
         self.pipe = pipeline(
             "text-generation",
@@ -109,7 +122,7 @@ class LocalDeepSeekLLM:
             temperature=self.temperature,
             repetition_penalty=1.1
         )
-        
+
         # Report loading time
         load_time = time.time() - start_time
         print(f"Model loaded in {load_time:.2f} seconds.")
@@ -122,7 +135,7 @@ class LocalDeepSeekLLM:
             String template for QA
         """
         template = """You are an automotive specifications expert assistant.
-        
+
 Your task is to help users find information about automotive specifications, features, and technical details.
 
 Use ONLY the following context to answer the question. If the context doesn't contain the answer, say you don't know and suggest what additional information might be needed.
@@ -140,7 +153,7 @@ When providing your answer, cite the specific sources (document titles or URLs) 
         return template
 
     def _format_documents_for_context(
-        self, documents: List[Tuple[Document, float]]
+            self, documents: List[Tuple[Document, float]]
     ) -> str:
         """
         Format retrieved documents into context for the prompt.
@@ -152,28 +165,28 @@ When providing your answer, cite the specific sources (document titles or URLs) 
             Formatted context string
         """
         context_parts = []
-        
+
         for i, (doc, score) in enumerate(documents):
             # Extract metadata for citation
             metadata = doc.metadata
             source_type = metadata.get("source", "unknown")
-            title = metadata.get("title", f"Document {i+1}")
-            
+            title = metadata.get("title", f"Document {i + 1}")
+
             # Format source information
             if source_type == "youtube":
-                source_info = f"Source {i+1}: YouTube - '{title}'"
+                source_info = f"Source {i + 1}: YouTube - '{title}'"
                 if "url" in metadata:
                     source_info += f" ({metadata['url']})"
             elif source_type == "pdf":
-                source_info = f"Source {i+1}: PDF - '{title}'"
+                source_info = f"Source {i + 1}: PDF - '{title}'"
             else:
-                source_info = f"Source {i+1}: {title}"
-                
+                source_info = f"Source {i + 1}: {title}"
+
             # Add manufacturer and model if available
             manufacturer = metadata.get("manufacturer")
             model = metadata.get("model")
             year = metadata.get("year")
-            
+
             if manufacturer or model or year:
                 source_info += " - "
                 if manufacturer:
@@ -182,18 +195,18 @@ When providing your answer, cite the specific sources (document titles or URLs) 
                     source_info += f" {model}"
                 if year:
                     source_info += f" ({year})"
-                    
+
             # Format content block
             content_block = f"{source_info}\n{doc.page_content}\n"
             context_parts.append(content_block)
-            
+
         return "\n\n".join(context_parts)
 
     def answer_query(
-        self,
-        query: str,
-        documents: List[Tuple[Document, float]],
-        metadata_filter: Optional[Dict[str, Union[str, List[str], int, List[int]]]] = None,
+            self,
+            query: str,
+            documents: List[Tuple[Document, float]],
+            metadata_filter: Optional[Dict[str, Union[str, List[str], int, List[int]]]] = None,
     ) -> str:
         """
         Answer a query using retrieved documents with local DeepSeek model.
@@ -208,32 +221,32 @@ When providing your answer, cite the specific sources (document titles or URLs) 
         """
         # Format documents into context
         context = self._format_documents_for_context(documents)
-        
+
         # Create prompt using template
         prompt = self.qa_prompt_template.format(
             context=context,
             question=query
         )
-        
+
         # Generate answer using local model
         start_time = time.time()
-        
+
         results = self.pipe(
             prompt,
             num_return_sequences=1,
         )
-        
+
         generation_time = time.time() - start_time
         print(f"Answer generated in {generation_time:.2f} seconds")
-        
+
         answer = results[0]["generated_text"]
         return answer
 
     def answer_query_with_sources(
-        self,
-        query: str,
-        documents: List[Tuple[Document, float]],
-        metadata_filter: Optional[Dict[str, Union[str, List[str], int, List[int]]]] = None,
+            self,
+            query: str,
+            documents: List[Tuple[Document, float]],
+            metadata_filter: Optional[Dict[str, Union[str, List[str], int, List[int]]]] = None,
     ) -> Tuple[str, List[Dict]]:
         """
         Answer a query with source information.
@@ -252,7 +265,7 @@ When providing your answer, cite the specific sources (document titles or URLs) 
             documents=documents,
             metadata_filter=metadata_filter,
         )
-        
+
         # Extract source information
         sources = []
         for doc, score in documents:
@@ -264,5 +277,38 @@ When providing your answer, cite the specific sources (document titles or URLs) 
                 "relevance_score": score,
             }
             sources.append(source)
-            
+
         return answer, sources
+
+    def get_model_info(self) -> Dict[str, any]:
+        """
+        Get information about the loaded model.
+
+        Returns:
+            Dictionary with model information
+        """
+        memory_info = {}
+
+        # Get GPU memory usage if available
+        if self.device.startswith("cuda") and torch.cuda.is_available():
+            device_id = int(self.device.split(":")[-1]) if ":" in self.device else 0
+            memory_allocated = torch.cuda.memory_allocated(device_id) / (1024 ** 3)
+            memory_reserved = torch.cuda.memory_reserved(device_id) / (1024 ** 3)
+
+            memory_info.update({
+                "memory_allocated_gb": f"{memory_allocated:.2f}",
+                "memory_reserved_gb": f"{memory_reserved:.2f}",
+            })
+
+        # Model configuration info
+        model_config = {
+            "model_name": self.model_name,
+            "is_local_path": self.is_local_path,
+            "device": self.device,
+            "temperature": self.temperature,
+            "max_tokens": self.max_tokens,
+            "quantization": "4-bit" if self.use_4bit else "8-bit" if self.use_8bit else "none",
+            "torch_dtype": str(self.torch_dtype),
+        }
+
+        return {**model_config, **memory_info}
