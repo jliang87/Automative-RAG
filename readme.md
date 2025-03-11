@@ -136,6 +136,103 @@ You should see something like:
   }
 }
 ```
+# Running Qdrant Locally (China-friendly)
+
+This guide explains how to run Qdrant vector database locally without Docker, with special support for users in China who may have difficulty accessing GitHub.
+
+## Using the Installation Script with Chinese Mirrors
+
+We provide a script that automates the installation and running of Qdrant, with support for Chinese mirrors:
+
+```bash
+# Make the script executable
+chmod +x install_qdrant.sh
+
+# Install Qdrant using Gitee mirror (best for China)
+./install_qdrant.sh install gitee
+
+# Alternatively, you can use other mirrors:
+# ./install_qdrant.sh install tsinghua  # Tsinghua University mirror
+# ./install_qdrant.sh install aliyun    # Aliyun mirror
+
+# Start Qdrant
+./install_qdrant.sh start
+```
+
+You can also set the mirror using an environment variable:
+```bash
+export QDRANT_MIRROR=gitee
+./install_qdrant.sh install
+```
+
+The script will:
+1. Download the Qdrant binary from your chosen mirror
+2. Create a basic configuration file
+3. Update your `.env` file to connect to the local Qdrant instance
+4. Provide a command to start the Qdrant server
+
+## Manual Installation for China Users
+
+If you prefer to install Qdrant manually:
+
+1. Download the appropriate binary from a mirror site:
+   - Gitee: https://gitee.com/mirrors/qdrant/releases/
+   - Or download through a proxy/VPN
+
+2. Extract the archive:
+   ```bash
+   tar -xzf qdrant-*.tar.gz
+   ```
+   
+3. Make the binary executable:
+   ```bash
+   chmod +x qdrant
+   ```
+
+4. Create a configuration file:
+   ```bash
+   mkdir -p config
+   cat > config/config.yaml << EOL
+   storage:
+     storage_path: ./data
+     
+   service:
+     http_port: 6333
+     grpc_port: 6334
+   EOL
+   ```
+
+5. Run Qdrant:
+   ```bash
+   ./qdrant --config config/config.yaml
+   ```
+
+6. Update your `.env` file to use localhost:
+   ```
+   QDRANT_HOST=localhost
+   QDRANT_PORT=6333
+   ```
+
+## Verifying Installation
+
+To verify that Qdrant is running correctly:
+
+```bash
+curl http://localhost:6333/cluster
+```
+
+You should see something like:
+```json
+{
+  "status": "ok",
+  "result": {
+    "status": "green",
+    ...
+  }
+}
+```
+
+You can now run your application and it will connect to the local Qdrant instance.
 
 You can now run your application and it will connect to the local Qdrant instance.
 

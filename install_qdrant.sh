@@ -1,5 +1,6 @@
 #!/bin/bash
 # Script to install and run Qdrant locally without Docker
+# With support for Chinese mirrors
 
 # Detect OS
 OS="$(uname -s)"
@@ -28,9 +29,14 @@ INSTALL_DIR="qdrant"
 mkdir -p $INSTALL_DIR
 
 # Set Qdrant version
-QDRANT_VERSION="v1.13.4"  # Change to latest version as needed
+QDRANT_VERSION="v1.7.4"  # Change to latest version as needed
 QDRANT_DATA_DIR="$INSTALL_DIR/data"
 QDRANT_CONFIG_DIR="$INSTALL_DIR/config"
+
+# Set mirror to use - options: github, gitee, tsinghua, aliyun
+# Change this to your preferred mirror, or set the QDRANT_MIRROR environment variable
+# Example: export QDRANT_MIRROR=gitee
+DEFAULT_MIRROR="gitee"  # Default to Gitee for China
 
 # Create data and config directories
 mkdir -p $QDRANT_DATA_DIR
@@ -40,26 +46,48 @@ mkdir -p $QDRANT_CONFIG_DIR
 download_qdrant() {
     echo "Downloading Qdrant $QDRANT_VERSION for $OS_TYPE/$ARCH_TYPE..."
 
+    # Choose mirror based on environment variable or default
+    MIRROR=${QDRANT_MIRROR:-$DEFAULT_MIRROR}
+
+    # Set base URL based on mirror
+    if [ "$MIRROR" = "gitee" ]; then
+        # Gitee mirror (China)
+        BASE_URL="https://gitee.com/mirrors/qdrant/releases/download/$QDRANT_VERSION"
+        echo "Using Gitee mirror for download"
+    elif [ "$MIRROR" = "tsinghua" ]; then
+        # Tsinghua mirror (China)
+        BASE_URL="https://mirrors.tuna.tsinghua.edu.cn/github-release/qdrant/qdrant/$QDRANT_VERSION"
+        echo "Using Tsinghua mirror for download"
+    elif [ "$MIRROR" = "aliyun" ]; then
+        # Aliyun mirror (China)
+        BASE_URL="https://mirrors.aliyun.com/github-release/qdrant/qdrant/releases/download/$QDRANT_VERSION"
+        echo "Using Aliyun mirror for download"
+    else
+        # Default GitHub
+        BASE_URL="https://github.com/qdrant/qdrant/releases/download/$QDRANT_VERSION"
+        echo "Using GitHub for download"
+    fi
+
     if [ "$OS_TYPE" = "linux" ]; then
         if [ "$ARCH_TYPE" = "x86_64" ]; then
-            DOWNLOAD_URL="https://github.com/qdrant/qdrant/releases/download/$QDRANT_VERSION/qdrant-linux-x86_64.tar.gz"
+            FILENAME="qdrant-linux-x86_64.tar.gz"
         elif [ "$ARCH_TYPE" = "aarch64" ]; then
-            DOWNLOAD_URL="https://github.com/qdrant/qdrant/releases/download/$QDRANT_VERSION/qdrant-linux-aarch64.tar.gz"
+            FILENAME="qdrant-linux-aarch64.tar.gz"
         else
             echo "Unsupported architecture: $ARCH_TYPE"
             exit 1
         fi
     elif [ "$OS_TYPE" = "macos" ]; then
         if [ "$ARCH_TYPE" = "x86_64" ]; then
-            DOWNLOAD_URL="https://github.com/qdrant/qdrant/releases/download/$QDRANT_VERSION/qdrant-macos-x86_64.tar.gz"
+            FILENAME="qdrant-macos-x86_64.tar.gz"
         elif [ "$ARCH_TYPE" = "aarch64" ]; then
-            DOWNLOAD_URL="https://github.com/qdrant/qdrant/releases/download/$QDRANT_VERSION/qdrant-macos-aarch64.tar.gz"
+            FILENAME="qdrant-macos-aarch64.tar.gz"
         else
             echo "Unsupported architecture: $ARCH_TYPE"
             exit 1
         fi
     elif [ "$OS_TYPE" = "windows" ]; then
-        echo "For Windows, please download Qdrant from: https://github.com/qdrant/qdrant/releases/download/$QDRANT_VERSION/qdrant-windows-x86_64.zip"
+        echo "For Windows, please download Qdrant manually from a mirror site."
         echo "Extract it and run qdrant.exe manually."
         exit 1
     else
@@ -67,12 +95,33 @@ download_qdrant() {
         exit 1
     fi
 
+    # Construct full download URL
+    DOWNLOAD_URL="$BASE_URL/$FILENAME"
+    echo "Download URL: $DOWNLOAD_URL"
+
     # Download and extract
     TEMP_FILE="$INSTALL_DIR/qdrant.tar.gz"
-    curl -L $DOWNLOAD_URL -o $TEMP_FILE
 
-    if [ $? -ne 0 ]; then
-        echo "Failed to download Qdrant. Please check your internet connection and try again."
+    # Try different download methods
+    echo "Downloading from: $DOWNLOAD_URL"
+    if command -v curl &> /dev/null; then
+        curl -L $DOWNLOAD_URL -o $TEMP_FILE
+        DOWNLOAD_STATUS=$?
+    elif command -v wget &> /dev/null; then
+        wget $DOWNLOAD_URL -O $TEMP_FILE
+        DOWNLOAD_STATUS=$?
+    else
+        echo "Neither curl nor wget found. Please install one of them and try again."
+        exit 1
+    fi
+
+    if [ $DOWNLOAD_STATUS -ne 0 ]; then
+        echo "Failed to download Qdrant."
+        echo "If you're in China, try setting a different mirror:"
+        echo "  export QDRANT_MIRROR=gitee    # Gitee mirror"
+        echo "  export QDRANT_MIRROR=tsinghua # Tsinghua mirror"
+        echo "  export QDRANT_MIRROR=aliyun   # Aliyun mirror"
+        echo "Or download manually from a mirror and place in $INSTALL_DIR"
         exit 1
     fi
 
@@ -133,6 +182,32 @@ update_env() {
 }
 
 # Main execution
+if [ "$1" = "help" ] || [ "$1" = "--help" ] || [ "$1" = "-h" ] || [ $# -eq 0 ]; then
+    echo "Usage: $0 {install|start|update-env|help} [mirror]"
+    echo "  install    - Download and install Qdrant"
+    echo "  start      - Start Qdrant server"
+    echo "  update-env - Update .env file to use local Qdrant"
+    echo "  help       - Show this help message"
+    echo ""
+    echo "Optional mirror parameter (for install):"
+    echo "  gitee     - Use Gitee mirror (China)"
+    echo "  tsinghua  - Use Tsinghua mirror (China)"
+    echo "  aliyun    - Use Aliyun mirror (China)"
+    echo "  github    - Use GitHub (default, may be blocked in China)"
+    echo ""
+    echo "You can also set the mirror using environment variable:"
+    echo "  export QDRANT_MIRROR=gitee"
+    echo ""
+    exit 0
+fi
+
+# Check for mirror parameter
+if [ ! -z "$2" ]; then
+    export QDRANT_MIRROR="$2"
+    echo "Setting mirror to: $QDRANT_MIRROR"
+fi
+
+# Main command execution
 case "$1" in
     install)
         download_qdrant
@@ -151,10 +226,9 @@ case "$1" in
         update_env
         ;;
     *)
-        echo "Usage: $0 {install|start|update-env}"
-        echo "  install    - Download and install Qdrant"
-        echo "  start      - Start Qdrant server"
-        echo "  update-env - Update .env file to use local Qdrant"
+        echo "Unknown command: $1"
+        echo "Use './install_qdrant.sh help' for usage information."
+        exit 1
         ;;
 esac
 
