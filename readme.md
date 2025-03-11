@@ -373,3 +373,5 @@ documents = pdf_loader.process_pdf(
     extract_tables=True  # Extract tables using GPU acceleration
 )
 ```
+
+source $(poetry env info --path)/bin/activate

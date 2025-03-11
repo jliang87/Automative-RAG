@@ -53,11 +53,6 @@ pytest = "*"
 pytest-cov = "*"
 mypy = "*"
 
-[[tool.poetry.source]]
-name = "tsinghua"
-url = "https://pypi.tuna.tsinghua.edu.cn/simple"
-priority = "primary"
-
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
