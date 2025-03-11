@@ -37,7 +37,7 @@ class LocalDeepSeekLLM:
         Initialize the local DeepSeek LLM with GPU support.
 
         Args:
-            model_name: Name or path of the DeepSeek model from Hugging Face
+            model_name: Name or path of the DeepSeek model
             device: Device to run the model on (cuda:0 or cpu)
             temperature: Temperature for generation
             max_tokens: Maximum tokens to generate
@@ -45,7 +45,13 @@ class LocalDeepSeekLLM:
             use_8bit: Whether to use 8-bit quantization (alternative to 4-bit)
             torch_dtype: Torch data type (defaults to float16 for GPU)
         """
-        self.model_name = model_name
+        # Get the complete model path if it's a local path
+        from src.utils.model_paths import get_llm_model_path
+        if not model_name.startswith("http") and "/" in model_name:
+            self.model_name = get_llm_model_path(model_name)
+        else:
+            self.model_name = model_name
+
         self.device = device or ("cuda:0" if torch.cuda.is_available() else "cpu")
         self.temperature = temperature
         self.max_tokens = max_tokens
@@ -57,13 +63,6 @@ class LocalDeepSeekLLM:
             self.torch_dtype = torch.float16 if self.device.startswith("cuda") else torch.float32
         else:
             self.torch_dtype = torch_dtype
-
-        # Check if model_name is a local path
-        self.is_local_path = os.path.exists(model_name)
-        if self.is_local_path:
-            print(f"Using local model path: {model_name}")
-        else:
-            print(f"Using model from Hugging Face: {model_name}")
 
         # Initialize tokenizer and model
         self._load_model()

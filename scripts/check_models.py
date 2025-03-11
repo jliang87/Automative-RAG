@@ -28,29 +28,22 @@ def load_env_variables():
     load_dotenv()
 
     # Get model paths from environment variables
+    # Get default model names
+    default_embedding_model = os.getenv("DEFAULT_EMBEDDING_MODEL", "bge-small-en-v1.5")
+    default_colbert_model = os.getenv("DEFAULT_COLBERT_MODEL", "colbertv2.0")
+    default_llm_model = os.getenv("DEFAULT_LLM_MODEL", "DeepSeek-R1-Distill-Qwen-7B")
+
     # For embedding model
-    embedding_model_path = os.getenv("EMBEDDING_MODEL", "/app/models/embeddings")
-    # Check if the path is to a directory or specific model
-    if os.path.isdir(embedding_model_path) and not os.path.exists(os.path.join(embedding_model_path, "config.json")):
-        embedding_model = os.path.join(embedding_model_path, "bge-small-en-v1.5")
-    else:
-        embedding_model = embedding_model_path
+    embedding_base_dir = os.getenv("EMBEDDING_MODEL", "/app/models/embeddings")
+    embedding_model = os.path.join(embedding_base_dir, default_embedding_model)
 
     # For ColBERT model
-    colbert_model_path = os.getenv("COLBERT_MODEL", "/app/models/colbert")
-    # Check if the path is to a directory or specific model
-    if os.path.isdir(colbert_model_path) and not os.path.exists(os.path.join(colbert_model_path, "config.json")):
-        colbert_model = os.path.join(colbert_model_path, "colbertv2.0")
-    else:
-        colbert_model = colbert_model_path
+    colbert_base_dir = os.getenv("COLBERT_MODEL", "/app/models/colbert")
+    colbert_model = os.path.join(colbert_base_dir, default_colbert_model)
 
     # For DeepSeek model
-    deepseek_model_path = os.getenv("DEEPSEEK_MODEL", "/app/models/llm")
-    # Check if the path is to a directory or specific model
-    if os.path.isdir(deepseek_model_path) and not os.path.exists(os.path.join(deepseek_model_path, "config.json")):
-        deepseek_model = os.path.join(deepseek_model_path, "DeepSeek-R1-Distill-Qwen-7B")
-    else:
-        deepseek_model = deepseek_model_path
+    deepseek_base_dir = os.getenv("DEEPSEEK_MODEL", "/app/models/llm")
+    deepseek_model = os.path.join(deepseek_base_dir, default_llm_model)
 
     return embedding_model, colbert_model, deepseek_model
 

@@ -6,6 +6,9 @@ from langchain_community.embeddings import HuggingFaceEmbeddings
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from dotenv import load_dotenv
 
+# Import utility for model paths
+from src.utils.model_paths import get_embedding_model_path
+
 # Load environment variables from .env file
 load_dotenv()
 
@@ -71,13 +74,7 @@ class Settings(BaseSettings):
     @property
     def embedding_function(self) -> Callable:
         # Get the complete embedding model path
-        embedding_model_path = self.embedding_model
-
-        # Check if the path is a directory without a model config
-        if os.path.isdir(embedding_model_path) and not os.path.exists(
-                os.path.join(embedding_model_path, "config.json")):
-            # Assume it's a directory and append default model name
-            embedding_model_path = os.path.join(embedding_model_path, "bge-small-en-v1.5")
+        embedding_model_path = get_embedding_model_path(self.embedding_model)
 
         # Check if embedding_model is a local path
         if os.path.exists(embedding_model_path):

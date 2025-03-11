@@ -31,8 +31,8 @@ class ColBERTReranker:
         Initialize the ColBERT reranker with GPU optimizations.
 
         Args:
-            model_name: Name or local path of the ColBERT model
-            device: Device to run the model on (cuda:0 or cpu)
+            model_name: Name or path of the ColBERT model to use
+            device: Device to run the model on (cuda or cpu)
             max_query_length: Maximum length of query tokens
             max_doc_length: Maximum length of document tokens
             batch_size: Batch size for document encoding
@@ -45,24 +45,22 @@ class ColBERTReranker:
         self.batch_size = batch_size
         self.use_fp16 = use_fp16 and self.device == "cuda" and torch.cuda.is_available()
 
-        # Check if model_name is a local path or HuggingFace ID
-        is_local_path = os.path.exists(model_name)
+        # Get the complete model path if it's a local path
+        from src.utils.model_paths import get_colbert_model_path
+        if not model_name.startswith("http") and "/" in model_name:
+            model_path = get_colbert_model_path(model_name)
+        else:
+            model_path = model_name
 
         # Initialize the ColBERT model
-        print(f"Loading ColBERT model from {'local path' if is_local_path else 'HuggingFace'}: {model_name}")
-
         self.colbert = ColBERT.load(
-            model_name,
+            model_path,
             index_root=None,  # We don't need index functionality
             device=self.device,
         )
 
         # Initialize the tokenizer
-        self.tokenizer = AutoTokenizer.from_pretrained(
-            model_name,
-            use_fast=True,
-            local_files_only=is_local_path
-        )
+        self.tokenizer = AutoTokenizer.from_pretrained(model_path)
 
         # Setup automatic mixed precision if requested
         self.amp_enabled = self.use_fp16

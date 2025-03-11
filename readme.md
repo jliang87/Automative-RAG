@@ -53,6 +53,91 @@ docker-compose up -d
 # Access the UI at http://localhost:8501
 # API runs on http://localhost:8000
 ```
+# Running Qdrant Locally
+
+This guide explains how to run Qdrant vector database locally without Docker.
+
+## Using the Installation Script
+
+We provide a script that automates the installation and running of Qdrant:
+
+```bash
+# Make the script executable
+chmod +x install_qdrant.sh
+
+# Install Qdrant
+./install_qdrant.sh install
+
+# Start Qdrant
+./install_qdrant.sh start
+```
+
+The script will:
+1. Download the appropriate Qdrant binary for your OS and architecture
+2. Create a basic configuration file
+3. Update your `.env` file to connect to the local Qdrant instance
+4. Provide a command to start the Qdrant server
+
+## Manual Installation
+
+If you prefer to install Qdrant manually:
+
+1. Download the appropriate binary for your system from the [Qdrant releases page](https://github.com/qdrant/qdrant/releases)
+
+2. Extract the archive:
+   ```bash
+   tar -xzf qdrant-*.tar.gz
+   ```
+   
+3. Make the binary executable:
+   ```bash
+   chmod +x qdrant
+   ```
+
+4. Create a configuration file:
+   ```bash
+   mkdir -p config
+   cat > config/config.yaml << EOL
+   storage:
+     storage_path: ./data
+     
+   service:
+     http_port: 6333
+     grpc_port: 6334
+   EOL
+   ```
+
+5. Run Qdrant:
+   ```bash
+   ./qdrant --config config/config.yaml
+   ```
+
+6. Update your `.env` file to use localhost:
+   ```
+   QDRANT_HOST=localhost
+   QDRANT_PORT=6333
+   ```
+
+## Verifying Installation
+
+To verify that Qdrant is running correctly:
+
+```bash
+curl http://localhost:6333/cluster
+```
+
+You should see something like:
+```json
+{
+  "status": "ok",
+  "result": {
+    "status": "green",
+    ...
+  }
+}
+```
+
+You can now run your application and it will connect to the local Qdrant instance.
 
 ## Model Configuration
 
