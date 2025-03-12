@@ -62,6 +62,54 @@ YOUTUBE_EXAMPLES = [
     }
 ]
 
+# Example Bilibili videos about cars
+BILIBILI_EXAMPLES = [
+    {
+        "url": "https://www.bilibili.com/video/BV12V4y1M7qm",
+        "metadata": {
+            "manufacturer": "BYD",
+            "model": "Han",
+            "year": 2023,
+            "category": "sedan",
+            "engine_type": "electric"
+        }
+    },
+    {
+        "url": "https://www.bilibili.com/video/BV1m14y1V7wV",
+        "metadata": {
+            "manufacturer": "Nio",
+            "model": "ET7",
+            "year": 2022,
+            "category": "sedan",
+            "engine_type": "electric"
+        }
+    }
+]
+
+# Example Youku videos about cars
+YOUKU_EXAMPLES = [
+    {
+        "url": "https://v.youku.com/v_show/id_XNTk1NDAxMzgwNA==.html",
+        "metadata": {
+            "manufacturer": "Geely",
+            "model": "Geometry A",
+            "year": 2023,
+            "category": "sedan",
+            "engine_type": "electric"
+        }
+    },
+    {
+        "url": "https://v.youku.com/v_show/id_XNTk1MDk5OTk4OA==.html",
+        "metadata": {
+            "manufacturer": "Xpeng",
+            "model": "P7",
+            "year": 2022,
+            "category": "sedan",
+            "engine_type": "electric"
+        }
+    }
+]
+
 # Example manual entries for car specifications
 MANUAL_EXAMPLES = [
     {
@@ -140,7 +188,7 @@ def make_api_request(
     """Make a request to the API."""
     headers = {"x-token": api_key}
     url = f"{base_url}{endpoint}"
-    
+
     try:
         with httpx.Client() as client:
             if method == "GET":
@@ -153,7 +201,7 @@ def make_api_request(
             else:
                 print(f"Unsupported method: {method}")
                 return None
-                
+
             return response
     except Exception as e:
         print(f"API request error: {str(e)}")
@@ -163,18 +211,18 @@ def make_api_request(
 def load_youtube_examples(api_key: str, base_url: str) -> None:
     """Load YouTube examples."""
     print("Loading YouTube examples...")
-    
+
     for i, example in enumerate(YOUTUBE_EXAMPLES):
         print(f"Loading YouTube example {i+1}/{len(YOUTUBE_EXAMPLES)}: {example['url']}")
-        
+
         response = make_api_request(
-            endpoint="/ingest/youtube",
+            endpoint="/ingest/youtube?force_whisper=true",
             method="POST",
             data=example,
             api_key=api_key,
             base_url=base_url,
         )
-        
+
         if response and response.status_code == 200:
             result = response.json()
             print(f"Success: {result['message']}")
@@ -182,25 +230,70 @@ def load_youtube_examples(api_key: str, base_url: str) -> None:
             print(f"Error: {response.text if response else 'No response'}")
 
 
+def load_bilibili_examples(api_key: str, base_url: str) -> None:
+    """Load Bilibili examples."""
+    print("Loading Bilibili examples...")
+
+    for i, example in enumerate(BILIBILI_EXAMPLES):
+        print(f"Loading Bilibili example {i+1}/{len(BILIBILI_EXAMPLES)}: {example['url']}")
+
+        response = make_api_request(
+            endpoint="/ingest/bilibili?force_whisper=true",
+            method="POST",
+            data=example,
+            api_key=api_key,
+            base_url=base_url,
+        )
+
+        if response and response.status_code == 200:
+            result = response.json()
+            print(f"Success: {result['message']}")
+        else:
+            print(f"Error: {response.text if response else 'No response'}")
+
+
+def load_youku_examples(api_key: str, base_url: str) -> None:
+    """Load Youku examples."""
+    print("Loading Youku examples...")
+
+    for i, example in enumerate(YOUKU_EXAMPLES):
+        print(f"Loading Youku example {i+1}/{len(YOUKU_EXAMPLES)}: {example['url']}")
+
+        response = make_api_request(
+            endpoint="/ingest/youku?force_whisper=true",
+            method="POST",
+            data=example,
+            api_key=api_key,
+            base_url=base_url,
+        )
+
+        if response and response.status_code == 200:
+            result = response.json()
+            print(f"Success: {result['message']}")
+        else:
+            print(f"Error: {response.text if response else 'No response'}")
+
+
+def load_pdf_examples(api_key: str, base_url: str, data_dir: str) -> None:
     """Load PDF examples from the data directory."""
     print("Loading PDF examples...")
-    
+
     pdf_dir = os.path.join(data_dir, "pdfs")
     if not os.path.exists(pdf_dir):
         print(f"PDF directory not found: {pdf_dir}")
         return
-        
+
     # Find all PDFs in the directory
     pdfs = list(Path(pdf_dir).glob("*.pdf"))
-    
+
     for i, pdf_path in enumerate(pdfs):
         print(f"Loading PDF example {i+1}/{len(pdfs)}: {pdf_path.name}")
-        
+
         # Extract metadata from filename
         # Format: manufacturer_model_year.pdf
         filename = pdf_path.stem
         parts = filename.split("_")
-        
+
         metadata = {}
         if len(parts) >= 1:
             metadata["manufacturer"] = parts[0].capitalize()
@@ -211,15 +304,15 @@ def load_youtube_examples(api_key: str, base_url: str) -> None:
                 metadata["year"] = int(parts[2])
             except ValueError:
                 pass
-                
+
         # Add title
         metadata["title"] = f"{metadata.get('year', '')} {metadata.get('manufacturer', '')} {metadata.get('model', '')} Manual".strip()
-        
+
         # Upload the PDF
         with open(pdf_path, "rb") as pdf_file:
             files = {"file": (pdf_path.name, pdf_file, "application/pdf")}
             data = {"metadata": json.dumps(metadata)}
-            
+
             response = make_api_request(
                 endpoint="/ingest/pdf",
                 method="POST",
@@ -228,7 +321,7 @@ def load_youtube_examples(api_key: str, base_url: str) -> None:
                 api_key=api_key,
                 base_url=base_url,
             )
-            
+
             if response and response.status_code == 200:
                 result = response.json()
                 print(f"Success: {result['message']}")
@@ -239,10 +332,10 @@ def load_youtube_examples(api_key: str, base_url: str) -> None:
 def load_manual_examples(api_key: str, base_url: str) -> None:
     """Load manual entry examples."""
     print("Loading manual entry examples...")
-    
+
     for i, example in enumerate(MANUAL_EXAMPLES):
         print(f"Loading manual example {i+1}/{len(MANUAL_EXAMPLES)}: {example['metadata']['title']}")
-        
+
         response = make_api_request(
             endpoint="/ingest/text",
             method="POST",
@@ -250,7 +343,7 @@ def load_manual_examples(api_key: str, base_url: str) -> None:
             api_key=api_key,
             base_url=base_url,
         )
-        
+
         if response and response.status_code == 200:
             result = response.json()
             print(f"Success: {result['message']}")
@@ -261,4 +354,48 @@ def load_manual_examples(api_key: str, base_url: str) -> None:
 def main():
     parser = argparse.ArgumentParser(description="Load sample data for the Automotive Specs RAG system")
     parser.add_argument("--api-key", default=settings.api_key, help="API key for authentication")
-    parser.add_argument("--base
+    parser.add_argument("--base-url", default="http://localhost:8000", help="Base URL for the API")
+    parser.add_argument("--data-dir", default="data", help="Directory containing data files")
+    parser.add_argument("--skip-youtube", action="store_true", help="Skip loading YouTube examples")
+    parser.add_argument("--skip-bilibili", action="store_true", help="Skip loading Bilibili examples")
+    parser.add_argument("--skip-youku", action="store_true", help="Skip loading Youku examples")
+    parser.add_argument("--skip-pdf", action="store_true", help="Skip loading PDF examples")
+    parser.add_argument("--skip-manual", action="store_true", help="Skip loading manual entry examples")
+
+    args = parser.parse_args()
+
+    # Check if API is available
+    response = make_api_request(
+        endpoint="/health",
+        method="GET",
+        api_key=args.api_key,
+        base_url=args.base_url,
+    )
+
+    if not response or response.status_code != 200:
+        print(f"API is not available at {args.base_url}")
+        return
+
+    print(f"API is available at {args.base_url}")
+
+    # Load examples
+    if not args.skip_youtube:
+        load_youtube_examples(args.api_key, args.base_url)
+
+    if not args.skip_bilibili:
+        load_bilibili_examples(args.api_key, args.base_url)
+
+    if not args.skip_youku:
+        load_youku_examples(args.api_key, args.base_url)
+
+    if not args.skip_pdf:
+        load_pdf_examples(args.api_key, args.base_url, args.data_dir)
+
+    if not args.skip_manual:
+        load_manual_examples(args.api_key, args.base_url)
+
+    print("Sample data loading complete!")
+
+
+if __name__ == "__main__":
+    main()

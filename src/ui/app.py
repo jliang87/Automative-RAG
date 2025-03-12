@@ -26,16 +26,16 @@ if "current_page" not in st.session_state:
 
 
 def make_api_request(
-    endpoint: str,
-    method: str = "GET",
-    data: Optional[Dict] = None,
-    files: Optional[Dict] = None,
-    params: Optional[Dict] = None,
+        endpoint: str,
+        method: str = "GET",
+        data: Optional[Dict] = None,
+        files: Optional[Dict] = None,
+        params: Optional[Dict] = None,
 ) -> httpx.Response:
     """Make a request to the API."""
     headers = {"x-token": st.session_state.api_key}
     url = f"{API_URL}{endpoint}"
-    
+
     try:
         with httpx.Client() as client:
             if method == "GET":
@@ -50,3 +50,8 @@ def make_api_request(
             else:
                 st.error(f"Unsupported method: {method}")
                 return None
+
+            return response
+    except Exception as e:
+        st.error(f"API request error: {str(e)}")
+        return None
