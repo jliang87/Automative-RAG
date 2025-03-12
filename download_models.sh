@@ -55,6 +55,13 @@ if ! command -v python &> /dev/null; then
     exit 1
 fi
 
+# Install required packages
+echo "Installing required packages..."
+pip install torch torchvision torchaudio sentence-transformers transformers bitsandbytes accelerate tqdm
+pip install openai-whisper
+
+echo "Starting model downloads..."
+
 # Download BGE model for embeddings
 echo "Downloading embedding model: ${BGE_MODEL_ID}..."
 python -c "
