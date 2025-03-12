@@ -9,15 +9,21 @@ services:
     restart: always
     ports:
       - "8000:8000"
-    env_file:
-      - .env
     environment:
       - QDRANT_HOST=qdrant
       - QDRANT_PORT=6333
+      - DEVICE=cuda
+      - USE_FP16=true
+      - WHISPER_MODEL_SIZE=medium
+      - USE_YOUTUBE_CAPTIONS=true
+      - USE_WHISPER_AS_FALLBACK=true
+      - USE_PDF_OCR=true
+      - LOG_LEVEL=INFO
     volumes:
       - ./data:/app/data
-      - model-cache:/app/models
-      - ./.env:/app/.env
+      - ./models:/app/models  # Map local models directory to container
+    env_file:
+      - .env
     deploy:
       resources:
         reservations:
@@ -40,12 +46,12 @@ services:
     restart: always
     ports:
       - "8501:8501"
-    env_file:
-      - .env
     environment:
       - API_URL=http://api:8000
     volumes:
-      - ./.env:/app/.env
+      - ./models:/app/models  # Map local models directory to container
+    env_file:
+      - .env
     depends_on:
       - api
 
@@ -62,4 +68,3 @@ services:
 
 volumes:
   qdrant-data:
-  model-cache:

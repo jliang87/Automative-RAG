@@ -81,7 +81,7 @@ class LocalDeepSeekLLM:
         self.tokenizer = AutoTokenizer.from_pretrained(
             self.model_name,
             trust_remote_code=True,
-            local_files_only=self.is_local_path
+            local_files_only=True  # Only use local files, don't try to download
         )
 
         # Configure quantization
@@ -108,7 +108,7 @@ class LocalDeepSeekLLM:
             torch_dtype=self.torch_dtype,
             device_map=self.device,
             trust_remote_code=True,
-            local_files_only=self.is_local_path
+            local_files_only=True  # Only use local files, don't try to download
         )
 
         # Create generation pipeline

@@ -1,3 +1,146 @@
+# Automotive Specs RAG System Setup
+
+This guide explains how to set up and run the Automotive Specs RAG system.
+
+## Prerequisites
+
+- Python 3.8+ for local setup
+- Docker and Docker Compose for containerized setup
+- NVIDIA GPU with CUDA support for GPU acceleration
+- If in China: Access to Chinese mirrors or a reliable VPN
+
+## Step 1: Clone the Repository
+
+```bash
+git clone <your-repo-url>
+cd <repo-directory>
+```
+
+## Step 2: Setup Configuration
+
+```bash
+# Copy example environment file
+cp .env.example .env
+```
+
+Edit the `.env` file to adjust settings if needed.
+
+## Step 3: Download Models (REQUIRED)
+
+This system requires pre-downloaded models to function properly. Choose the appropriate download script:
+
+### Standard Download (Global)
+
+```bash
+# Make the script executable
+chmod +x download_models.sh
+
+# Download all models
+./download_models.sh
+```
+
+### Download in China (Using Mirrors)
+
+```bash
+# Make the script executable
+chmod +x download_models_cn.sh
+
+# Download all models using Gitee mirror
+./download_models_cn.sh
+
+# Or specify a different mirror:
+# ./download_models_cn.sh install gitee
+# ./download_models_cn.sh install tsinghua
+# ./download_models_cn.sh install aliyun
+```
+
+This process may take some time, especially for the large language model.
+
+## Step 4: Start the System
+
+You can run the system either locally or using Docker.
+
+### Option A: Run with Docker (Recommended)
+
+```bash
+# Start all services
+docker-compose up -d
+
+# Check logs if needed
+docker-compose logs -f api
+```
+
+The services will be available at:
+- API: http://localhost:8000
+- UI: http://localhost:8501
+- Qdrant: http://localhost:6333
+
+### Option B: Run Locally
+
+#### Step 4B.1: Install Qdrant
+
+```bash
+# Make the script executable
+chmod +x install_qdrant.sh
+
+# Install Qdrant
+./install_qdrant.sh install
+
+# Start Qdrant in a separate terminal
+./install_qdrant.sh start
+```
+
+#### Step 4B.2: Run the API and UI
+
+In separate terminals:
+
+```bash
+# Terminal 1: Start the API
+chmod +x run_api.sh
+./run_api.sh
+
+# Terminal 2: Start the UI
+chmod +x run_ui.sh
+./run_ui.sh
+```
+
+## Verifying Installation
+
+1. Check that all services are running:
+   - API should be accessible at http://localhost:8000/docs
+   - UI should be accessible at http://localhost:8501
+   - Qdrant should respond at http://localhost:6333/dashboard
+
+2. Try ingesting a sample document through the UI or API.
+
+3. Run a test query to ensure the whole pipeline works.
+
+## Troubleshooting
+
+### Model Loading Issues
+
+If you encounter model loading errors:
+
+1. Ensure you've run the model download script
+2. Check the model directories under `./models/`
+3. Verify that Docker volumes are correctly mounted (if using Docker)
+
+### API Connection Issues
+
+If the UI can't connect to the API:
+
+1. Check that the API is running
+2. Verify the `API_URL` environment variable is correctly set
+3. Check network connectivity between services
+
+### GPU Issues
+
+If GPU acceleration isn't working:
+
+1. Verify CUDA is available: `python -c "import torch; print(torch.cuda.is_available())"`
+2. Check that the GPU is visible to Docker (if using Docker)
+3. Ensure the correct device is specified in `.env`
+4. 
 ## Quick Start
 
 ### Standard Installation (Global Access)

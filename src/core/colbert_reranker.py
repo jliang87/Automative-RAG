@@ -45,7 +45,7 @@ class ColBERTReranker:
         self.batch_size = batch_size
         self.use_fp16 = use_fp16 and self.device == "cuda" and torch.cuda.is_available()
 
-        # Get the complete model path if it's a local path
+        # Get the complete model path
         from src.utils.model_paths import get_colbert_model_path
         if not model_name.startswith("http") and "/" in model_name:
             model_path = get_colbert_model_path(model_name)
@@ -53,14 +53,24 @@ class ColBERTReranker:
             model_path = model_name
 
         # Initialize the ColBERT model
-        self.colbert = ColBERT.load(
-            model_path,
-            index_root=None,  # We don't need index functionality
-            device=self.device,
-        )
+        try:
+            self.colbert = ColBERT.load(
+                model_path,
+                index_root=None,  # We don't need index functionality
+                device=self.device,
+                no_download=True  # Do not try to download, only use local files
+            )
 
-        # Initialize the tokenizer
-        self.tokenizer = AutoTokenizer.from_pretrained(model_path)
+            # Initialize the tokenizer
+            self.tokenizer = AutoTokenizer.from_pretrained(
+                model_path,
+                use_fast=True,
+                local_files_only=True  # Only use local files, don't try to download
+            )
+
+        except Exception as e:
+            raise ValueError(f"Failed to load ColBERT model from {model_path}. Error: {str(e)}\n"
+                             "Please run './download_models.sh' or './download_models_cn.sh' first to download models.")
 
         # Setup automatic mixed precision if requested
         self.amp_enabled = self.use_fp16

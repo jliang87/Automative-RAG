@@ -74,25 +74,20 @@ class Settings(BaseSettings):
     @property
     def embedding_function(self) -> Callable:
         # Get the complete embedding model path
+        from src.utils.model_paths import get_embedding_model_path
         embedding_model_path = get_embedding_model_path(self.embedding_model)
 
-        # Check if embedding_model is a local path
-        if os.path.exists(embedding_model_path):
-            # Use local model path
+        try:
+            # Use local model path with local_files_only=True to prevent downloads
             return HuggingFaceEmbeddings(
                 model_name=embedding_model_path,
-                model_kwargs={"device": self.device},
+                model_kwargs={"device": self.device, "local_files_only": True},
                 encode_kwargs={"batch_size": self.batch_size, "normalize_embeddings": True},
                 cache_folder=self.embedding_cache_dir
             )
-        else:
-            # Use HuggingFace model ID
-            return HuggingFaceEmbeddings(
-                model_name=self.embedding_model,
-                model_kwargs={"device": self.device},
-                encode_kwargs={"batch_size": self.batch_size, "normalize_embeddings": True},
-            )
-
+        except Exception as e:
+            raise ValueError(f"Failed to load embedding model from {embedding_model_path}. Error: {str(e)}\n"
+                             "Please run './download_models.sh' or './download_models_cn.sh' first to download models.")
     # Ensure required directories exist
     def initialize_directories(self) -> None:
         os.makedirs(self.data_dir, exist_ok=True)

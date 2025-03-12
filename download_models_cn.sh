@@ -18,35 +18,11 @@ set -a
 source .env
 set +a
 
-# Check if running in Docker or locally
-IN_DOCKER=false
-if [ -f "/.dockerenv" ]; then
-    IN_DOCKER=true
-    echo "Running in Docker environment"
-else
-    echo "Running in local environment"
-fi
-
-# Set default model directories if not specified in .env
-# Use appropriate paths based on environment (Docker vs local)
-if [ "$IN_DOCKER" = true ]; then
-    # Docker paths (absolute)
-    DEFAULT_EMBEDDING_DIR="/app/models/embeddings"
-    DEFAULT_COLBERT_DIR="/app/models/colbert"
-    DEFAULT_LLM_DIR="/app/models/llm"
-    DEFAULT_WHISPER_DIR="/app/models/whisper"
-else
-    # Local paths (relative)
-    DEFAULT_EMBEDDING_DIR="models/embeddings"
-    DEFAULT_COLBERT_DIR="models/colbert"
-    DEFAULT_LLM_DIR="models/llm"
-    DEFAULT_WHISPER_DIR="models/whisper"
-fi
-
-EMBEDDING_DIR=${EMBEDDING_CACHE_DIR:-$DEFAULT_EMBEDDING_DIR}
-COLBERT_DIR=${COLBERT_MODEL:-$DEFAULT_COLBERT_DIR}
-LLM_DIR=${LLM_CACHE_DIR:-$DEFAULT_LLM_DIR}
-WHISPER_DIR=${WHISPER_CACHE_DIR:-$DEFAULT_WHISPER_DIR}
+# Read environment variables with defaults
+EMBEDDING_DIR=${EMBEDDING_MODEL:-"models/embeddings"}
+COLBERT_DIR=${COLBERT_MODEL:-"models/colbert"}
+LLM_DIR=${DEEPSEEK_MODEL:-"models/llm"}
+WHISPER_DIR=${WHISPER_CACHE_DIR:-"models/whisper"}
 
 # Get default model names from environment or use defaults
 DEFAULT_EMBEDDING_MODEL_NAME=${DEFAULT_EMBEDDING_MODEL:-"bge-small-en-v1.5"}
@@ -275,6 +251,16 @@ def download_whisper_model(model_size, output_dir):
     """Download Whisper model using China mirrors."""
     logger.info(f"Downloading Whisper {model_size} model...")
 
+    # Define alternative mirrors for Whisper models
+    # ModelScope mirror for Whisper models
+    modelscope_whisper_models = {
+        "tiny": "https://modelscope.cn/api/v1/models/AI-ModelScope/whisper-tiny/repo?Revision=master&FilePath=model.bin",
+        "base": "https://modelscope.cn/api/v1/models/AI-ModelScope/whisper-base/repo?Revision=master&FilePath=model.bin",
+        "small": "https://modelscope.cn/api/v1/models/AI-ModelScope/whisper-small/repo?Revision=master&FilePath=model.bin",
+        "medium": "https://modelscope.cn/api/v1/models/AI-ModelScope/whisper-medium/repo?Revision=master&FilePath=model.bin",
+        "large": "https://modelscope.cn/api/v1/models/AI-ModelScope/whisper-large/repo?Revision=master&FilePath=model.bin"
+    }
+
     # HuggingFace mirror alternative URLs (backup)
     hf_mirror_whisper_models = {
         "tiny": "https://hf-mirror.com/openai/whisper-tiny/resolve/main/pytorch_model.bin",
@@ -284,10 +270,42 @@ def download_whisper_model(model_size, output_dir):
         "large": "https://hf-mirror.com/openai/whisper-large-v2/resolve/main/pytorch_model.bin"
     }
 
+    # Wisemodel mirror (another alternative)
+    wisemodel_whisper_models = {
+        "tiny": "https://wisemodel.cn/models/openai/whisper-tiny/pytorch_model.bin",
+        "base": "https://wisemodel.cn/models/openai/whisper-base/pytorch_model.bin",
+        "small": "https://wisemodel.cn/models/openai/whisper-small/pytorch_model.bin",
+        "medium": "https://wisemodel.cn/models/openai/whisper-medium/pytorch_model.bin",
+        "large": "https://wisemodel.cn/models/openai/whisper-large-v2/pytorch_model.bin"
+    }
+
     try:
         # Create output directory structure
         whisper_model_dir = os.path.join(output_dir, model_size)
         os.makedirs(whisper_model_dir, exist_ok=True)
+
+        # First try the standard method in case it works
+        try:
+            logger.info("Trying standard whisper download method first...")
+            os.environ["XDG_CACHE_HOME"] = output_dir
+            model = whisper.load_model(model_size)
+            logger.info(f"Successfully downloaded Whisper model using standard method")
+            return True
+        except Exception as e:
+            logger.warning(f"Standard method failed: {str(e)}")
+            logger.info("Trying alternative mirrors...")
+
+        # Try ModelScope mirror
+        try:
+            if model_size in modelscope_whisper_models:
+                model_url = modelscope_whisper_models[model_size]
+                output_path = os.path.join(whisper_model_dir, "model.bin")
+                logger.info(f"Downloading from ModelScope mirror...")
+                download_file(model_url, output_path)
+                logger.info(f"Successfully downloaded Whisper model from ModelScope")
+                return True
+        except Exception as e:
+            logger.warning(f"ModelScope mirror failed: {str(e)}")
 
         # Try HuggingFace mirror
         try:
@@ -307,7 +325,26 @@ def download_whisper_model(model_size, output_dir):
         except Exception as e:
             logger.warning(f"HF mirror failed: {str(e)}")
 
-        logger.error("mirrors failed. Could not download Whisper model.")
+        # Try Wisemodel mirror as last resort
+        try:
+            if model_size in wisemodel_whisper_models:
+                model_url = wisemodel_whisper_models[model_size]
+                output_path = os.path.join(whisper_model_dir, "pytorch_model.bin")
+                logger.info(f"Downloading from Wisemodel mirror...")
+                download_file(model_url, output_path)
+
+                # Create a basic config file if needed
+                config_path = os.path.join(whisper_model_dir, "config.json")
+                if not os.path.exists(config_path):
+                    with open(config_path, 'w') as f:
+                        json.dump({"model_type": "whisper"}, f)
+
+                logger.info(f"Successfully downloaded Whisper model from Wisemodel mirror")
+                return True
+        except Exception as e:
+            logger.warning(f"Wisemodel mirror failed: {str(e)}")
+
+        logger.error("All mirrors failed. Could not download Whisper model.")
         return False
     except Exception as e:
         logger.error(f"Failed to download Whisper model: {str(e)}")

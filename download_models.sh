@@ -47,6 +47,18 @@ COLBERT_DIR=${COLBERT_MODEL:-$DEFAULT_COLBERT_DIR}
 LLM_DIR=${LLM_CACHE_DIR:-$DEFAULT_LLM_DIR}
 WHISPER_DIR=${WHISPER_CACHE_DIR:-$DEFAULT_WHISPER_DIR}
 
+# Model identifiers
+BGE_MODEL="BAAI/bge-small-en-v1.5"
+COLBERT_MODEL="colbert-ir/colbertv2.0"
+DEEPSEEK_MODEL="deepseek-ai/DeepSeek-R1-Distill-Qwen-7B"
+WHISPER_MODEL=${WHISPER_MODEL_SIZE:-"medium"}
+
+# Read environment variables with defaults
+EMBEDDING_DIR=${EMBEDDING_MODEL:-"models/embeddings"}
+COLBERT_DIR=${COLBERT_MODEL:-"models/colbert"}
+LLM_DIR=${DEEPSEEK_MODEL:-"models/llm"}
+WHISPER_DIR=${WHISPER_CACHE_DIR:-"models/whisper"}
+
 # Get default model names from environment or use defaults
 DEFAULT_EMBEDDING_MODEL_NAME=${DEFAULT_EMBEDDING_MODEL:-"bge-small-en-v1.5"}
 DEFAULT_COLBERT_MODEL_NAME=${DEFAULT_COLBERT_MODEL:-"colbertv2.0"}
