@@ -60,8 +60,8 @@ echo "Downloading embedding model: ${BGE_MODEL_ID}..."
 python -c "
 from sentence_transformers import SentenceTransformer
 import os
-os.environ['TRANSFORMERS_CACHE'] = os.path.abspath('${EMBEDDING_MODEL_DIR}')
-model = SentenceTransformer('${BGE_MODEL_ID}')
+cache_dir = os.path.abspath('${EMBEDDING_MODEL_DIR}')
+model = SentenceTransformer('${BGE_MODEL_ID}', cache_folder=cache_dir)
 print('Embedding model downloaded successfully.')
 "
 
@@ -75,8 +75,9 @@ echo "Downloading ColBERT model: ${COLBERT_MODEL_ID}..."
 python -c "
 from transformers import AutoTokenizer
 import os
-os.environ['TRANSFORMERS_CACHE'] = os.path.abspath('${COLBERT_MODEL_DIR}')
-tokenizer = AutoTokenizer.from_pretrained('${COLBERT_MODEL_ID}', use_fast=True)
+cache_dir = os.path.abspath('${COLBERT_MODEL_DIR}')
+os.environ['HF_HOME'] = cache_dir  # Use HF_HOME instead of TRANSFORMERS_CACHE
+tokenizer = AutoTokenizer.from_pretrained('${COLBERT_MODEL_ID}', use_fast=True, cache_dir=cache_dir)
 print('ColBERT model downloaded successfully.')
 "
 
@@ -91,11 +92,11 @@ python -c "
 from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
 import torch
 import os
-os.environ['TRANSFORMERS_CACHE'] = os.path.abspath('${LLM_MODEL_DIR}')
-
+cache_dir = os.path.abspath('${LLM_MODEL_DIR}')
+os.environ['HF_HOME'] = cache_dir  # Use HF_HOME instead of TRANSFORMERS_CACHE
 # Just download the tokenizer first (much smaller)
 print('Downloading tokenizer...')
-tokenizer = AutoTokenizer.from_pretrained('${DEEPSEEK_MODEL_ID}', trust_remote_code=True)
+tokenizer = AutoTokenizer.from_pretrained('${DEEPSEEK_MODEL_ID}', trust_remote_code=True, cache_dir=cache_dir)
 
 # Ask for confirmation before downloading the full model
 print('Tokenizer downloaded. The full model is several GB in size.')
@@ -108,10 +109,10 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
 from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
 import torch
 import os
-os.environ['TRANSFORMERS_CACHE'] = os.path.abspath('${LLM_MODEL_DIR}')
-
+cache_dir = os.path.abspath('${LLM_MODEL_DIR}')
+os.environ['HF_HOME'] = cache_dir  # Use HF_HOME instead of TRANSFORMERS_CACHE
 print('Downloading full model...')
-tokenizer = AutoTokenizer.from_pretrained('${DEEPSEEK_MODEL_ID}', trust_remote_code=True)
+tokenizer = AutoTokenizer.from_pretrained('${DEEPSEEK_MODEL_ID}', trust_remote_code=True, cache_dir=cache_dir)
 
 # Configure quantization (reduces size and memory usage)
 quantization_config = BitsAndBytesConfig(
@@ -126,7 +127,8 @@ model = AutoModelForCausalLM.from_pretrained(
     '${DEEPSEEK_MODEL_ID}',
     quantization_config=quantization_config,
     device_map='auto',
-    trust_remote_code=True
+    trust_remote_code=True,
+    cache_dir=cache_dir
 )
 print('DeepSeek model downloaded successfully.')
 "
