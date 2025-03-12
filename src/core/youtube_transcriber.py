@@ -26,8 +26,9 @@ class YouTubeTranscriber:
             output_dir: str = "data/youtube",
             whisper_model_size: str = "medium",
             device: Optional[str] = None,
-            use_youtube_captions: bool = True,
-            use_whisper_as_fallback: bool = True
+            use_youtube_captions: bool = False,
+            use_whisper_as_fallback: bool = False,
+            force_whisper: bool = True
     ):
         """
         Initialize the YouTube transcriber.
@@ -52,6 +53,7 @@ class YouTubeTranscriber:
         # Configuration options
         self.use_youtube_captions = use_youtube_captions
         self.use_whisper_as_fallback = use_whisper_as_fallback
+        self.force_whisper = force_whisper
 
     def _load_whisper_model(self):
         """Load the Whisper model if not already loaded."""
@@ -350,15 +352,18 @@ class YouTubeTranscriber:
         transcript_text = None
         used_whisper = False
 
-        # Try YouTube captions first if enabled and not forced to use Whisper
-        if self.use_youtube_captions and not force_whisper:
+        # Use Whisper directly if force_whisper is enabled
+        if self.force_whisper or force_whisper:
+            print(f"Using Whisper for transcription as configured for video ID: {video_metadata['video_id']}")
+        # Otherwise, try YouTube captions first if enabled and not forced to use Whisper
+        elif self.use_youtube_captions and not force_whisper:
             youtube_captions = self.download_youtube_captions(url)
             if youtube_captions:
                 transcript_text = self.format_transcript(youtube_captions, is_srt=True)
                 print(f"Using YouTube captions for video ID: {video_metadata['video_id']}")
 
-        # Use Whisper if no YouTube captions or force_whisper is True
-        if transcript_text is None and (self.use_whisper_as_fallback or force_whisper):
+        # Use Whisper if no transcript yet or force_whisper is True
+        if transcript_text is None and (self.use_whisper_as_fallback or self.force_whisper or force_whisper):
             try:
                 # Extract audio
                 audio_path = self.extract_audio(url)
@@ -451,7 +456,8 @@ class BilibiliTranscriber(YouTubeTranscriber):
             self,
             output_dir: str = "data/bilibili",
             whisper_model_size: str = "medium",
-            device: Optional[str] = None
+            device: Optional[str] = None,
+            force_whisper: bool = True
     ):
         """
         Initialize the Bilibili transcriber.
@@ -460,13 +466,15 @@ class BilibiliTranscriber(YouTubeTranscriber):
             output_dir: Directory to save downloaded videos and audio
             whisper_model_size: Size of the Whisper model (tiny, base, small, medium, large)
             device: Device to run Whisper on (cuda or cpu), defaults to cuda if available
+            force_whisper: Always use Whisper for transcription
         """
         super().__init__(
             output_dir=output_dir,
             whisper_model_size=whisper_model_size,
             device=device,
-            use_youtube_captions=False,  # Always use Whisper for Bilibili
-            use_whisper_as_fallback=True
+            use_youtube_captions=False,  # Always disable captions for Bilibili
+            use_whisper_as_fallback=True,  # Always use Whisper for Bilibili
+            force_whisper=force_whisper   # Pass through force_whisper parameter
         )
 
     def extract_video_id(self, url: str) -> str:
@@ -609,7 +617,7 @@ class BilibiliTranscriber(YouTubeTranscriber):
             }
 
     def process_video(
-            self, url: str, custom_metadata: Optional[Dict[str, str]] = None
+            self, url: str, custom_metadata: Optional[Dict[str, str]] = None, force_whisper: bool = True
     ) -> List[Document]:
         """
         Process a Bilibili video and return Langchain documents.
@@ -634,7 +642,8 @@ class BilibiliTranscriber(YouTubeTranscriber):
             # Extract audio
             audio_path = self.extract_audio_from_video(video_path)
 
-            # Transcribe with Whisper
+            # Always use Whisper for transcription
+            print(f"Using Whisper for Bilibili video transcription: {video_metadata['video_id']}")
             transcript_text = self.transcribe_with_whisper(audio_path)
 
             # Create metadata object

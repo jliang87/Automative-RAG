@@ -8,6 +8,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from src.core.pdf_loader import PDFLoader
 from src.core.vectorstore import QdrantStore
 from src.core.youtube_transcriber import YouTubeTranscriber, BilibiliTranscriber
+from src.core.youku_transcriber import YoukuTranscriber
 from src.models.schemas import DocumentMetadata, DocumentSource, ManualIngestRequest
 from src.config.settings import settings
 
@@ -43,18 +44,26 @@ class DocumentProcessor:
         self.chunk_overlap = chunk_overlap
         self.upload_dir = upload_dir
         self.device = device or settings.device
-        
+
         # Initialize sub-processors with GPU support
         self.youtube_transcriber = YouTubeTranscriber(
             whisper_model_size=settings.whisper_model_size,
             device=self.device,
             use_youtube_captions=settings.use_youtube_captions,
-            use_whisper_as_fallback=settings.use_whisper_as_fallback
+            use_whisper_as_fallback=settings.use_whisper_as_fallback,
+            force_whisper=settings.force_whisper
         )
-        
+
         self.bilibili_transcriber = BilibiliTranscriber(
             whisper_model_size=settings.whisper_model_size,
-            device=self.device
+            device=self.device,
+            force_whisper=settings.force_whisper
+        )
+
+        self.youku_transcriber = YoukuTranscriber(
+            whisper_model_size=settings.whisper_model_size,
+            device=self.device,
+            force_whisper=settings.force_whisper
         )
         
         self.pdf_loader = PDFLoader(
@@ -102,9 +111,9 @@ class DocumentProcessor:
         
         # Add to vector store
         return self.vector_store.add_documents(chunked_documents)
-        
+
     def process_bilibili_video(
-        self, url: str, custom_metadata: Optional[Dict[str, str]] = None
+            self, url: str, custom_metadata: Optional[Dict[str, str]] = None, force_whisper: bool = True
     ) -> List[str]:
         """
         Process a Bilibili video with GPU-accelerated transcription.
@@ -112,6 +121,7 @@ class DocumentProcessor:
         Args:
             url: Bilibili URL
             custom_metadata: Optional custom metadata
+            force_whisper: Whether to force using Whisper for transcription (default: True)
 
         Returns:
             List of document IDs
@@ -121,16 +131,50 @@ class DocumentProcessor:
             url=url,
             custom_metadata=custom_metadata
         )
-        
+
         # Split into chunks
         chunked_documents = self.text_splitter.split_documents(documents)
-        
+
         # Assign IDs to chunks
         video_id = self.bilibili_transcriber.extract_video_id(url)
         for i, doc in enumerate(chunked_documents):
             doc.metadata["id"] = f"bilibili-{video_id}-{i}"
             doc.metadata["chunk_id"] = i
-        
+
+        # Add to vector store
+        return self.vector_store.add_documents(chunked_documents)
+
+    def process_youku_video(
+            self, url: str, custom_metadata: Optional[Dict[str, str]] = None, force_whisper: bool = True
+    ) -> List[str]:
+        """
+        Process a Youku video with GPU-accelerated transcription.
+
+        Args:
+            url: Youku URL
+            custom_metadata: Optional custom metadata
+            force_whisper: Whether to force using Whisper for transcription (default: True)
+
+        Returns:
+            List of document IDs
+        """
+        # Get documents from transcriber
+        documents = self.youku_transcriber.process_video(
+            url=url,
+            custom_metadata=custom_metadata,
+            force_whisper=force_whisper
+        )
+
+        # Split into chunks
+        chunked_documents = self.text_splitter.split_documents(documents)
+
+        # Assign IDs to chunks
+        video_id = self.youku_transcriber.extract_video_id(url)
+        for i, doc in enumerate(chunked_documents):
+            doc.metadata["id"] = f"youku-{video_id}-{i}"
+            doc.metadata["chunk_id"] = i
+            doc.metadata["platform"] = "youku"  # Explicitly mark the platform
+
         # Add to vector store
         return self.vector_store.add_documents(chunked_documents)
 
@@ -191,25 +235,25 @@ class DocumentProcessor:
         return self.vector_store.add_documents(chunked_documents)
 
     def batch_process_videos(
-        self, urls: List[str], platform: str = "youtube", custom_metadata: Optional[List[Dict[str, str]]] = None
+            self, urls: List[str], platform: str = "youtube", custom_metadata: Optional[List[Dict[str, str]]] = None
     ) -> Dict[str, List[str]]:
         """
         Process multiple videos in batch with GPU acceleration.
-        
+
         Args:
             urls: List of video URLs
-            platform: Platform of the videos ("youtube" or "bilibili")
+            platform: Platform of the videos ("youtube", "bilibili", or "youku")
             custom_metadata: Optional list of custom metadata (same length as urls)
-            
+
         Returns:
             Dictionary mapping URLs to lists of document IDs
         """
         result = {}
-        
+
         # Validate inputs
         if custom_metadata and len(custom_metadata) != len(urls):
             raise ValueError("If provided, custom_metadata must have the same length as urls")
-            
+
         for i, url in enumerate(urls):
             metadata = custom_metadata[i] if custom_metadata else None
             try:
@@ -217,13 +261,15 @@ class DocumentProcessor:
                     doc_ids = self.process_youtube_video(url, metadata)
                 elif platform.lower() == "bilibili":
                     doc_ids = self.process_bilibili_video(url, metadata)
+                elif platform.lower() == "youku":
+                    doc_ids = self.process_youku_video(url, metadata)
                 else:
                     raise ValueError(f"Unsupported platform: {platform}")
-                    
+
                 result[url] = doc_ids
             except Exception as e:
                 result[url] = {"error": str(e)}
-                
+
         return result
 
     def delete_documents(self, ids: List[str]) -> None:

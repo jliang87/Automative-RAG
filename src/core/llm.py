@@ -302,7 +302,6 @@ When providing your answer, cite the specific sources (document titles or URLs) 
         # Model configuration info
         model_config = {
             "model_name": self.model_name,
-            "is_local_path": self.is_local_path,
             "device": self.device,
             "temperature": self.temperature,
             "max_tokens": self.max_tokens,

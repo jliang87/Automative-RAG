@@ -15,13 +15,15 @@ services:
       - DEVICE=cuda
       - USE_FP16=true
       - WHISPER_MODEL_SIZE=medium
-      - USE_YOUTUBE_CAPTIONS=true
-      - USE_WHISPER_AS_FALLBACK=true
+      - USE_YOUTUBE_CAPTIONS=false
+      - USE_WHISPER_AS_FALLBACK=false
+      - FORCE_WHISPER=true
       - USE_PDF_OCR=true
       - LOG_LEVEL=INFO
+      - CONTAINER_RUNTIME=docker
     volumes:
       - ./data:/app/data
-      - ./models:/app/models  # Map local models directory to container
+      - ./models:/app/models  # Map host models directory to container
     env_file:
       - .env
     deploy:
@@ -48,8 +50,10 @@ services:
       - "8501:8501"
     environment:
       - API_URL=http://api:8000
+      - CONTAINER_RUNTIME=docker
     volumes:
-      - ./models:/app/models  # Map local models directory to container
+      - ./data:/app/data
+      - ./models:/app/models  # Map host models directory to container
     env_file:
       - .env
     depends_on:

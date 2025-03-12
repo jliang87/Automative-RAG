@@ -5,10 +5,11 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, Q
 from fastapi.responses import JSONResponse
 from pydantic import HttpUrl, BaseModel
 
-from src.api.dependencies import get_vector_store, get_youtube_transcriber, get_bilibili_transcriber, get_pdf_loader
+from src.api.dependencies import get_vector_store, get_youtube_transcriber, get_bilibili_transcriber, get_youku_transcriber, get_pdf_loader
 from src.core.document_processor import DocumentProcessor
 from src.core.vectorstore import QdrantStore
 from src.core.youtube_transcriber import YouTubeTranscriber, BilibiliTranscriber
+from src.core.youku_transcriber import YoukuTranscriber
 from src.core.pdf_loader import PDFLoader
 from src.models.schemas import IngestResponse, ManualIngestRequest, YouTubeIngestRequest
 
@@ -21,17 +22,23 @@ class BilibiliIngestRequest(BaseModel):
     metadata: Optional[Dict[str, str]] = None
 
 
+class YoukuIngestRequest(BaseModel):
+    """Request model for Youku video ingestion."""
+    url: HttpUrl
+    metadata: Optional[Dict[str, str]] = None
+
+
 class BatchVideoIngestRequest(BaseModel):
     """Request model for batch video ingestion."""
     urls: List[HttpUrl]
-    platform: str = "youtube"  # "youtube" or "bilibili"
+    platform: str = "youtube"  # "youtube", "bilibili", or "youku"
     metadata: Optional[List[Dict[str, str]]] = None
 
 
 @router.post("/youtube", response_model=IngestResponse)
 async def ingest_youtube(
     youtube_request: YouTubeIngestRequest,
-    force_whisper: bool = Query(False, description="Force using Whisper for transcription"),
+    force_whisper: bool = Query(True, description="Force using Whisper for transcription"),
     vector_store: QdrantStore = Depends(get_vector_store),
     youtube_transcriber: YouTubeTranscriber = Depends(get_youtube_transcriber),
 ) -> IngestResponse:
@@ -73,16 +80,17 @@ async def ingest_youtube(
 
 @router.post("/bilibili", response_model=IngestResponse)
 async def ingest_bilibili(
-    bilibili_request: BilibiliIngestRequest,
-    vector_store: QdrantStore = Depends(get_vector_store),
-    bilibili_transcriber: BilibiliTranscriber = Depends(get_bilibili_transcriber),
+        bilibili_request: BilibiliIngestRequest,
+        force_whisper: bool = Query(True, description="Force using Whisper for transcription"),
+        vector_store: QdrantStore = Depends(get_vector_store),
+        bilibili_transcriber: BilibiliTranscriber = Depends(get_bilibili_transcriber),
 ) -> IngestResponse:
     """
     Ingest a Bilibili video with GPU-accelerated transcription.
-    
+
     Args:
         bilibili_request: Bilibili ingest request with URL and optional metadata
-        
+
     Returns:
         Ingest response with document IDs
     """
@@ -92,13 +100,14 @@ async def ingest_bilibili(
             vector_store=vector_store,
             device=bilibili_transcriber.device
         )
-        
+
         # Process the Bilibili video
         document_ids = processor.process_bilibili_video(
             url=str(bilibili_request.url),
-            custom_metadata=bilibili_request.metadata
+            custom_metadata=bilibili_request.metadata,
+            force_whisper=force_whisper
         )
-        
+
         return IngestResponse(
             message=f"Successfully ingested Bilibili video: {bilibili_request.url}",
             document_count=len(document_ids),
@@ -108,6 +117,49 @@ async def ingest_bilibili(
         raise HTTPException(
             status_code=500,
             detail=f"Error ingesting Bilibili video: {str(e)}",
+        )
+
+
+@router.post("/youku", response_model=IngestResponse)
+async def ingest_youku(
+        youku_request: YoukuIngestRequest,
+        force_whisper: bool = Query(True, description="Force using Whisper for transcription"),
+        vector_store: QdrantStore = Depends(get_vector_store),
+        youku_transcriber: YoukuTranscriber = Depends(get_youku_transcriber),
+) -> IngestResponse:
+    """
+    Ingest a Youku video with GPU-accelerated transcription.
+
+    Args:
+        youku_request: Youku ingest request with URL and optional metadata
+        force_whisper: Force using Whisper for transcription (default: True)
+
+    Returns:
+        Ingest response with document IDs
+    """
+    try:
+        # Initialize document processor
+        processor = DocumentProcessor(
+            vector_store=vector_store,
+            device=youku_transcriber.device
+        )
+
+        # Process the Youku video
+        document_ids = processor.process_youku_video(
+            url=str(youku_request.url),
+            custom_metadata=youku_request.metadata,
+            force_whisper=force_whisper
+        )
+
+        return IngestResponse(
+            message=f"Successfully ingested Youku video: {youku_request.url}",
+            document_count=len(document_ids),
+            document_ids=document_ids,
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error ingesting Youku video: {str(e)}",
         )
 
 

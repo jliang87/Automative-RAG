@@ -17,53 +17,20 @@ set -a
 source .env
 set +a
 
-# Check if running in Docker or locally
-IN_DOCKER=false
-if [ -f "/.dockerenv" ]; then
-    IN_DOCKER=true
-    echo "Running in Docker environment"
-else
-    echo "Running in local environment"
-fi
+# Always use host models directory for downloading
+HOST_MODELS_DIR=${HOST_MODELS_DIR:-"models"}
 
-# Set default model directories if not specified in .env
-# Use appropriate paths based on environment (Docker vs local)
-if [ "$IN_DOCKER" = true ]; then
-    # Docker paths (absolute)
-    DEFAULT_EMBEDDING_DIR="/app/models/embeddings"
-    DEFAULT_COLBERT_DIR="/app/models/colbert"
-    DEFAULT_LLM_DIR="/app/models/llm"
-    DEFAULT_WHISPER_DIR="/app/models/whisper"
-else
-    # Local paths (relative)
-    DEFAULT_EMBEDDING_DIR="models/embeddings"
-    DEFAULT_COLBERT_DIR="models/colbert"
-    DEFAULT_LLM_DIR="models/llm"
-    DEFAULT_WHISPER_DIR="models/whisper"
-fi
-
-EMBEDDING_DIR=${EMBEDDING_CACHE_DIR:-$DEFAULT_EMBEDDING_DIR}
-COLBERT_DIR=${COLBERT_MODEL:-$DEFAULT_COLBERT_DIR}
-LLM_DIR=${LLM_CACHE_DIR:-$DEFAULT_LLM_DIR}
-WHISPER_DIR=${WHISPER_CACHE_DIR:-$DEFAULT_WHISPER_DIR}
-
-# Model identifiers
-BGE_MODEL="BAAI/bge-small-en-v1.5"
-COLBERT_MODEL="colbert-ir/colbertv2.0"
-DEEPSEEK_MODEL="deepseek-ai/DeepSeek-R1-Distill-Qwen-7B"
-WHISPER_MODEL=${WHISPER_MODEL_SIZE:-"medium"}
-
-# Read environment variables with defaults
-EMBEDDING_DIR=${EMBEDDING_MODEL:-"models/embeddings"}
-COLBERT_DIR=${COLBERT_MODEL:-"models/colbert"}
-LLM_DIR=${DEEPSEEK_MODEL:-"models/llm"}
-WHISPER_DIR=${WHISPER_CACHE_DIR:-"models/whisper"}
+# Set paths for specific model types
+EMBEDDING_DIR="${HOST_MODELS_DIR}/${EMBEDDING_MODEL_PATH:-embeddings}"
+COLBERT_DIR="${HOST_MODELS_DIR}/${COLBERT_MODEL_PATH:-colbert}"
+LLM_DIR="${HOST_MODELS_DIR}/${LLM_MODEL_PATH:-llm}"
+WHISPER_DIR="${HOST_MODELS_DIR}/${WHISPER_MODEL_PATH:-whisper}"
 
 # Get default model names from environment or use defaults
 DEFAULT_EMBEDDING_MODEL_NAME=${DEFAULT_EMBEDDING_MODEL:-"bge-small-en-v1.5"}
 DEFAULT_COLBERT_MODEL_NAME=${DEFAULT_COLBERT_MODEL:-"colbertv2.0"}
 DEFAULT_LLM_MODEL_NAME=${DEFAULT_LLM_MODEL:-"DeepSeek-R1-Distill-Qwen-7B"}
-WHISPER_MODEL=${DEFAULT_WHISPER_MODEL:-"medium"}
+DEFAULT_WHISPER_MODEL_NAME=${DEFAULT_WHISPER_MODEL:-"medium"}
 
 # Model identifiers (Hugging Face)
 BGE_MODEL_ID=${HF_EMBEDDING_MODEL:-"BAAI/bge-small-en-v1.5"}
@@ -71,15 +38,16 @@ COLBERT_MODEL_ID=${HF_COLBERT_MODEL:-"colbert-ir/colbertv2.0"}
 DEEPSEEK_MODEL_ID=${HF_DEEPSEEK_MODEL:-"deepseek-ai/DeepSeek-R1-Distill-Qwen-7B"}
 
 # Set actual model directories with specific model names
-EMBEDDING_MODEL_DIR="$EMBEDDING_DIR/$DEFAULT_EMBEDDING_MODEL_NAME"
-COLBERT_MODEL_DIR="$COLBERT_DIR/$DEFAULT_COLBERT_MODEL_NAME"
-LLM_MODEL_DIR="$LLM_DIR/$DEFAULT_LLM_MODEL_NAME"
-WHISPER_MODEL_DIR="$WHISPER_DIR/$WHISPER_MODEL"
+EMBEDDING_MODEL_DIR="${EMBEDDING_DIR}/${DEFAULT_EMBEDDING_MODEL_NAME}"
+COLBERT_MODEL_DIR="${COLBERT_DIR}/${DEFAULT_COLBERT_MODEL_NAME}"
+LLM_MODEL_DIR="${LLM_DIR}/${DEFAULT_LLM_MODEL_NAME}"
+WHISPER_MODEL_DIR="${WHISPER_DIR}/${DEFAULT_WHISPER_MODEL_NAME}"
 
 # Create directories if they don't exist
-mkdir -p "$EMBEDDING_MODEL_DIR" "$COLBERT_MODEL_DIR" "$LLM_MODEL_DIR" "$WHISPER_MODEL_DIR"
+mkdir -p "${EMBEDDING_MODEL_DIR}" "${COLBERT_MODEL_DIR}" "${LLM_MODEL_DIR}" "${WHISPER_MODEL_DIR}"
 
-echo "Starting model downloads..."
+echo "Starting model downloads to host system (${HOST_MODELS_DIR})..."
+echo "These models will be used by the container via volume mount to ${CONTAINER_MODELS_DIR}"
 
 # Check for Python
 if ! command -v python &> /dev/null; then
@@ -88,12 +56,12 @@ if ! command -v python &> /dev/null; then
 fi
 
 # Download BGE model for embeddings
-echo "Downloading embedding model: $BGE_MODEL_ID..."
+echo "Downloading embedding model: ${BGE_MODEL_ID}..."
 python -c "
 from sentence_transformers import SentenceTransformer
 import os
-os.environ['TRANSFORMERS_CACHE'] = os.path.abspath('$EMBEDDING_MODEL_DIR')
-model = SentenceTransformer('$BGE_MODEL_ID')
+os.environ['TRANSFORMERS_CACHE'] = os.path.abspath('${EMBEDDING_MODEL_DIR}')
+model = SentenceTransformer('${BGE_MODEL_ID}')
 print('Embedding model downloaded successfully.')
 "
 
@@ -103,12 +71,12 @@ if [ $? -ne 0 ]; then
 fi
 
 # Download ColBERT model
-echo "Downloading ColBERT model: $COLBERT_MODEL_ID..."
+echo "Downloading ColBERT model: ${COLBERT_MODEL_ID}..."
 python -c "
 from transformers import AutoTokenizer
 import os
-os.environ['TRANSFORMERS_CACHE'] = os.path.abspath('$COLBERT_MODEL_DIR')
-tokenizer = AutoTokenizer.from_pretrained('$COLBERT_MODEL_ID', use_fast=True)
+os.environ['TRANSFORMERS_CACHE'] = os.path.abspath('${COLBERT_MODEL_DIR}')
+tokenizer = AutoTokenizer.from_pretrained('${COLBERT_MODEL_ID}', use_fast=True)
 print('ColBERT model downloaded successfully.')
 "
 
@@ -118,16 +86,16 @@ if [ $? -ne 0 ]; then
 fi
 
 # Download DeepSeek model
-echo "Downloading DeepSeek model: $DEEPSEEK_MODEL_ID..."
+echo "Downloading DeepSeek model: ${DEEPSEEK_MODEL_ID}..."
 python -c "
 from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
 import torch
 import os
-os.environ['TRANSFORMERS_CACHE'] = os.path.abspath('$LLM_MODEL_DIR')
+os.environ['TRANSFORMERS_CACHE'] = os.path.abspath('${LLM_MODEL_DIR}')
 
 # Just download the tokenizer first (much smaller)
 print('Downloading tokenizer...')
-tokenizer = AutoTokenizer.from_pretrained('$DEEPSEEK_MODEL_ID', trust_remote_code=True)
+tokenizer = AutoTokenizer.from_pretrained('${DEEPSEEK_MODEL_ID}', trust_remote_code=True)
 
 # Ask for confirmation before downloading the full model
 print('Tokenizer downloaded. The full model is several GB in size.')
@@ -140,10 +108,10 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
 from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
 import torch
 import os
-os.environ['TRANSFORMERS_CACHE'] = os.path.abspath('$LLM_MODEL_DIR')
+os.environ['TRANSFORMERS_CACHE'] = os.path.abspath('${LLM_MODEL_DIR}')
 
 print('Downloading full model...')
-tokenizer = AutoTokenizer.from_pretrained('$DEEPSEEK_MODEL_ID', trust_remote_code=True)
+tokenizer = AutoTokenizer.from_pretrained('${DEEPSEEK_MODEL_ID}', trust_remote_code=True)
 
 # Configure quantization (reduces size and memory usage)
 quantization_config = BitsAndBytesConfig(
@@ -155,7 +123,7 @@ quantization_config = BitsAndBytesConfig(
 
 # Download the model with quantization
 model = AutoModelForCausalLM.from_pretrained(
-    '$DEEPSEEK_MODEL_ID',
+    '${DEEPSEEK_MODEL_ID}',
     quantization_config=quantization_config,
     device_map='auto',
     trust_remote_code=True
@@ -171,12 +139,12 @@ else
 fi
 
 # Download Whisper model
-echo "Downloading Whisper $WHISPER_MODEL model..."
+echo "Downloading Whisper ${DEFAULT_WHISPER_MODEL_NAME} model..."
 python -c "
 import whisper
 import os
-os.environ['XDG_CACHE_HOME'] = os.path.abspath('$WHISPER_MODEL_DIR')
-model = whisper.load_model('$WHISPER_MODEL')
+os.environ['XDG_CACHE_HOME'] = os.path.abspath('${WHISPER_MODEL_DIR}')
+model = whisper.load_model('${DEFAULT_WHISPER_MODEL_NAME}')
 print('Whisper model downloaded successfully.')
 "
 
@@ -186,10 +154,14 @@ if [ $? -ne 0 ]; then
 fi
 
 echo "All models downloaded successfully!"
-echo "Model locations:"
-echo "- Embedding model: $EMBEDDING_MODEL_DIR"
-echo "- ColBERT model: $COLBERT_MODEL_DIR"
-echo "- DeepSeek LLM: $LLM_MODEL_DIR"
-echo "- Whisper model: $WHISPER_MODEL_DIR"
+echo "Model locations on host system:"
+echo "- Embedding model: ${EMBEDDING_MODEL_DIR}"
+echo "- ColBERT model: ${COLBERT_MODEL_DIR}"
+echo "- DeepSeek LLM: ${LLM_MODEL_DIR}"
+echo "- Whisper model: ${WHISPER_MODEL_DIR}"
 echo ""
-echo "You can update model paths in the .env file if needed."
+echo "These models will be available to containers at:"
+echo "- Embedding model: ${CONTAINER_MODELS_DIR}/${EMBEDDING_MODEL_PATH}/${DEFAULT_EMBEDDING_MODEL_NAME}"
+echo "- ColBERT model: ${CONTAINER_MODELS_DIR}/${COLBERT_MODEL_PATH}/${DEFAULT_COLBERT_MODEL_NAME}"
+echo "- DeepSeek LLM: ${CONTAINER_MODELS_DIR}/${LLM_MODEL_PATH}/${DEFAULT_LLM_MODEL_NAME}"
+echo "- Whisper model: ${CONTAINER_MODELS_DIR}/${WHISPER_MODEL_PATH}/${DEFAULT_WHISPER_MODEL_NAME}"

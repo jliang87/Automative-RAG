@@ -9,7 +9,8 @@ from src.core.local_llm import LocalDeepSeekLLM
 from src.core.retriever import HybridRetriever
 from src.core.vectorstore import QdrantStore
 from src.core.youtube_transcriber import YouTubeTranscriber, BilibiliTranscriber
-from src.core.pdf_loader import PDFLoader
+from src.core.youku_transcriber import YoukuTranscriber
+from src.core.pdf_loader import PDFLoaderr
 
 # Authentication dependency
 async def get_token_header(x_token: str = Header(...)):
@@ -76,14 +77,24 @@ def get_youtube_transcriber() -> YouTubeTranscriber:
         whisper_model_size=settings.whisper_model_size,
         device=settings.device,
         use_youtube_captions=settings.use_youtube_captions,
-        use_whisper_as_fallback=settings.use_whisper_as_fallback
+        use_whisper_as_fallback=settings.use_whisper_as_fallback,
+        force_whisper=settings.force_whisper
     )
 
 # Bilibili transcriber dependency with GPU support
 def get_bilibili_transcriber() -> BilibiliTranscriber:
     return BilibiliTranscriber(
         whisper_model_size=settings.whisper_model_size,
-        device=settings.device
+        device=settings.device,
+        force_whisper=settings.force_whisper
+    )
+
+# Youku transcriber dependency with GPU support
+def get_youku_transcriber() -> YoukuTranscriber:
+    return YoukuTranscriber(
+        whisper_model_size=settings.whisper_model_size,
+        device=settings.device,
+        force_whisper=settings.force_whisper
     )
 
 # PDF loader dependency with GPU support

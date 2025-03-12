@@ -6,9 +6,6 @@ from langchain_community.embeddings import HuggingFaceEmbeddings
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from dotenv import load_dotenv
 
-# Import utility for model paths
-from src.utils.model_paths import get_embedding_model_path
-
 # Load environment variables from .env file
 load_dotenv()
 
@@ -32,22 +29,70 @@ class Settings(BaseSettings):
     use_fp16: bool = os.getenv("USE_FP16", "true").lower() == "true"
     batch_size: int = int(os.getenv("BATCH_SIZE", "16"))
 
-    # Model settings - these can be HuggingFace IDs or local paths
-    embedding_model: str = os.getenv("EMBEDDING_MODEL", "/app/models/embeddings")
-    colbert_model: str = os.getenv("COLBERT_MODEL", "/app/models/colbert")
+    # Base directories for models
+    # When running in Docker, we use the container paths
+    # When running the download scripts, we use the host paths
+    host_models_dir: str = os.getenv("HOST_MODELS_DIR", "models")
+    container_models_dir: str = os.getenv("CONTAINER_MODELS_DIR", "/app/models")
 
-    # LLM settings (local DeepSeek model)
-    deepseek_model: str = os.getenv("DEEPSEEK_MODEL", "/app/models/llm")
+    # Determine if we're running in a container
+    # If CONTAINER_RUNTIME env var is set or /proc/1/cgroup contains 'docker' or 'kubepods'
+    @property
+    def is_container(self) -> bool:
+        if os.getenv("CONTAINER_RUNTIME", ""):
+            return True
+        try:
+            with open('/proc/1/cgroup', 'r') as f:
+                return any(e in f.read() for e in ['docker', 'kubepods'])
+        except:
+            # If we can't determine, assume not a container
+            return False
+
+    # Model base directories depend on whether we're in a container or not
+    @property
+    def models_dir(self) -> str:
+        return self.container_models_dir if self.is_container else self.host_models_dir
+
+    # Paths for specific model types
+    embedding_model_path: str = os.getenv("EMBEDDING_MODEL_PATH", "embeddings")
+    colbert_model_path: str = os.getenv("COLBERT_MODEL_PATH", "colbert")
+    llm_model_path: str = os.getenv("LLM_MODEL_PATH", "llm")
+    whisper_model_path: str = os.getenv("WHISPER_MODEL_PATH", "whisper")
+
+    # Default model names
+    default_embedding_model: str = os.getenv("DEFAULT_EMBEDDING_MODEL", "bge-small-en-v1.5")
+    default_colbert_model: str = os.getenv("DEFAULT_COLBERT_MODEL", "colbertv2.0")
+    default_llm_model: str = os.getenv("DEFAULT_LLM_MODEL", "DeepSeek-R1-Distill-Qwen-7B")
+    default_whisper_model: str = os.getenv("DEFAULT_WHISPER_MODEL", "medium")
+
+    # Full paths to models
+    @property
+    def embedding_model(self) -> str:
+        return os.path.join(self.models_dir, self.embedding_model_path, self.default_embedding_model)
+
+    @property
+    def colbert_model(self) -> str:
+        return os.path.join(self.models_dir, self.colbert_model_path, self.default_colbert_model)
+
+    @property
+    def deepseek_model(self) -> str:
+        return os.path.join(self.models_dir, self.llm_model_path, self.default_llm_model)
+
+    @property
+    def whisper_model(self) -> str:
+        return os.path.join(self.models_dir, self.whisper_model_path, self.default_whisper_model)
+
+    # LLM settings
     llm_use_4bit: bool = os.getenv("LLM_USE_4BIT", "true").lower() == "true"
     llm_use_8bit: bool = os.getenv("LLM_USE_8BIT", "false").lower() == "true"
     llm_temperature: float = float(os.getenv("LLM_TEMPERATURE", "0.1"))
     llm_max_tokens: int = int(os.getenv("LLM_MAX_TOKENS", "512"))
 
-    # Whisper settings for YouTube transcription
+    # Whisper settings
     whisper_model_size: str = os.getenv("WHISPER_MODEL_SIZE", "medium")
-    whisper_model_path: Optional[str] = os.getenv("WHISPER_MODEL_PATH", None)
-    use_youtube_captions: bool = os.getenv("USE_YOUTUBE_CAPTIONS", "true").lower() == "true"
-    use_whisper_as_fallback: bool = os.getenv("USE_WHISPER_AS_FALLBACK", "true").lower() == "true"
+    use_youtube_captions: bool = os.getenv("USE_YOUTUBE_CAPTIONS", "false").lower() == "true"
+    use_whisper_as_fallback: bool = os.getenv("USE_WHISPER_AS_FALLBACK", "false").lower() == "true"
+    force_whisper: bool = os.getenv("FORCE_WHISPER", "true").lower() == "true"
 
     # PDF OCR settings
     use_pdf_ocr: bool = os.getenv("USE_PDF_OCR", "true").lower() == "true"
@@ -62,46 +107,62 @@ class Settings(BaseSettings):
     chunk_size: int = int(os.getenv("CHUNK_SIZE", "1000"))
     chunk_overlap: int = int(os.getenv("CHUNK_OVERLAP", "200"))
 
-    # Data and model paths
-    data_dir: str = os.getenv("DATA_DIR", "data")
-    upload_dir: str = os.getenv("UPLOAD_DIR", "data/uploads")
-    models_dir: str = os.getenv("MODELS_DIR", "models")
-    embedding_cache_dir: str = os.getenv("EMBEDDING_CACHE_DIR", "models/embeddings")
-    llm_cache_dir: str = os.getenv("LLM_CACHE_DIR", "models/llm")
-    whisper_cache_dir: str = os.getenv("WHISPER_CACHE_DIR", "models/whisper")
+    # Data and upload directories
+    host_data_dir: str = os.getenv("HOST_DATA_DIR", "data")
+    container_data_dir: str = os.getenv("CONTAINER_DATA_DIR", "/app/data")
+    upload_dir: str = os.getenv("UPLOAD_DIR", "uploads")
+
+    @property
+    def data_dir(self) -> str:
+        base_dir = self.container_data_dir if self.is_container else self.host_data_dir
+        return base_dir
+
+    @property
+    def upload_path(self) -> str:
+        return os.path.join(self.data_dir, self.upload_dir)
+
+    # Cache directories
+    transformers_cache: str = os.getenv("TRANSFORMERS_CACHE", "models/cache")
+    hf_home: str = os.getenv("HF_HOME", "models/hub")
 
     # Embedding function
     @property
     def embedding_function(self) -> Callable:
-        # Get the complete embedding model path
-        from src.utils.model_paths import get_embedding_model_path
-        embedding_model_path = get_embedding_model_path(self.embedding_model)
-
         try:
-            # Use local model path with local_files_only=True to prevent downloads
+            # Use the appropriate model path
             return HuggingFaceEmbeddings(
-                model_name=embedding_model_path,
-                model_kwargs={"device": self.device, "local_files_only": True},
+                model_name=self.embedding_model,
+                model_kwargs={"device": self.device},
                 encode_kwargs={"batch_size": self.batch_size, "normalize_embeddings": True},
-                cache_folder=self.embedding_cache_dir
+                cache_folder=os.path.join(self.models_dir, self.embedding_model_path)
             )
         except Exception as e:
-            raise ValueError(f"Failed to load embedding model from {embedding_model_path}. Error: {str(e)}\n"
+            raise ValueError(f"Failed to load embedding model from {self.embedding_model}. Error: {str(e)}\n"
                              "Please run './download_models.sh' or './download_models_cn.sh' first to download models.")
+
     # Ensure required directories exist
     def initialize_directories(self) -> None:
-        os.makedirs(self.data_dir, exist_ok=True)
-        os.makedirs(self.upload_dir, exist_ok=True)
-        os.makedirs(os.path.join(self.data_dir, "youtube"), exist_ok=True)
-        os.makedirs(os.path.join(self.data_dir, "bilibili"), exist_ok=True)
-        os.makedirs(self.models_dir, exist_ok=True)
-        os.makedirs(self.embedding_cache_dir, exist_ok=True)
-        os.makedirs(self.llm_cache_dir, exist_ok=True)
-        os.makedirs(self.whisper_cache_dir, exist_ok=True)
+        # Use the appropriate base dirs based on container detection
+        data_dir = self.data_dir
+        models_dir = self.models_dir
+
+        os.makedirs(data_dir, exist_ok=True)
+        os.makedirs(os.path.join(data_dir, self.upload_dir), exist_ok=True)
+        os.makedirs(os.path.join(data_dir, "youtube"), exist_ok=True)
+        os.makedirs(os.path.join(data_dir, "bilibili"), exist_ok=True)
+        os.makedirs(os.path.join(data_dir, "youku"), exist_ok=True)
+
+        os.makedirs(models_dir, exist_ok=True)
+        os.makedirs(os.path.join(models_dir, self.embedding_model_path), exist_ok=True)
+        os.makedirs(os.path.join(models_dir, self.colbert_model_path), exist_ok=True)
+        os.makedirs(os.path.join(models_dir, self.llm_model_path), exist_ok=True)
+        os.makedirs(os.path.join(models_dir, self.whisper_model_path), exist_ok=True)
+        os.makedirs(os.path.join(models_dir, "cache"), exist_ok=True)
+        os.makedirs(os.path.join(models_dir, "hub"), exist_ok=True)
 
         # Set environment variables to control model caching
-        os.environ["TRANSFORMERS_CACHE"] = os.getenv("TRANSFORMERS_CACHE", os.path.join(self.models_dir, "cache"))
-        os.environ["HF_HOME"] = os.getenv("HF_HOME", os.path.join(self.models_dir, "hub"))
+        os.environ["TRANSFORMERS_CACHE"] = os.path.join(models_dir, "cache")
+        os.environ["HF_HOME"] = os.path.join(models_dir, "hub")
 
     # GPU configuration
     def get_gpu_info(self) -> Dict[str, any]:
@@ -131,7 +192,12 @@ class Settings(BaseSettings):
 settings = Settings()
 settings.initialize_directories()
 
-# Print GPU information on startup
+# Print environment and paths information on startup
+print(f"Running in {'container' if settings.is_container else 'host'} environment")
+print(f"Models directory: {settings.models_dir}")
+print(f"Data directory: {settings.data_dir}")
+
+# Print GPU information if available
 if settings.device.startswith("cuda"):
     gpu_info = settings.get_gpu_info()
     print(f"Using GPU: {gpu_info['device_name']}")

@@ -13,24 +13,28 @@ def render_ingest_page():
         "Ingest Automotive Data",
         "Add new automotive specifications data from various sources."
     )
-    
+
     # Tabs for different ingestion methods
-    tab1, tab2, tab3, tab4 = st.tabs(["YouTube", "Bilibili", "PDF", "Manual Entry"])
-    
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["YouTube", "Bilibili", "Youku", "PDF", "Manual Entry"])
+
     # YouTube ingestion
     with tab1:
         render_youtube_tab()
-    
+
     # Bilibili ingestion
     with tab2:
         render_bilibili_tab()
-    
-    # PDF ingestion
+
+    # Youku ingestion
     with tab3:
-        render_pdf_tab()
-    
-    # Manual entry
+        render_youku_tab()
+
+    # PDF ingestion
     with tab4:
+        render_pdf_tab()
+
+    # Manual entry
+    with tab5:
         render_manual_tab()
 
 
@@ -39,10 +43,11 @@ def render_youtube_tab():
     st.header("Ingest YouTube Video")
     
     youtube_url = st.text_input("YouTube URL", placeholder="https://www.youtube.com/watch?v=...")
-    
+
     force_whisper = st.checkbox(
-        "Force Whisper transcription", 
-        help="Enable to use Whisper even if YouTube captions are available. This may provide higher quality transcription but takes longer."
+        "Force Whisper transcription",
+        value=True,
+        help="Use Whisper for transcription instead of YouTube captions. This provides higher quality transcription."
     )
     
     with st.expander("Additional Metadata"):
@@ -100,28 +105,36 @@ def render_youtube_tab():
 def render_bilibili_tab():
     """Render the Bilibili ingestion tab."""
     st.header("Ingest Bilibili Video")
-    
+
     bilibili_url = st.text_input("Bilibili URL", placeholder="https://www.bilibili.com/video/...")
-    
+
+    force_whisper = st.checkbox(
+        "Force Whisper transcription",
+        value=True,
+        help="Whisper is always used for high-quality transcription of Bilibili videos",
+        key="bilibili_force_whisper",
+        disabled=True  # Disable the checkbox to prevent changes
+    )
+
     with st.expander("Additional Metadata"):
         bl_manufacturer = st.text_input("Manufacturer", key="bl_manufacturer")
         bl_model = st.text_input("Model", key="bl_model")
         bl_year = st.number_input("Year", min_value=1900, max_value=2100, value=2023, key="bl_year")
-        
+
         bl_categories = ["", "sedan", "suv", "truck", "sports", "minivan", "coupe", "convertible", "hatchback", "wagon"]
         bl_category = st.selectbox("Category", bl_categories, key="bl_category")
-        
+
         bl_engine_types = ["", "gasoline", "diesel", "electric", "hybrid", "hydrogen"]
         bl_engine_type = st.selectbox("Engine Type", bl_engine_types, key="bl_engine_type")
-        
+
         bl_transmission = ["", "automatic", "manual", "cvt", "dct"]
         bl_transmission_type = st.selectbox("Transmission", bl_transmission, key="bl_transmission")
-    
+
     if st.button("Ingest Bilibili Video", type="primary", key="bilibili_btn"):
         if not bilibili_url:
             st.warning("Please enter a Bilibili URL")
             return
-            
+
         # Prepare metadata
         custom_metadata = {}
         if bl_manufacturer:
@@ -136,20 +149,89 @@ def render_bilibili_tab():
             custom_metadata["engine_type"] = bl_engine_type
         if bl_transmission_type and bl_transmission_type != "":
             custom_metadata["transmission"] = bl_transmission_type
-            
+
         # Make API request
         with loading_spinner("Processing Bilibili video... This may take several minutes."):
+            # Add query parameter for force_whisper if selected
+            endpoint = f"/ingest/bilibili{'?force_whisper=true' if force_whisper else ''}"
+
             result = api_request(
-                endpoint="/ingest/bilibili",
+                endpoint=endpoint,
                 method="POST",
                 data={
                     "url": bilibili_url,
                     "metadata": custom_metadata if custom_metadata else None,
                 },
             )
-            
+
         if result:
             st.success(f"Successfully ingested Bilibili video: {result.get('document_count', 0)} chunks created")
+
+
+def render_youku_tab():
+    """Render the Youku ingestion tab."""
+    st.header("Ingest Youku Video")
+
+    youku_url = st.text_input("Youku URL", placeholder="https://v.youku.com/v_show/id_...")
+
+    force_whisper = st.checkbox(
+        "Force Whisper transcription",
+        value=True,
+        help="Use Whisper for high-quality transcription of Youku videos",
+        key="youku_force_whisper",
+        disabled=True  # Disable the checkbox to prevent changes
+    )
+
+    with st.expander("Additional Metadata"):
+        yk_manufacturer = st.text_input("Manufacturer", key="yk_manufacturer")
+        yk_model = st.text_input("Model", key="yk_model")
+        yk_year = st.number_input("Year", min_value=1900, max_value=2100, value=2023, key="yk_year")
+
+        yk_categories = ["", "sedan", "suv", "truck", "sports", "minivan", "coupe", "convertible", "hatchback", "wagon"]
+        yk_category = st.selectbox("Category", yk_categories, key="yk_category")
+
+        yk_engine_types = ["", "gasoline", "diesel", "electric", "hybrid", "hydrogen"]
+        yk_engine_type = st.selectbox("Engine Type", yk_engine_types, key="yk_engine_type")
+
+        yk_transmission = ["", "automatic", "manual", "cvt", "dct"]
+        yk_transmission_type = st.selectbox("Transmission", yk_transmission, key="yk_transmission")
+
+    if st.button("Ingest Youku Video", type="primary", key="youku_btn"):
+        if not youku_url:
+            st.warning("Please enter a Youku URL")
+            return
+
+        # Prepare metadata
+        custom_metadata = {}
+        if yk_manufacturer:
+            custom_metadata["manufacturer"] = yk_manufacturer
+        if yk_model:
+            custom_metadata["model"] = yk_model
+        if yk_year:
+            custom_metadata["year"] = yk_year
+        if yk_category and yk_category != "":
+            custom_metadata["category"] = yk_category
+        if yk_engine_type and yk_engine_type != "":
+            custom_metadata["engine_type"] = yk_engine_type
+        if yk_transmission_type and yk_transmission_type != "":
+            custom_metadata["transmission"] = yk_transmission_type
+
+        # Make API request
+        with loading_spinner("Processing Youku video... This may take several minutes."):
+            # Add query parameter for force_whisper if selected
+            endpoint = f"/ingest/youku{'?force_whisper=true' if force_whisper else ''}"
+
+            result = api_request(
+                endpoint=endpoint,
+                method="POST",
+                data={
+                    "url": youku_url,
+                    "metadata": custom_metadata if custom_metadata else None,
+                },
+            )
+
+        if result:
+            st.success(f"Successfully ingested Youku video: {result.get('document_count', 0)} chunks created")
 
 
 def render_pdf_tab():
