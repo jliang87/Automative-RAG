@@ -49,9 +49,6 @@ services:
     environment:
       - API_URL=http://api:8000
       - CONTAINER_RUNTIME=docker
-      - PYTHONPATH=/app
-      - STREAMLIT_SERVER_BASE_URL_PATH=/
-      - STREAMLIT_SERVER_ENABLE_CORS=true
     volumes:
       - ./data:/app/data
       - ./models:/app/models  # Map host models directory to container
