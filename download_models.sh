@@ -62,7 +62,7 @@ download_if_empty() {
         echo "$MODEL_NAME already exists in $LOCAL_DIR, skipping download."
     else
         echo "Downloading $MODEL_NAME..."
-        hfd.sh "$MODEL_ID" --local-dir "$LOCAL_DIR"
+        ./hfd.sh "$MODEL_ID" --local-dir "$LOCAL_DIR"
         echo "$MODEL_NAME downloaded successfully."
     fi
 }
