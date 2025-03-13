@@ -4,8 +4,6 @@ version: '3.8'
 x-common-variables: &common-env
   CONTAINER_RUNTIME: docker
   LOG_LEVEL: INFO
-  env_file:
-    - .env
 
 services:
   # 🔹 FastAPI Backend
@@ -37,6 +35,8 @@ services:
             - driver: nvidia
               count: all  # More flexible than `1`
               capabilities: [gpu]
+    env_file:
+      - .env
     ulimits:
       memlock: -1
       stack: 67108864
@@ -56,6 +56,8 @@ services:
       context: .
       dockerfile: Dockerfile.streamlit
     restart: always
+    env_file:
+      - .env
     ports:
       - "8501:8501"
     environment:
