@@ -8,7 +8,7 @@ from langchain_community.document_loaders import PyPDFLoader
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-from src.models.schemas import DocumentMetadata, DocumentSource
+from src.models.schema import DocumentMetadata, DocumentSource
 
 
 class PDFLoader:

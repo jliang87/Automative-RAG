@@ -9,7 +9,7 @@ from langchain_core.documents import Document
 from pytube import YouTube
 import whisper
 
-from src.models.schemas import DocumentMetadata, DocumentSource
+from src.models.schema import DocumentMetadata, DocumentSource
 from src.config.settings import settings
 
 

@@ -130,7 +130,7 @@ def test_process_text(vector_store):
     processor = DocumentProcessor(vector_store=vector_store)
     
     # Create a manual ingest request
-    from src.models.schemas import DocumentMetadata, DocumentSource, ManualIngestRequest
+    from src.models.schema import DocumentMetadata, DocumentSource, ManualIngestRequest
     
     request = ManualIngestRequest(
         content="The 2023 Toyota Camry has 208 horsepower.",

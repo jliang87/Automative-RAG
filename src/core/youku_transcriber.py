@@ -10,7 +10,7 @@ from typing import Dict, List, Optional, Tuple, Union
 import torch
 from langchain_core.documents import Document
 
-from src.models.schemas import DocumentMetadata, DocumentSource
+from src.models.schema import DocumentMetadata, DocumentSource
 from src.core.youtube_transcriber import YouTubeTranscriber
 
 

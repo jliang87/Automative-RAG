@@ -9,7 +9,7 @@ from src.core.pdf_loader import PDFLoader
 from src.core.vectorstore import QdrantStore
 from src.core.youtube_transcriber import YouTubeTranscriber, BilibiliTranscriber
 from src.core.youku_transcriber import YoukuTranscriber
-from src.models.schemas import DocumentMetadata, DocumentSource, ManualIngestRequest
+from src.models.schema import DocumentMetadata, DocumentSource, ManualIngestRequest
 from src.config.settings import settings
 
 

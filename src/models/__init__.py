@@ -1,5 +1,5 @@
 # Exports schema models
-from .schemas import *
+from .schema import *
 
 __all__ = [
     "DocumentSource", 

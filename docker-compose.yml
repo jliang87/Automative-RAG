@@ -4,7 +4,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.api
-    restart: always
     ports:
       - "8000:8000"
     environment:
@@ -43,7 +42,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.streamlit
-    restart: always
     ports:
       - "8501:8501"
     environment:

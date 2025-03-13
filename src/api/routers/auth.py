@@ -7,7 +7,7 @@ from jose import JWTError, jwt
 from passlib.context import CryptContext
 
 from src.config.settings import settings
-from src.models.schemas import TokenRequest, TokenResponse
+from src.models.schema import TokenRequest, TokenResponse
 
 router = APIRouter()
 
