@@ -46,6 +46,7 @@ ghostscript = "*"  # Required for camelot
 pymupdf = "*"  # PDF processing with GPU support
 bitsandbytes = "*"
 accelerate = "*"
+colbert_ai = "*"
 
 [tool.poetry.group.dev.dependencies]
 black = "*"
