@@ -5,12 +5,12 @@ from qdrant_client import QdrantClient
 
 from src.config.settings import settings
 from src.core.colbert_reranker import ColBERTReranker
-from src.core.local_llm import LocalDeepSeekLLM
+from src.core.llm import LocalDeepSeekLLM
 from src.core.retriever import HybridRetriever
 from src.core.vectorstore import QdrantStore
 from src.core.youtube_transcriber import YouTubeTranscriber, BilibiliTranscriber
 from src.core.youku_transcriber import YoukuTranscriber
-from src.core.pdf_loader import PDFLoaderr
+from src.core.pdf_loader import PDFLoader
 
 # Authentication dependency
 async def get_token_header(x_token: str = Header(...)):

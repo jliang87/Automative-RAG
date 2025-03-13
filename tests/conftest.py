@@ -21,7 +21,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 from src.api.main import app
 from src.core.vectorstore import QdrantStore
 from src.core.colbert_reranker import ColBERTReranker
-from src.core.local_llm import LocalDeepSeekLLM
+from src.core.llm import LocalDeepSeekLLM
 from src.config.settings import settings
 
 

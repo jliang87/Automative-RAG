@@ -38,4 +38,4 @@ RUN poetry config virtualenvs.create false && \
 COPY . .
 
 # Run Streamlit UI
-CMD ["streamlit", "run", "src/ui/app.py", "--server.port=8501", "--server.address=0.0.0.0"]
+CMD ["streamlit", "run", "src/ui/主页.py", "--server.port=8501", "--server.address=0.0.0.0"]

@@ -1,8 +1,7 @@
 """
-UI Components for the Streamlit interface.
+Streamlit 界面 UI 组件
 
-This module contains reusable UI components used across different pages
-of the Streamlit application.
+该模块包含 Streamlit 应用程序中的可复用 UI 组件。
 """
 
 import streamlit as st
@@ -11,7 +10,7 @@ from typing import Dict, List, Optional, Union, Callable, Any
 
 
 def header(title: str, description: Optional[str] = None):
-    """Display a header with optional description."""
+    """显示页面标题和描述"""
     st.title(title)
     if description:
         st.markdown(description)
@@ -19,7 +18,7 @@ def header(title: str, description: Optional[str] = None):
 
 
 def api_status_indicator():
-    """Display API connection status indicator."""
+    """显示 API 连接状态"""
     try:
         with httpx.Client() as client:
             response = client.get(
@@ -27,20 +26,20 @@ def api_status_indicator():
                 headers={"x-token": st.session_state.api_key},
                 timeout=3.0
             )
-            
+
         if response.status_code == 200:
-            st.sidebar.success("✅ API Connected")
+            st.sidebar.success("✅ API 连接正常")
             return True
         else:
-            st.sidebar.error(f"❌ API Error: {response.status_code}")
+            st.sidebar.error(f"❌ API 错误: {response.status_code}")
             return False
     except Exception as e:
-        st.sidebar.error(f"❌ Connection Error: {str(e)}")
+        st.sidebar.error(f"❌ 连接失败: {str(e)}")
         return False
 
 
 def gpu_status_indicator():
-    """Display GPU status information if available."""
+    """显示 GPU 状态信息"""
     try:
         with httpx.Client() as client:
             response = client.get(
@@ -48,36 +47,36 @@ def gpu_status_indicator():
                 headers={"x-token": st.session_state.api_key},
                 timeout=3.0
             )
-            
+
         if response.status_code == 200:
             data = response.json()
-            
+
             if "gpu_info" in data and data["gpu_info"]:
                 gpu_info = data["gpu_info"]
-                
-                # Create expandable section for GPU info
-                with st.sidebar.expander("GPU Status"):
+
+                # 创建 GPU 信息展开区域
+                with st.sidebar.expander("GPU 状态"):
                     if "device_name" in gpu_info:
                         st.info(f"GPU: {gpu_info['device_name']}")
-                    
+
                     if "memory_allocated" in gpu_info:
-                        st.metric("VRAM Used", gpu_info['memory_allocated'])
-                    
+                        st.metric("显存占用", gpu_info['memory_allocated'])
+
                     if "whisper_model" in gpu_info:
-                        st.text(f"Whisper: {gpu_info['whisper_model']}")
-                        
+                        st.text(f"Whisper 版本: {gpu_info['whisper_model']}")
+
                     if "fp16_enabled" in gpu_info:
                         fp16 = gpu_info['fp16_enabled']
-                        st.text(f"Mixed Precision: {'✓' if fp16 else '✗'}")
+                        st.text(f"混合精度: {'✓' if fp16 else '✗'}")
             else:
-                st.sidebar.warning("⚠️ Running on CPU")
-                
+                st.sidebar.warning("⚠️ 当前运行在 CPU 上")
+
     except Exception as e:
-        st.sidebar.warning("⚠️ GPU status unavailable")
+        st.sidebar.warning("⚠️ 无法获取 GPU 状态")
 
 
 def llm_status_indicator():
-    """Display LLM information if available."""
+    """显示 LLM（大语言模型）状态信息"""
     try:
         with httpx.Client() as client:
             response = client.get(
@@ -85,75 +84,75 @@ def llm_status_indicator():
                 headers={"x-token": st.session_state.api_key},
                 timeout=3.0
             )
-            
+
         if response.status_code == 200:
             llm_info = response.json()
-            
-            with st.sidebar.expander("LLM Status"):
-                # Model name - show shortened version if too long
-                model_name = llm_info.get("model_name", "Unknown")
+
+            with st.sidebar.expander("LLM 状态"):
+                # 模型名称 - 若名称过长，则显示缩短版本
+                model_name = llm_info.get("model_name", "未知")
                 if len(model_name) > 30:
                     display_name = f"{model_name.split('/')[-1]}"
                 else:
                     display_name = model_name
-                st.info(f"Model: {display_name}")
-                
-                # Quantization info
-                quant = llm_info.get("quantization", "none")
-                st.text(f"Quantization: {quant}")
-                
-                # VRAM usage if available
+                st.info(f"模型: {display_name}")
+
+                # 量化信息
+                quant = llm_info.get("quantization", "无")
+                st.text(f"量化方式: {quant}")
+
+                # 显存占用信息
                 if "vram_usage" in llm_info:
-                    st.metric("VRAM Used", llm_info["vram_usage"])
-                    
-                # Device info
-                device = llm_info.get("device", "Unknown")
-                st.text(f"Device: {device}")
+                    st.metric("显存占用", llm_info["vram_usage"])
+
+                # 设备信息
+                device = llm_info.get("device", "未知")
+                st.text(f"运行设备: {device}")
     except Exception:
-        pass  # Silently ignore errors
+        pass  # 忽略错误
 
 
 def metadata_filters():
-    """Render metadata filter inputs."""
-    st.subheader("Filters")
-    
+    """渲染元数据筛选选项"""
+    st.subheader("筛选条件")
+
     col1, col2 = st.columns(2)
-    
+
     with col1:
-        # These would ideally be populated from the API
-        manufacturers = ["", "Toyota", "Honda", "Ford", "BMW", "Tesla"]
-        manufacturer = st.selectbox("Manufacturer", manufacturers)
-        
+        # 这些选项应该从 API 获取
+        manufacturers = ["", "丰田", "本田", "福特", "宝马", "特斯拉"]
+        manufacturer = st.selectbox("厂商", manufacturers)
+
         years = [""] + [str(year) for year in range(2010, 2026)]
-        year = st.selectbox("Year", years)
-        
-        categories = ["", "sedan", "suv", "truck", "sports", "minivan"]
-        category = st.selectbox("Category", categories)
-    
+        year = st.selectbox("年份", years)
+
+        categories = ["", "轿车", "SUV", "卡车", "跑车", "MPV"]
+        category = st.selectbox("车型", categories)
+
     with col2:
         models = [""]
-        if manufacturer == "Toyota":
-            models += ["Camry", "Corolla", "RAV4", "Highlander"]
-        elif manufacturer == "Honda":
-            models += ["Civic", "Accord", "CR-V", "Pilot"]
-        elif manufacturer == "Ford":
-            models += ["Mustang", "F-150", "Explorer", "Escape"]
-        elif manufacturer == "BMW":
-            models += ["3 Series", "5 Series", "X3", "X5"]
-        elif manufacturer == "Tesla":
+        if manufacturer == "丰田":
+            models += ["凯美瑞", "卡罗拉", "RAV4", "汉兰达"]
+        elif manufacturer == "本田":
+            models += ["思域", "雅阁", "CR-V", "Pilot"]
+        elif manufacturer == "福特":
+            models += ["野马", "F-150", "探险者", "Escape"]
+        elif manufacturer == "宝马":
+            models += ["3系", "5系", "X3", "X5"]
+        elif manufacturer == "特斯拉":
             models += ["Model S", "Model 3", "Model X", "Model Y"]
-            
-        model = st.selectbox("Model", models)
-        
-        engine_types = ["", "gasoline", "diesel", "electric", "hybrid"]
-        engine_type = st.selectbox("Engine Type", engine_types)
-        
-        transmission_types = ["", "automatic", "manual", "cvt", "dct"]
-        transmission = st.selectbox("Transmission", transmission_types)
-        
-    # Build metadata filter
+
+        model = st.selectbox("车型", models)
+
+        engine_types = ["", "汽油", "柴油", "电动", "混合动力"]
+        engine_type = st.selectbox("发动机类型", engine_types)
+
+        transmission_types = ["", "自动", "手动", "CVT", "DCT"]
+        transmission = st.selectbox("变速箱", transmission_types)
+
+    # 构建筛选条件
     metadata_filter = {}
-    
+
     if manufacturer:
         metadata_filter["manufacturer"] = manufacturer
     if model:
@@ -166,7 +165,7 @@ def metadata_filters():
         metadata_filter["engine_type"] = engine_type
     if transmission:
         metadata_filter["transmission"] = transmission
-        
+
     return metadata_filter if metadata_filter else None
 
 
@@ -178,10 +177,10 @@ def api_request(
     params: Optional[Dict] = None,
     handle_error: Callable[[str], Any] = None,
 ) -> Optional[Dict]:
-    """Make a request to the API with error handling."""
+    """发送 API 请求并处理错误"""
     headers = {"x-token": st.session_state.api_key}
     url = f"{st.session_state.api_url}{endpoint}"
-    
+
     try:
         with httpx.Client() as client:
             if method == "GET":
@@ -194,20 +193,20 @@ def api_request(
             elif method == "DELETE":
                 response = client.delete(url, headers=headers)
             else:
-                st.error(f"Unsupported method: {method}")
+                st.error(f"不支持的请求方法: {method}")
                 return None
-                
+
             if response.status_code >= 400:
-                error_msg = f"API Error ({response.status_code}): {response.text}"
+                error_msg = f"API 错误 ({response.status_code}): {response.text}"
                 if handle_error:
                     return handle_error(error_msg)
                 else:
                     st.error(error_msg)
                     return None
-                    
+
             return response.json()
     except Exception as e:
-        error_msg = f"Connection error: {str(e)}"
+        error_msg = f"连接错误: {str(e)}"
         if handle_error:
             return handle_error(error_msg)
         else:
@@ -216,62 +215,35 @@ def api_request(
 
 
 def display_document(doc: Dict, index: int):
-    """Display a document from search results."""
+    """展示搜索结果文档"""
     metadata = doc.get("metadata", {})
-    
-    # Determine source icon
-    source_type = metadata.get("source", "unknown")
+
+    # 确定来源图标
+    source_type = metadata.get("source", "未知")
+    source_icon = "📚"
     if source_type == "youtube":
         source_icon = "🎬"
     elif source_type == "pdf":
         source_icon = "📄"
     elif source_type == "manual":
         source_icon = "📝"
-    else:
-        source_icon = "📚"
-        
-    # Format title
-    title = metadata.get("title", f"Document {index+1}")
-    
-    # Create expandable result card
+
+    title = metadata.get("title", f"文档 {index+1}")
+
     with st.expander(f"{source_icon} {title}"):
-        # Source information
-        st.caption(f"Source: {source_type}")
-        st.caption(f"Relevance Score: {doc.get('relevance_score', 0):.4f}")
-        
-        # Vehicle information if available
-        auto_info = []
-        if metadata.get("manufacturer"):
-            auto_info.append(metadata["manufacturer"])
-        if metadata.get("model"):
-            auto_info.append(metadata["model"])
-        if metadata.get("year"):
-            auto_info.append(str(metadata["year"]))
-            
-        if auto_info:
-            st.markdown(f"**Vehicle**: {' '.join(auto_info)}")
-            
-        # Display attributes like engine type if available
-        attributes = []
-        if metadata.get("category"):
-            attributes.append(f"Category: {metadata['category']}")
-        if metadata.get("engine_type"):
-            attributes.append(f"Engine: {metadata['engine_type']}")
-        if metadata.get("transmission"):
-            attributes.append(f"Transmission: {metadata['transmission']}")
-            
-        if attributes:
-            st.markdown(", ".join(attributes))
-            
-        # Document content
+        st.caption(f"来源: {source_type}")
+        st.caption(f"相关度: {doc.get('relevance_score', 0):.4f}")
+
+        auto_info = [metadata.get("manufacturer", ""), metadata.get("model", ""), str(metadata.get("year", ""))]
+        st.markdown(f"**车型**: {' '.join([x for x in auto_info if x])}")
+
         st.markdown("---")
         st.markdown(doc.get("content", ""))
-        
-        # URL if available
+
         if metadata.get("url"):
-            st.markdown(f"[Source Link]({metadata['url']})")
-            
-            
-def loading_spinner(text: str = "Processing..."):
-    """Creates a context manager for displaying a spinner."""
+            st.markdown(f"[原始链接]({metadata['url']})")
+
+
+def loading_spinner(text: str = "处理中..."):
+    """创建加载动画"""
     return st.spinner(text)

@@ -8,7 +8,7 @@ import torch
 from langchain_core.documents import Document
 
 from src.core.vectorstore import QdrantStore
-from src.core.hybrid_retriever import HybridRetriever
+from src.core.retriever import HybridRetriever
 
 
 def test_vector_store_initialization(mock_qdrant_client, embedding_function):

@@ -38,7 +38,8 @@ deepseek-ai = "*"
 beautifulsoup4 = "*"
 tiktoken = "*"
 openai-whisper = "*"  # GPU-accelerated transcription
-paddlepaddle-gpu = "*"  # GPU-accelerated OCR
+paddlepaddle = { version = "*", markers = "sys_platform == 'darwin'" }
+paddlepaddle-gpu = { version = "*", markers = "sys_platform == 'linux'" }
 paddleocr = "*"  # OCR for PDFs
 camelot-py = "*"  # Table extraction from PDFs
 opencv-python = "*"  # Required for camelot
@@ -46,7 +47,7 @@ ghostscript = "*"  # Required for camelot
 pymupdf = "*"  # PDF processing with GPU support
 bitsandbytes = "*"
 accelerate = "*"
-colbert_ai = "*"
+bcrypt = "*"
 
 [tool.poetry.group.dev.dependencies]
 black = "*"

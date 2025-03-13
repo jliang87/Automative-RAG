@@ -5,8 +5,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from src.api.dependencies import get_local_llm, get_retriever
-from src.core.hybrid_retriever import HybridRetriever
-from src.core.local_llm import LocalDeepSeekLLM
+from src.core.retriever import HybridRetriever
+from src.core.llm import LocalDeepSeekLLM
 from src.models.schema import QueryRequest, QueryResponse
 
 router = APIRouter()
