@@ -36,6 +36,7 @@ DEFAULT_WHISPER_MODEL_NAME=${DEFAULT_WHISPER_MODEL:-"medium"}
 BGE_MODEL_ID=${HF_EMBEDDING_MODEL:-"BAAI/bge-small-en-v1.5"}
 COLBERT_MODEL_ID=${HF_COLBERT_MODEL:-"colbert-ir/colbertv2.0"}
 DEEPSEEK_MODEL_ID=${HF_DEEPSEEK_MODEL:-"deepseek-ai/DeepSeek-R1-Distill-Qwen-7B"}
+WHISPER_MODEL_ID=${HF_WHISPER_MODEL:-"openai/whisper-medium"}
 
 # Set actual model directories with specific model names
 EMBEDDING_MODEL_DIR="${EMBEDDING_DIR}/${DEFAULT_EMBEDDING_MODEL_NAME}"
@@ -49,118 +50,28 @@ mkdir -p "${EMBEDDING_MODEL_DIR}" "${COLBERT_MODEL_DIR}" "${LLM_MODEL_DIR}" "${W
 echo "Starting model downloads to host system (${HOST_MODELS_DIR})..."
 echo "These models will be used by the container via volume mount to ${CONTAINER_MODELS_DIR}"
 
-# Check for Python
-if ! command -v python &> /dev/null; then
-    echo "Error: Python not found. Please install Python 3.8+ and try again."
-    exit 1
-fi
-
-# Install required packages
-echo "Installing required packages..."
-pip install torch torchvision torchaudio sentence-transformers transformers bitsandbytes accelerate tqdm
-pip install openai-whisper
-
 echo "Starting model downloads..."
 
-# Download BGE model for embeddings
-echo "Downloading embedding model: ${BGE_MODEL_ID}..."
-python -c "
-from sentence_transformers import SentenceTransformer
-import os
-cache_dir = os.path.abspath('${EMBEDDING_MODEL_DIR}')
-model = SentenceTransformer('${BGE_MODEL_ID}', cache_folder=cache_dir)
-print('Embedding model downloaded successfully.')
-"
+# Function to check if a directory has content
+download_if_empty() {
+    MODEL_ID=$1
+    LOCAL_DIR=$2
+    MODEL_NAME=$3
 
-if [ $? -ne 0 ]; then
-    echo "Error downloading embedding model."
-    exit 1
-fi
-
-# Download ColBERT model
-echo "Downloading ColBERT model: ${COLBERT_MODEL_ID}..."
-python -c "
-from transformers import AutoTokenizer
-import os
-cache_dir = os.path.abspath('${COLBERT_MODEL_DIR}')
-os.environ['HF_HOME'] = cache_dir  # Use HF_HOME instead of TRANSFORMERS_CACHE
-tokenizer = AutoTokenizer.from_pretrained('${COLBERT_MODEL_ID}', use_fast=True, cache_dir=cache_dir)
-print('ColBERT model downloaded successfully.')
-"
-
-if [ $? -ne 0 ]; then
-    echo "Error downloading ColBERT model."
-    exit 1
-fi
-
-# Download DeepSeek model
-echo "Downloading DeepSeek model: ${DEEPSEEK_MODEL_ID}..."
-python -c "
-from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
-import torch
-import os
-cache_dir = os.path.abspath('${LLM_MODEL_DIR}')
-os.environ['HF_HOME'] = cache_dir  # Use HF_HOME instead of TRANSFORMERS_CACHE
-# Just download the tokenizer first (much smaller)
-print('Downloading tokenizer...')
-tokenizer = AutoTokenizer.from_pretrained('${DEEPSEEK_MODEL_ID}', trust_remote_code=True, cache_dir=cache_dir)
-
-# Ask for confirmation before downloading the full model
-print('Tokenizer downloaded. The full model is several GB in size.')
-"
-
-read -p "Do you want to download the full DeepSeek model? This will use several GB of disk space. (y/n) " -n 1 -r
-echo
-if [[ $REPLY =~ ^[Yy]$ ]]; then
-    python -c "
-from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
-import torch
-import os
-cache_dir = os.path.abspath('${LLM_MODEL_DIR}')
-os.environ['HF_HOME'] = cache_dir  # Use HF_HOME instead of TRANSFORMERS_CACHE
-print('Downloading full model...')
-tokenizer = AutoTokenizer.from_pretrained('${DEEPSEEK_MODEL_ID}', trust_remote_code=True, cache_dir=cache_dir)
-
-# Configure quantization (reduces size and memory usage)
-quantization_config = BitsAndBytesConfig(
-    load_in_4bit=True,
-    bnb_4bit_compute_dtype=torch.float16,
-    bnb_4bit_quant_type='nf4',
-    bnb_4bit_use_double_quant=True
-)
-
-# Download the model with quantization
-model = AutoModelForCausalLM.from_pretrained(
-    '${DEEPSEEK_MODEL_ID}',
-    quantization_config=quantization_config,
-    device_map='auto',
-    trust_remote_code=True,
-    cache_dir=cache_dir
-)
-print('DeepSeek model downloaded successfully.')
-"
-    if [ $? -ne 0 ]; then
-        echo "Error downloading DeepSeek model."
-        exit 1
+    if [ -d "$LOCAL_DIR" ] && [ "$(ls -A "$LOCAL_DIR")" ]; then
+        echo "$MODEL_NAME already exists in $LOCAL_DIR, skipping download."
+    else
+        echo "Downloading $MODEL_NAME..."
+        hfd.sh "$MODEL_ID" --local-dir "$LOCAL_DIR"
+        echo "$MODEL_NAME downloaded successfully."
     fi
-else
-    echo "Skipping full model download."
-fi
+}
 
-# Download Whisper model
-echo "Downloading Whisper ${DEFAULT_WHISPER_MODEL_NAME} model..."
-python -c "
-import whisper
-import os
-os.environ['XDG_CACHE_HOME'] = os.path.abspath('${WHISPER_MODEL_DIR}')
-model = whisper.load_model('${DEFAULT_WHISPER_MODEL_NAME}')
-print('Whisper model downloaded successfully.')
-"
-
-if [ $? -ne 0 ]; then
-    echo "Error downloading Whisper model."
-    exit 1
-fi
+# Download models only if their respective directories are empty
+download_if_empty "$BGE_MODEL_ID" "$EMBEDDING_MODEL_DIR" "Embedding model"
+download_if_empty "$COLBERT_MODEL_ID" "$COLBERT_MODEL_DIR" "ColBERT model"
+download_if_empty "$DEEPSEEK_MODEL_ID" "$LLM_MODEL_DIR" "DeepSeek model"
+download_if_empty "$WHISPER_MODEL_ID" "$WHISPER_MODEL_DIR" "Whisper model"
 
 echo "All models downloaded successfully!"
 echo "Model locations on host system:"
