@@ -1,12 +1,7 @@
 version: '3.8'
 
-# Define reusable environment variables
-x-common-variables: &common-env
-  CONTAINER_RUNTIME: docker
-  LOG_LEVEL: INFO
-
 services:
-  # 🔹 FastAPI Backend
+  # FastAPI Backend
   api:
     build:
       context: .
@@ -15,61 +10,56 @@ services:
     ports:
       - "8000:8000"
     environment:
-      <<: *common-env
-      QDRANT_HOST: qdrant
-      QDRANT_PORT: 6333
-      DEVICE: cuda
-      USE_FP16: true
-      WHISPER_MODEL_SIZE: medium
-      USE_YOUTUBE_CAPTIONS: false
-      USE_WHISPER_AS_FALLBACK: false
-      FORCE_WHISPER: true
-      USE_PDF_OCR: true
+      - QDRANT_HOST=qdrant
+      - QDRANT_PORT=6333
+      - DEVICE=cuda
+      - USE_FP16=true
+      - WHISPER_MODEL_SIZE=medium
+      - USE_YOUTUBE_CAPTIONS=false
+      - USE_WHISPER_AS_FALLBACK=false
+      - FORCE_WHISPER=true
+      - USE_PDF_OCR=true
+      - LOG_LEVEL=INFO
+      - CONTAINER_RUNTIME=docker
     volumes:
       - ./data:/app/data
-      - ./models:/app/models  # Ensure models persist across builds
+      - ./models:/app/models  # Map host models directory to container
+    env_file:
+      - .env
     deploy:
       resources:
         reservations:
           devices:
             - driver: nvidia
-              count: all  # More flexible than `1`
+              count: 1
               capabilities: [gpu]
-    env_file:
-      - .env
     ulimits:
       memlock: -1
       stack: 67108864
     shm_size: 8gb
     depends_on:
-      qdrant:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
+      - qdrant
 
-  # 🔹 Streamlit UI
+  # Streamlit UI
   ui:
     build:
       context: .
       dockerfile: Dockerfile.streamlit
     restart: always
-    env_file:
-      - .env
     ports:
       - "8501:8501"
     environment:
-      <<: *common-env
-      API_URL: http://api:8000
+      - API_URL=http://api:8000
+      - CONTAINER_RUNTIME=docker
     volumes:
       - ./data:/app/data
-      - ./models:/app/models
+      - ./models:/app/models  # Map host models directory to container
+    env_file:
+      - .env
     depends_on:
       - api
 
-  # 🔹 Qdrant Vector Database
+  # Qdrant Vector Database
   qdrant:
     image: qdrant/qdrant:latest
     ports:
@@ -78,15 +68,7 @@ services:
     volumes:
       - qdrant-data:/qdrant/storage
     environment:
-      QDRANT_ALLOW_CORS: true
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:6333/readyz"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-    tmpfs:
-      - /qdrant/storage  # Reduce disk I/O for better performance
-    read_only: true  # Security improvement
+      - QDRANT_ALLOW_CORS=true
 
 volumes:
   qdrant-data:
