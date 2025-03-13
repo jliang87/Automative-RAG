@@ -3,7 +3,7 @@ import os
 import time
 
 import torch
-from colbert_ai import ColBERT
+from colbert import ColBERT
 from langchain_core.documents import Document
 from tqdm import tqdm
 from transformers import AutoTokenizer
