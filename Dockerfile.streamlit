@@ -1,13 +1,14 @@
 # Use slim Python base image for minimal size
 FROM python:3.10-slim
 
-# Set environment variables
+# Set environment variables for Poetry
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     POETRY_VERSION=1.7.1 \
     POETRY_HOME="/opt/poetry" \
     POETRY_VIRTUALENVS_IN_PROJECT=false \
     POETRY_NO_INTERACTION=1 \
+    PATH="$POETRY_HOME/bin:$PATH"
     PYTHONPATH=/app
 
 # Install system dependencies
@@ -17,10 +18,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # 🔹 Install Poetry and Ensure It's in PATH
-RUN curl -sSL https://install.python-poetry.org | python3 -
+RUN curl -sSL https://install.python-poetry.org | python3 && \
+    ln -s /opt/poetry/bin/poetry /usr/local/bin/poetry
 
 # Set working directory
 WORKDIR /app
+
+# 🔹 Check if Poetry is installed correctly
+RUN echo "Poetry Path: $(which poetry)" && poetry --version
 
 # Copy dependency files first to leverage Docker caching
 COPY pyproject.toml poetry.lock* ./
