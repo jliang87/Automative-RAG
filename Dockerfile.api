@@ -1,7 +1,7 @@
 # Use NVIDIA CUDA image as the base image for GPU support
 FROM nvidia/cuda:12.1.1-cudnn8-runtime-ubuntu22.04
 
-# Set environment variables
+# Set environment variables for better performance and caching
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     POETRY_VERSION=1.7.1 \
@@ -10,9 +10,12 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     POETRY_NO_INTERACTION=1 \
     DEBIAN_FRONTEND=noninteractive \
     TRANSFORMERS_CACHE="/app/models/cache" \
-    HF_HOME="/app/models/hub"
+    HF_HOME="/app/models/hub" \
+    TESSDATA_PREFIX=/usr/share/tesseract-ocr/4.00/tessdata \
+    FLAGS_allocator_strategy=naive_best_fit \
+    FLAGS_fraction_of_gpu_memory_to_use=0.8
 
-# Install system dependencies
+# Install system dependencies (kept in a separate cached layer)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3.10 \
     python3.10-dev \
@@ -36,33 +39,26 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Alias python to python3.10
 RUN ln -sf /usr/bin/python3.10 /usr/bin/python3 && ln -sf /usr/bin/python3 /usr/bin/python
 
-# Install Poetry
+# Install Poetry (kept in a separate cached layer)
 RUN curl -sSL https://install.python-poetry.org | python3 -
 ENV PATH="${POETRY_HOME}/bin:$PATH"
 
 # Set up working directory
 WORKDIR /app
 
-# Copy pyproject.toml and poetry.lock
+# Copy only the dependency files first (ensures caching of dependencies)
 COPY pyproject.toml poetry.lock* ./
 
-# Copy .env.example and rename to .env if .env doesn't exist
-COPY .env.example ./.env.example
-RUN if [ ! -f .env ]; then cp .env.example .env; fi
-
-# Install dependencies with GPU support
+# Install dependencies with GPU support (cached layer)
 RUN poetry config virtualenvs.create false \
     && poetry install --no-interaction --no-ansi --no-root --no-dev
 
-# Create necessary directories
+# Ensure necessary directories exist
 RUN mkdir -p /app/data/youtube /app/data/bilibili /app/data/uploads \
     /app/models/cache /app/models/hub \
     /app/models/embeddings /app/models/colbert /app/models/llm /app/models/whisper
 
-# Run a script to check if models exist at specified paths
-COPY ./scripts/check_models.py /app/scripts/check_models.py
-
-# Copy the rest of the application
+# Copy the rest of the application code
 COPY . .
 
 # Set up Tesseract and PaddleOCR data directories
@@ -70,7 +66,7 @@ ENV TESSDATA_PREFIX=/usr/share/tesseract-ocr/4.00/tessdata
 ENV FLAGS_allocator_strategy=naive_best_fit
 ENV FLAGS_fraction_of_gpu_memory_to_use=0.8
 
-# Health check
+# Health check to ensure the API is running
 HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 

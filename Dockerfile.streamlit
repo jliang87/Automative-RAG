@@ -1,40 +1,40 @@
-# Dockerfile.streamlit
+# Use slim Python base image for smaller size
 FROM python:3.10-slim
 
-# Set environment variables
+# Set environment variables for faster installs and stability
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     POETRY_VERSION=1.7.1 \
     POETRY_HOME="/opt/poetry" \
     POETRY_VIRTUALENVS_IN_PROJECT=false \
-    POETRY_NO_INTERACTION=1
+    POETRY_NO_INTERACTION=1 \
+    PATH="${POETRY_HOME}/bin:$PATH"
 
-# Install system dependencies
+# Install system dependencies (cached layer)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     gcc \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Poetry
+# Install Poetry separately (cached layer)
 RUN curl -sSL https://install.python-poetry.org | python3 -
-ENV PATH="${POETRY_HOME}/bin:$PATH"
 
-# Set up working directory
+# Set working directory
 WORKDIR /app
 
-# Copy pyproject.toml and poetry.lock
+# Copy dependency files first (enables better caching)
 COPY pyproject.toml poetry.lock* ./
 
-# Copy .env.example and rename to .env if .env doesn't exist
-COPY .env.example ./.env.example
-RUN if [ ! -f .env ]; then cp .env.example .env; fi
-
-# Install dependencies
+# Install dependencies and cache them
 RUN poetry config virtualenvs.create false \
     && poetry install --no-interaction --no-ansi --no-root --no-dev
 
-# Copy the rest of the application
+# Ensure .env exists (optimized version)
+COPY .env.example ./
+RUN test -f .env || cp .env.example .env
+
+# Copy application files (done last to avoid cache invalidation)
 COPY . .
 
-# Command to run the application
+# Run Streamlit UI
 CMD ["streamlit", "run", "src/ui/app.py", "--server.port=8501", "--server.address=0.0.0.0"]
