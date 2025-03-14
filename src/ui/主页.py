@@ -17,13 +17,14 @@ API_URL = os.environ.get("API_URL", "http://localhost:8000")
 API_KEY = os.environ.get("API_KEY", "default-api-key")
 
 # 会话状态初始化
+if "api_url" not in st.session_state:
+    st.session_state.api_url = API_URL
 if "api_key" not in st.session_state:
     st.session_state.api_key = API_KEY
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
-if "current_page" not in st.session_state:
-    st.session_state.current_page = "query"
-
+# if "current_page" not in st.session_state:
+#     st.session_state.current_page = "query"
 
 def make_api_request(
         endpoint: str,
@@ -58,7 +59,7 @@ def make_api_request(
 
 header(
     "汽车规格 RAG 系统",
-    "一个基于 GPU 加速的系统，用于使用后期交互式检索 (Late Interaction Retrieval) 进行汽车规格信息检索。"
+    "一个基于 GPU 加速的系统，用于使用延迟交互检索 (Late Interaction Retrieval) 进行汽车规格信息检索。"
 )
 
 # 系统概述
@@ -67,7 +68,7 @@ st.markdown("""
 
 该系统采用最先进的检索增强生成 (RAG) 技术，提供精确的汽车规格信息。主要特性包括：
 
-- **后期交互检索**（ColBERT）实现更精准的语义匹配
+- **延迟交互检索**（ColBERT）实现更精准的语义匹配
 - **本地 DeepSeek LLM** 提供无 API 依赖的答案生成
 - **多模态输入处理** 支持 YouTube、Bilibili、优酷视频和 PDF 文档
 - **全 GPU 加速**，支持转录、OCR、嵌入和推理计算
@@ -179,7 +180,7 @@ with st.expander("系统架构"):
     3. **检索系统**
        - Qdrant 进行初步检索
        - ColBERT 进行语义重排序
-       - 采用后期交互模式进行 Token 级分析
+       - 采用延迟交互模式进行 Token 级分析
 
     4. **生成层**
        - DeepSeek LLM 集成

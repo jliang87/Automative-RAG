@@ -2,7 +2,7 @@ import os
 from typing import Callable, Dict, List, Optional, Union
 
 import torch
-from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_huggingface import HuggingFaceEmbeddings  # ✅ Correct
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from dotenv import load_dotenv
 

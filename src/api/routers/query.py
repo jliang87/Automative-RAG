@@ -3,6 +3,7 @@ from typing import Dict, List, Optional, Union
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from typing import Dict, Any  # ✅ Import Any from typing
 
 from src.api.dependencies import get_local_llm, get_retriever
 from src.core.retriever import HybridRetriever
@@ -154,10 +155,10 @@ async def get_transmission_types() -> List[str]:
     ]
 
 
-@router.get("/llm-info", response_model=Dict[str, any])
+@router.get("/llm-info", response_model=Dict[str, Any])
 async def get_llm_info(
     llm: LocalDeepSeekLLM = Depends(get_local_llm)
-) -> Dict[str, any]:
+) -> Dict[str, Any]:
     """
     Get information about the local LLM configuration.
     

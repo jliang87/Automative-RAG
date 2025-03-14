@@ -48,6 +48,7 @@ pymupdf = "*"  # PDF processing with GPU support
 bitsandbytes = "*"
 accelerate = "*"
 bcrypt = "*"
+langchain_huggingface = "*"
 
 [tool.poetry.group.dev.dependencies]
 black = "*"

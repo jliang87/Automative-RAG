@@ -4,6 +4,7 @@ from typing import Dict, List, Optional
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, Query
 from fastapi.responses import JSONResponse
 from pydantic import HttpUrl, BaseModel
+from typing import Dict, Any  # ✅ Import Any from typing
 
 from src.api.dependencies import get_vector_store, get_youtube_transcriber, get_bilibili_transcriber, get_youku_transcriber, get_pdf_loader
 from src.core.document_processor import DocumentProcessor
@@ -163,13 +164,13 @@ async def ingest_youku(
         )
 
 
-@router.post("/batch-videos", response_model=Dict[str, any])
+@router.post("/batch-videos", response_model=Dict[str, Any])
 async def ingest_batch_videos(
     batch_request: BatchVideoIngestRequest,
     vector_store: QdrantStore = Depends(get_vector_store),
     youtube_transcriber: YouTubeTranscriber = Depends(get_youtube_transcriber),
     bilibili_transcriber: BilibiliTranscriber = Depends(get_bilibili_transcriber),
-) -> Dict[str, any]:
+) -> Dict[str, Any]:
     """
     Ingest multiple videos in batch with GPU acceleration.
     
@@ -333,12 +334,12 @@ async def delete_document(
         )
 
 
-@router.get("/status", response_model=Dict[str, any])
+@router.get("/status", response_model=Dict[str, Any])
 async def get_ingest_status(
     vector_store: QdrantStore = Depends(get_vector_store),
     youtube_transcriber: YouTubeTranscriber = Depends(get_youtube_transcriber),
     pdf_loader: PDFLoader = Depends(get_pdf_loader),
-) -> Dict[str, any]:
+) -> Dict[str, Any]:
     """
     Get ingestion status and statistics with GPU information.
     
