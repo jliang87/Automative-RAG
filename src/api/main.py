@@ -7,15 +7,16 @@ from contextlib import asynccontextmanager
 
 from src.api.routers import auth, ingest, query
 from src.config.settings import settings
-from src.api.dependencies import get_token_header
-from src.api.dependencies import load_llm, load_colbert,load_transcribers  # ✅ Import from dependencies.py
+from src.api.dependencies import get_token_header, load_all_components
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Load models once when the FastAPI server starts."""
-    load_llm()  # ✅ Ensures LLM is preloaded at startup
-    load_colbert() # ✅ Ensures ColBERT is preloaded at startup
-    load_transcribers()  # ✅ Load Transcribers once
+    """Load all components once when the FastAPI server starts."""
+    print("🚀 Starting application... Loading all components")
+    # Initialize all components at startup
+    load_all_components()
+    print("✅ All components loaded successfully!")
     yield  # Application runs
     print("🛑 Shutting down FastAPI... Cleaning up resources!")
 

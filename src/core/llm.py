@@ -11,6 +11,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline, BitsAndB
 
 from src.config.settings import settings
 
+
 class LocalLLM:
     """
     Local DeepSeek LLM integration for RAG with GPU acceleration.
@@ -97,17 +98,46 @@ class LocalLLM:
         else:
             quantization_config = None
 
-        # Load model
+        # Configure model loading
+        attn_config = {}
+
+        # If on CPU or if there are compatibility issues with sliding window attention,
+        # disable sliding window attention to avoid warnings
+        if not self.device.startswith("cuda") or not torch.cuda.is_available():
+            print("On CPU or without CUDA - disabling sliding window attention to prevent warnings")
+            attn_config["sliding_window"] = None
+            self.attention_type = "default_no_sliding_window"
+        else:
+            # Enable PyTorch's native Flash Attention support on GPU
+            print("Enabling PyTorch native attention optimizations...")
+            torch.backends.cuda.enable_flash_sdp(True)  # Enable FlashAttention
+            torch.backends.cuda.enable_mem_efficient_sdp(True)  # Enable memory-efficient attention
+            torch.backends.cuda.enable_math_sdp(True)  # Enable math attention
+
+            # Check which attention backend will be used (for reporting)
+            if torch.backends.cuda.flash_sdp_enabled():
+                print("PyTorch Flash Attention is enabled")
+                self.attention_type = "torch_flash_attention"
+            elif torch.backends.cuda.mem_efficient_sdp_enabled():
+                print("PyTorch Memory-Efficient Attention is enabled")
+                self.attention_type = "torch_mem_efficient_attention"
+            else:
+                print("Using PyTorch Math Attention")
+                self.attention_type = "torch_math_attention"
+
+        # Load model with appropriate configuration
         self.model = AutoModelForCausalLM.from_pretrained(
             self.model_path,
             quantization_config=quantization_config,
             torch_dtype=self.torch_dtype,
             device_map=self.device,
             trust_remote_code=True,
-            local_files_only=True  # Only use local files, don't try to download
+            local_files_only=True,  # Only use local files, don't try to download
+            **attn_config
         )
 
         # Create generation pipeline
+        # Note: We don't pass flash attention settings to the pipeline as it's already configured in the model
         self.pipe = pipeline(
             "text-generation",
             model=self.model,
@@ -115,7 +145,8 @@ class LocalLLM:
             return_full_text=False,
             max_new_tokens=self.max_tokens,
             temperature=self.temperature,
-            repetition_penalty=1.1
+            repetition_penalty=1.1,
+            torch_compile=False  # Disable torch compile which can conflict with Flash Attention
         )
 
         # Report loading time
@@ -303,6 +334,7 @@ When providing your answer, cite the specific sources (document titles or URLs) 
             "max_tokens": self.max_tokens,
             "quantization": "4-bit" if self.use_4bit else "8-bit" if self.use_8bit else "none",
             "torch_dtype": str(self.torch_dtype),
+            "attention_mechanism": self.attention_type,
         }
 
         return {**model_config, **memory_info}

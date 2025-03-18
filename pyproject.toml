@@ -47,8 +47,9 @@ ghostscript = "*"  # Required for camelot
 pymupdf = "*"  # PDF processing with GPU support
 bitsandbytes = "*"
 accelerate = "*"
-bcrypt = "*"
+bcrypt = "==4.0.1"
 langchain_huggingface = "*"
+langchain-qdrant ="*"
 
 [tool.poetry.group.dev.dependencies]
 black = "*"

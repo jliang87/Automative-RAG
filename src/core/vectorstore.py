@@ -1,6 +1,6 @@
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
-from langchain_community.vectorstores import Qdrant
+from langchain_qdrant import QdrantVectorStore
 from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
 from qdrant_client import QdrantClient
@@ -30,14 +30,15 @@ class QdrantStore:
         self.client = client
         self.collection_name = collection_name
         self.embedding_function = embedding_function
-        
+
         # Initialize Langchain Qdrant wrapper
-        self.langchain_qdrant = Qdrant(
+        self.langchain_qdrant = QdrantVectorStore(
             client=client,
             collection_name=collection_name,
-            embeddings=embedding_function,
+            embedding=embedding_function,
+            distance=rest.Distance.DOT,
         )
-        
+
         # Ensure collection exists
         self._ensure_collection()
 
@@ -47,25 +48,26 @@ class QdrantStore:
         """
         collections = self.client.get_collections().collections
         collection_names = [collection.name for collection in collections]
-        
+
         if self.collection_name not in collection_names:
             # Get embedding dimension
             # Create a sample embedding to determine dimension
             sample_embedding = self.embedding_function.embed_query("sample text")
             embedding_dimension = len(sample_embedding)
-            
+
             # Create the collection
             self.client.create_collection(
                 collection_name=self.collection_name,
                 vectors_config=rest.VectorParams(
                     size=embedding_dimension,
-                    distance=rest.Distance.COSINE,
+                    distance=rest.Distance.DOT,
                 ),
             )
-            
+            print(f"✅ QDrant collection {self.collection_name} created with {embedding_dimension} dimensions!")
+
             # Create payload index for common metadata fields
             self._create_payload_indexes()
-            
+
     def _create_payload_indexes(self) -> None:
         """
         Create payload indexes for common metadata fields to speed up filtering.
@@ -79,7 +81,7 @@ class QdrantStore:
             "metadata.transmission",
             "metadata.source",
         ]
-        
+
         for field in common_fields:
             self.client.create_payload_index(
                 collection_name=self.collection_name,
@@ -112,10 +114,10 @@ class QdrantStore:
             Qdrant Filter object
         """
         must_conditions = []
-        
+
         for key, value in metadata_filter.items():
             field_path = f"metadata.{key}"
-            
+
             if isinstance(value, list):
                 # For list values, create an OR condition
                 should_conditions = []
@@ -150,7 +152,7 @@ class QdrantStore:
                         match=MatchValue(value=value),
                     )
                 )
-        
+
         return Filter(must=must_conditions)
 
     def similarity_search_with_score(

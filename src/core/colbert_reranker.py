@@ -86,7 +86,7 @@ class ColBERTReranker:
 
             # Set to evaluation mode
             self.model.eval()
-            print(f"Successfully loaded model with {self.model.config.hidden_size} hidden dimensions")
+            print(f"Successfully loaded model {self.model_name} with {self.model.config.hidden_size} hidden dimensions")
 
         except Exception as e:
             raise ValueError(f"Failed to load model. Error: {str(e)}")
