@@ -383,7 +383,7 @@ You can now run your application and it will connect to the local Qdrant instanc
 
 The system uses the following AI models:
 
-- **Embedding Model**: BAAI/bge-small-en-v1.5
+- **Embedding Model**: BAAI/bge-large-en-v1.5
 - **Retrieval Model**: colbert-ir/colbertv2.0
 - **Language Model**: deepseek-ai/DeepSeek-R1-Distill-Qwen-7B
 - **Speech-to-Text**: OpenAI Whisper (medium)
@@ -435,7 +435,7 @@ USE_WHISPER_AS_FALLBACK=true  # Use Whisper if captions aren't available
 
 # PDF OCR Settings
 USE_PDF_OCR=true  # Enable GPU-accelerated OCR for scanned PDFs
-OCR_LANGUAGES=eng  # Language codes for OCR
+OCR_LANGUAGES=en  # Language codes for OCR
 ```
 
 ## Memory Optimization
@@ -507,7 +507,7 @@ from src.core.pdf_loader import PDFLoader
 pdf_loader = PDFLoader(
     device="cuda",
     use_ocr=True,  # Enable GPU-accelerated OCR
-    ocr_languages="eng"  # Set OCR languages
+    ocr_languages="en"  # Set OCR languages
 )
 
 # Process a PDF with GPU-accelerated OCR and extraction

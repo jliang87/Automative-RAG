@@ -60,26 +60,26 @@ class Settings(BaseSettings):
     whisper_model_path: str = os.getenv("WHISPER_MODEL_PATH", "whisper")
 
     # Default model names
-    default_embedding_model: str = os.getenv("DEFAULT_EMBEDDING_MODEL", "bge-small-en-v1.5")
+    default_embedding_model: str = os.getenv("DEFAULT_EMBEDDING_MODEL", "bge-large-en-v1.5")
     default_colbert_model: str = os.getenv("DEFAULT_COLBERT_MODEL", "colbertv2.0")
     default_llm_model: str = os.getenv("DEFAULT_LLM_MODEL", "DeepSeek-R1-Distill-Qwen-7B")
     default_whisper_model: str = os.getenv("DEFAULT_WHISPER_MODEL", "medium")
 
     # Full paths to models
     @property
-    def embedding_model(self) -> str:
+    def embedding_model_full_path(self) -> str:
         return os.path.join(self.models_dir, self.embedding_model_path, self.default_embedding_model)
 
     @property
-    def colbert_model(self) -> str:
+    def colbert_model_full_path(self) -> str:
         return os.path.join(self.models_dir, self.colbert_model_path, self.default_colbert_model)
 
     @property
-    def deepseek_model(self) -> str:
+    def llm_model_full_path(self) -> str:
         return os.path.join(self.models_dir, self.llm_model_path, self.default_llm_model)
 
     @property
-    def whisper_model(self) -> str:
+    def whisper_model_full_path(self) -> str:
         return os.path.join(self.models_dir, self.whisper_model_path, self.default_whisper_model)
 
     # LLM settings
@@ -96,7 +96,7 @@ class Settings(BaseSettings):
 
     # PDF OCR settings
     use_pdf_ocr: bool = os.getenv("USE_PDF_OCR", "true").lower() == "true"
-    ocr_languages: str = os.getenv("OCR_LANGUAGES", "eng")
+    ocr_languages: str = os.getenv("OCR_LANGUAGES", "en")
 
     # Retrieval settings
     retriever_top_k: int = int(os.getenv("RETRIEVER_TOP_K", "20"))
@@ -127,17 +127,17 @@ class Settings(BaseSettings):
 
     # Embedding function
     @property
-    def embedding_function(self) -> Callable:
+    def embedding_function(self) -> HuggingFaceEmbeddings:
         try:
             # Use the appropriate model path
             return HuggingFaceEmbeddings(
-                model_name=self.embedding_model,
+                model_name=self.embedding_model_full_path,
                 model_kwargs={"device": self.device},
                 encode_kwargs={"batch_size": self.batch_size, "normalize_embeddings": True},
                 cache_folder=os.path.join(self.models_dir, self.embedding_model_path)
             )
         except Exception as e:
-            raise ValueError(f"Failed to load embedding model from {self.embedding_model}. Error: {str(e)}\n"
+            raise ValueError(f"Failed to load embedding model from {self.embedding_model_full_path}. Error: {str(e)}\n"
                              "Please run './download_models.sh' or './download_models_cn.sh' first to download models.")
 
     # Ensure required directories exist

@@ -2,12 +2,12 @@ import time
 from typing import Dict, List, Optional, Union
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+import torch
 from typing import Dict, Any  # ✅ Import Any from typing
 
-from src.api.dependencies import get_local_llm, get_retriever
+from src.api.dependencies import get_llm, get_retriever
 from src.core.retriever import HybridRetriever
-from src.core.llm import LocalDeepSeekLLM
+from src.core.llm import LocalLLM
 from src.models.schema import QueryRequest, QueryResponse
 
 router = APIRouter()
@@ -17,7 +17,7 @@ router = APIRouter()
 async def query(
     request: QueryRequest,
     retriever: HybridRetriever = Depends(get_retriever),
-    llm: LocalDeepSeekLLM = Depends(get_local_llm),
+    llm: LocalLLM = Depends(get_llm),
 ) -> QueryResponse:
     """
     Query the RAG system with hybrid search, ColBERT reranking, and local DeepSeek LLM.
@@ -157,7 +157,7 @@ async def get_transmission_types() -> List[str]:
 
 @router.get("/llm-info", response_model=Dict[str, Any])
 async def get_llm_info(
-    llm: LocalDeepSeekLLM = Depends(get_local_llm)
+    llm: LocalLLM = Depends(get_llm)
 ) -> Dict[str, Any]:
     """
     Get information about the local LLM configuration.
@@ -166,7 +166,7 @@ async def get_llm_info(
         Dictionary with LLM information
     """
     info = {
-        "model_name": llm.model_name,
+        "model_name": llm.model_path,
         "device": llm.device,
         "temperature": llm.temperature,
         "max_tokens": llm.max_tokens,

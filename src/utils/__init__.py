@@ -18,14 +18,6 @@ from .helpers import (
 )
 
 from .logging import setup_logger, GPULogger
-from .model_paths import (
-    get_model_path,
-    get_embedding_model_path,
-    get_colbert_model_path,
-    get_llm_model_path,
-    get_whisper_model_path,
-    get_model_paths
-)
 
 __all__ = [
     # From helpers
@@ -45,12 +37,4 @@ __all__ = [
     # From logging
     "setup_logger",
     "GPULogger",
-
-    # From model_paths
-    "get_model_path",
-    "get_embedding_model_path",
-    "get_colbert_model_path",
-    "get_llm_model_path",
-    "get_whisper_model_path",
-    "get_model_paths"
 ]

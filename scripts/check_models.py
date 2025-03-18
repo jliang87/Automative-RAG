@@ -140,19 +140,19 @@ def main():
     logger.info(f"Running in {'container' if settings.is_container else 'host'} environment")
     logger.info(f"Models base directory: {settings.models_dir}")
     logger.info(f"Checking models at the following paths:")
-    logger.info(f"- Embedding model: {settings.embedding_model}")
-    logger.info(f"- ColBERT model: {settings.colbert_model}")
-    logger.info(f"- DeepSeek LLM model: {settings.deepseek_model}")
-    logger.info(f"- Whisper model: {settings.whisper_model}")
+    logger.info(f"- Embedding model: {settings.embedding_model_full_path}")
+    logger.info(f"- ColBERT model: {settings.colbert_model_full_path}")
+    logger.info(f"- LLM model: {settings.llm_model_full_path}")
+    logger.info(f"- Whisper model: {settings.whisper_model_full_path}")
 
     # Check and load each model
-    embedding_ok = check_embedding_model(settings.embedding_model)
-    colbert_ok = check_colbert_model(settings.colbert_model)
-    deepseek_ok = check_deepseek_model(settings.deepseek_model)
-    whisper_ok = check_whisper_model(settings.whisper_model, settings.whisper_model_size)
+    embedding_ok = check_embedding_model(settings.embedding_model_full_path)
+    colbert_ok = check_colbert_model(settings.colbert_model_full_path)
+    llm_ok = check_deepseek_model(settings.llm_model_full_path)
+    whisper_ok = check_whisper_model(settings.whisper_model_full_path, settings.whisper_model_size)
 
     # Check if all models are available
-    all_models_ok = embedding_ok and colbert_ok and deepseek_ok and whisper_ok
+    all_models_ok = embedding_ok and colbert_ok and llm_ok and whisper_ok
 
     if all_models_ok:
         logger.info("All models are available and ready to use")
@@ -163,8 +163,8 @@ def main():
             logger.error("Embedding model is missing or invalid")
         if not colbert_ok:
             logger.error("ColBERT model is missing or invalid")
-        if not deepseek_ok:
-            logger.error("DeepSeek model is missing or invalid")
+        if not llm_ok:
+            logger.error("LLM model is missing or invalid")
         if not whisper_ok:
             logger.error("Whisper model is missing or invalid")
 

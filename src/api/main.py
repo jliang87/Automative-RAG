@@ -3,9 +3,21 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.openapi.utils import get_openapi
 
+from contextlib import asynccontextmanager
+
 from src.api.routers import auth, ingest, query
 from src.config.settings import settings
 from src.api.dependencies import get_token_header
+from src.api.dependencies import load_llm, load_colbert,load_transcribers  # ✅ Import from dependencies.py
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Load models once when the FastAPI server starts."""
+    load_llm()  # ✅ Ensures LLM is preloaded at startup
+    load_colbert() # ✅ Ensures ColBERT is preloaded at startup
+    load_transcribers()  # ✅ Load Transcribers once
+    yield  # Application runs
+    print("🛑 Shutting down FastAPI... Cleaning up resources!")
 
 # Create FastAPI app
 app = FastAPI(
@@ -13,6 +25,7 @@ app = FastAPI(
     description="API for automotive specifications retrieval augmented generation with late interaction retrieval",
     version="0.1.0",
     docs_url=None,
+    lifespan=lifespan
 )
 
 # Add CORS middleware

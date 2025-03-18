@@ -88,11 +88,12 @@ try:
         with col1:
             st.subheader("系统状态")
             st.write(f"状态: {status_info.get('status', '未知')}")
-            st.write(f"文档数量: {status_info.get('document_count', 0):,}")
+            document_count = status_info.get('document_count') or 0
+            st.write(f"文档数量: {document_count}")
 
             # 显示集合信息（如果可用）
-            if "collection" in status_info:
-                st.write(f"数据集合: {status_info['collection']}")
+            collection = status_info.get("collection") or '未定义'
+            st.write(f"数据集合: {collection}")
 
         with col2:
             st.subheader("GPU 信息")
@@ -102,8 +103,10 @@ try:
                 st.write(f"设备: {gpu_info.get('device', '未知')}")
                 if 'device_name' in gpu_info:
                     st.write(f"GPU: {gpu_info['device_name']}")
-                if 'memory_allocated' in gpu_info:
+                if 'memory_allocated' in gpu_info and gpu_info['memory_allocated'] is not None:
                     st.write(f"已使用内存: {gpu_info['memory_allocated']}")
+                else:
+                    st.write("已使用内存: 未知")
                 if 'whisper_model' in gpu_info:
                     st.write(f"Whisper 模型: {gpu_info['whisper_model']}")
             else:

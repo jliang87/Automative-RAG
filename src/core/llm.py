@@ -11,8 +11,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline, BitsAndB
 
 from src.config.settings import settings
 
-
-class LocalDeepSeekLLM:
+class LocalLLM:
     """
     Local DeepSeek LLM integration for RAG with GPU acceleration.
 
@@ -25,7 +24,7 @@ class LocalDeepSeekLLM:
 
     def __init__(
             self,
-            model_name: str = "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B",
+            model_name: str = "DeepSeek-R1-Distill-Qwen-7B",
             device: Optional[str] = None,
             temperature: float = 0.1,
             max_tokens: int = 512,
@@ -46,11 +45,8 @@ class LocalDeepSeekLLM:
             torch_dtype: Torch data type (defaults to float16 for GPU)
         """
         # Get the complete model path if it's a local path
-        from src.utils.model_paths import get_llm_model_path
-        if not model_name.startswith("http") and "/" in model_name:
-            self.model_name = get_llm_model_path(model_name)
-        else:
-            self.model_name = model_name
+        self.model_name = model_name
+        self.model_path = settings.llm_model_full_path
 
         self.device = device or ("cuda:0" if torch.cuda.is_available() else "cpu")
         self.temperature = temperature
@@ -71,15 +67,15 @@ class LocalDeepSeekLLM:
         self.qa_prompt_template = self._create_qa_prompt_template()
 
     def _load_model(self):
-        """Load the local DeepSeek model with appropriate configuration."""
-        print(f"Loading DeepSeek model {self.model_name} on {self.device}...")
+        """Load the local LLM model with appropriate configuration."""
+        print(f"Loading LLM model {self.model_path} on {self.device}...")
 
         # Start timing
         start_time = time.time()
 
         # Load tokenizer
         self.tokenizer = AutoTokenizer.from_pretrained(
-            self.model_name,
+            self.model_path,
             trust_remote_code=True,
             local_files_only=True  # Only use local files, don't try to download
         )
@@ -103,7 +99,7 @@ class LocalDeepSeekLLM:
 
         # Load model
         self.model = AutoModelForCausalLM.from_pretrained(
-            self.model_name,
+            self.model_path,
             quantization_config=quantization_config,
             torch_dtype=self.torch_dtype,
             device_map=self.device,

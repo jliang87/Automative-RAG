@@ -2,9 +2,9 @@ import os
 from typing import Dict, List, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, Query
-from fastapi.responses import JSONResponse
 from pydantic import HttpUrl, BaseModel
 from typing import Dict, Any  # ✅ Import Any from typing
+import torch
 
 from src.api.dependencies import get_vector_store, get_youtube_transcriber, get_bilibili_transcriber, get_youku_transcriber, get_pdf_loader
 from src.core.document_processor import DocumentProcessor
@@ -348,7 +348,7 @@ async def get_ingest_status(
     """
     try:
         stats = vector_store.get_stats()
-        
+
         # Get GPU info if available
         gpu_info = {}
         if torch.cuda.is_available():

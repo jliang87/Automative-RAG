@@ -57,6 +57,8 @@ flake8 = "*"
 pytest = "*"
 pytest-cov = "*"
 mypy = "*"
+debugpy = "*"
+pydevd_pycharm = "~243.25659.43"
 
 [build-system]
 requires = ["poetry-core"]

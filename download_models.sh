@@ -27,13 +27,13 @@ LLM_DIR="${HOST_MODELS_DIR}/${LLM_MODEL_PATH:-llm}"
 WHISPER_DIR="${HOST_MODELS_DIR}/${WHISPER_MODEL_PATH:-whisper}"
 
 # Get default model names from environment or use defaults
-DEFAULT_EMBEDDING_MODEL_NAME=${DEFAULT_EMBEDDING_MODEL:-"bge-small-en-v1.5"}
+DEFAULT_EMBEDDING_MODEL_NAME=${DEFAULT_EMBEDDING_MODEL:-"bge-large-en-v1.5"}
 DEFAULT_COLBERT_MODEL_NAME=${DEFAULT_COLBERT_MODEL:-"colbertv2.0"}
 DEFAULT_LLM_MODEL_NAME=${DEFAULT_LLM_MODEL:-"DeepSeek-R1-Distill-Qwen-7B"}
 DEFAULT_WHISPER_MODEL_NAME=${DEFAULT_WHISPER_MODEL:-"medium"}
 
 # Model identifiers (Hugging Face)
-BGE_MODEL_ID=${HF_EMBEDDING_MODEL:-"BAAI/bge-small-en-v1.5"}
+BGE_MODEL_ID=${HF_EMBEDDING_MODEL:-"BAAI/bge-large-en-v1.5"}
 COLBERT_MODEL_ID=${HF_COLBERT_MODEL:-"colbert-ir/colbertv2.0"}
 DEEPSEEK_MODEL_ID=${HF_DEEPSEEK_MODEL:-"deepseek-ai/DeepSeek-R1-Distill-Qwen-7B"}
 WHISPER_MODEL_ID=${HF_WHISPER_MODEL:-"openai/whisper-medium"}

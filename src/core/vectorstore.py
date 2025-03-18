@@ -204,4 +204,4 @@ class QdrantStore:
         Returns:
             Dictionary of collection statistics
         """
-        return self.client.get_collection(self.collection_name).dict()
+        return self.client.get_collection(self.collection_name).model_dump()

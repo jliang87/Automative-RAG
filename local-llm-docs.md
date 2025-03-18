@@ -106,10 +106,10 @@ This endpoint returns details about the model configuration, device usage, and V
 To query the local LLM directly:
 
 ```python
-from src.core.llm import LocalDeepSeekLLM
+from src.core.llm import LocalLLM
 
 # Initialize with GPU support
-llm = LocalDeepSeekLLM(
+llm = LocalLLM(
     model_name="deepseek-ai/DeepSeek-R1-Distill-Qwen-7B",
     device="cuda:0",
     temperature=0.1,

@@ -26,7 +26,7 @@ class PDFLoader:
         chunk_overlap: int = 200,
         device: Optional[str] = None,
         use_ocr: bool = True,
-        ocr_languages: str = "eng"
+        ocr_languages: str = "en"
     ):
         """
         Initialize the PDF loader.

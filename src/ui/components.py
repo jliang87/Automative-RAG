@@ -182,7 +182,7 @@ def api_request(
     url = f"{st.session_state.api_url}{endpoint}"
 
     try:
-        with httpx.Client() as client:
+        with httpx.Client(timeout=150.0) as client:
             if method == "GET":
                 response = client.get(url, headers=headers, params=params)
             elif method == "POST":
