@@ -98,32 +98,42 @@ class LocalLLM:
         else:
             quantization_config = None
 
-        # Configure model loading
+        # Check if flash_attn package is available
+        try:
+            import flash_attn
+            has_flash_attn = True
+            flash_attn_version = flash_attn.__version__
+            print(f"Flash Attention package found (version {flash_attn_version})")
+        except ImportError:
+            has_flash_attn = False
+            print("Flash Attention package not found. Install with: pip install flash-attn")
+
+        # Configure attention mechanism
         attn_config = {}
 
-        # If on CPU or if there are compatibility issues with sliding window attention,
-        # disable sliding window attention to avoid warnings
-        if not self.device.startswith("cuda") or not torch.cuda.is_available():
-            print("On CPU or without CUDA - disabling sliding window attention to prevent warnings")
+        if self.device.startswith("cuda") and has_flash_attn:
+            # Use flash-attn package for Flash Attention 2
+            print("Using Flash Attention 2 from flash-attn package")
+            attn_config["attn_implementation"] = "flash_attention_2"
+            self.attention_type = "flash_attention_2"
+        elif not self.device.startswith("cuda"):
+            # Disable sliding window attention on CPU to avoid warnings
+            print("On CPU - disabling sliding window attention to prevent warnings")
             attn_config["sliding_window"] = None
             self.attention_type = "default_no_sliding_window"
         else:
-            # Enable PyTorch's native Flash Attention support on GPU
-            print("Enabling PyTorch native attention optimizations...")
-            torch.backends.cuda.enable_flash_sdp(True)  # Enable FlashAttention
-            torch.backends.cuda.enable_mem_efficient_sdp(True)  # Enable memory-efficient attention
-            torch.backends.cuda.enable_math_sdp(True)  # Enable math attention
+            # Fallback to PyTorch's implementation
+            print("Using PyTorch's native attention implementation")
+            torch.backends.cuda.enable_flash_sdp(True)
+            torch.backends.cuda.enable_mem_efficient_sdp(True)
+            torch.backends.cuda.enable_math_sdp(True)
 
-            # Check which attention backend will be used (for reporting)
             if torch.backends.cuda.flash_sdp_enabled():
                 print("PyTorch Flash Attention is enabled")
-                self.attention_type = "torch_flash_attention"
-            elif torch.backends.cuda.mem_efficient_sdp_enabled():
-                print("PyTorch Memory-Efficient Attention is enabled")
-                self.attention_type = "torch_mem_efficient_attention"
+                self.attention_type = "pytorch_flash_attention"
             else:
-                print("Using PyTorch Math Attention")
-                self.attention_type = "torch_math_attention"
+                print("Using default attention mechanism")
+                self.attention_type = "default"
 
         # Load model with appropriate configuration
         self.model = AutoModelForCausalLM.from_pretrained(
@@ -137,7 +147,6 @@ class LocalLLM:
         )
 
         # Create generation pipeline
-        # Note: We don't pass flash attention settings to the pipeline as it's already configured in the model
         self.pipe = pipeline(
             "text-generation",
             model=self.model,

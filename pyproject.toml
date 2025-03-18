@@ -50,6 +50,7 @@ accelerate = "*"
 bcrypt = "==4.0.1"
 langchain_huggingface = "*"
 langchain-qdrant ="*"
+flash-attn = "*"
 
 [tool.poetry.group.dev.dependencies]
 black = "*"

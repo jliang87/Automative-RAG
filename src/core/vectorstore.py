@@ -31,6 +31,9 @@ class QdrantStore:
         self.collection_name = collection_name
         self.embedding_function = embedding_function
 
+        # Ensure collection exists
+        self._ensure_collection()
+
         # Initialize Langchain Qdrant wrapper
         self.langchain_qdrant = QdrantVectorStore(
             client=client,
@@ -38,9 +41,6 @@ class QdrantStore:
             embedding=embedding_function,
             distance=rest.Distance.DOT,
         )
-
-        # Ensure collection exists
-        self._ensure_collection()
 
     def _ensure_collection(self) -> None:
         """
