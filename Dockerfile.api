@@ -51,8 +51,7 @@ COPY pyproject.toml poetry.lock* ./
 
 # Install dependencies with GPU support (cached layer)
 RUN poetry config virtualenvs.create false \
-    && poetry install --no-interaction --no-ansi --no-root --no-dev \
-    && pip install flash-attn==2.7.4.post1 --no-build-isolation
+    && poetry install --no-interaction --no-ansi --no-root --no-dev
 
 # Ensure necessary directories exist
 RUN mkdir -p /app/data/youtube /app/data/bilibili /app/data/uploads \
