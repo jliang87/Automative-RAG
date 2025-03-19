@@ -1269,18 +1269,6 @@ gmpy = ["gmpy"]
 gmpy2 = ["gmpy2"]
 
 [[package]]
-name = "einops"
-version = "0.8.1"
-description = "A new flavour of deep learning operations"
-optional = false
-python-versions = ">=3.8"
-groups = ["main"]
-files = [
-    {file = "einops-0.8.1-py3-none-any.whl", hash = "sha256:919387eb55330f5757c6bea9165c5ff5cfe63a642682ea788a6d472576d81737"},
-    {file = "einops-0.8.1.tar.gz", hash = "sha256:de5d960a7a761225532e0f1959e5315ebeafc0cd43394732f103ca44b9837e84"},
-]
-
-[[package]]
 name = "et-xmlfile"
 version = "2.0.0"
 description = "An implementation of lxml.xmlfile for the standard library"
@@ -1433,21 +1421,6 @@ files = [
 mccabe = ">=0.7.0,<0.8.0"
 pycodestyle = ">=2.12.0,<2.13.0"
 pyflakes = ">=3.2.0,<3.3.0"
-
-[[package]]
-name = "flash-attn"
-version = "2.7.4.post1"
-description = "Flash Attention: Fast and Memory-Efficient Exact Attention"
-optional = false
-python-versions = ">=3.9"
-groups = ["main"]
-files = [
-    {file = "flash_attn-2.7.4.post1.tar.gz", hash = "sha256:f03485c9a49a4d68d0733acdcad80ab0e72afa025a777fdc2966ceccf9d51765"},
-]
-
-[package.dependencies]
-einops = "*"
-torch = "*"
 
 [[package]]
 name = "flask"
@@ -7508,4 +7481,4 @@ cffi = ["cffi (>=1.11)"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.10,<3.11"
-content-hash = "c78600ab550fdcb544ff30968b0a78eb1a71efe32ed7cb5dae008e4baa1f5fa6"
+content-hash = "66c5430f9a16ab541df73ad43a5acf0a5a848e22a39dd7190ae9835f4801a4bc"
