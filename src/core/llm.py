@@ -11,7 +11,6 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline, BitsAndB
 
 from src.config.settings import settings
 
-
 class LocalLLM:
     """
     Local DeepSeek LLM integration for RAG with GPU acceleration.
@@ -98,52 +97,14 @@ class LocalLLM:
         else:
             quantization_config = None
 
-        # Check if flash_attn package is available
-        try:
-            import flash_attn
-            has_flash_attn = True
-            flash_attn_version = flash_attn.__version__
-            print(f"Flash Attention package found (version {flash_attn_version})")
-        except ImportError:
-            has_flash_attn = False
-            print("Flash Attention package not found. Install with: pip install flash-attn")
-
-        # Configure attention mechanism
-        attn_config = {}
-
-        if self.device.startswith("cuda") and has_flash_attn:
-            # Use flash-attn package for Flash Attention 2
-            print("Using Flash Attention 2 from flash-attn package")
-            attn_config["attn_implementation"] = "flash_attention_2"
-            self.attention_type = "flash_attention_2"
-        elif not self.device.startswith("cuda"):
-            # Disable sliding window attention on CPU to avoid warnings
-            print("On CPU - disabling sliding window attention to prevent warnings")
-            attn_config["sliding_window"] = None
-            self.attention_type = "default_no_sliding_window"
-        else:
-            # Fallback to PyTorch's implementation
-            print("Using PyTorch's native attention implementation")
-            torch.backends.cuda.enable_flash_sdp(True)
-            torch.backends.cuda.enable_mem_efficient_sdp(True)
-            torch.backends.cuda.enable_math_sdp(True)
-
-            if torch.backends.cuda.flash_sdp_enabled():
-                print("PyTorch Flash Attention is enabled")
-                self.attention_type = "pytorch_flash_attention"
-            else:
-                print("Using default attention mechanism")
-                self.attention_type = "default"
-
-        # Load model with appropriate configuration
+        # Load model
         self.model = AutoModelForCausalLM.from_pretrained(
             self.model_path,
             quantization_config=quantization_config,
             torch_dtype=self.torch_dtype,
             device_map=self.device,
             trust_remote_code=True,
-            local_files_only=True,  # Only use local files, don't try to download
-            **attn_config
+            local_files_only=True  # Only use local files, don't try to download
         )
 
         # Create generation pipeline
@@ -154,8 +115,7 @@ class LocalLLM:
             return_full_text=False,
             max_new_tokens=self.max_tokens,
             temperature=self.temperature,
-            repetition_penalty=1.1,
-            torch_compile=False  # Disable torch compile which can conflict with Flash Attention
+            repetition_penalty=1.1
         )
 
         # Report loading time
@@ -343,7 +303,6 @@ When providing your answer, cite the specific sources (document titles or URLs) 
             "max_tokens": self.max_tokens,
             "quantization": "4-bit" if self.use_4bit else "8-bit" if self.use_8bit else "none",
             "torch_dtype": str(self.torch_dtype),
-            "attention_mechanism": self.attention_type,
         }
 
         return {**model_config, **memory_info}
