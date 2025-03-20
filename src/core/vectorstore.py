@@ -39,7 +39,7 @@ class QdrantStore:
             client=client,
             collection_name=collection_name,
             embedding=embedding_function,
-            distance=rest.Distance.DOT,
+            distance=rest.Distance.COSINE,
         )
 
     def _ensure_collection(self) -> None:
@@ -60,7 +60,7 @@ class QdrantStore:
                 collection_name=self.collection_name,
                 vectors_config=rest.VectorParams(
                     size=embedding_dimension,
-                    distance=rest.Distance.DOT,
+                    distance=rest.Distance.COSINE,
                 ),
             )
             print(f"✅ QDrant collection {self.collection_name} created with {embedding_dimension} dimensions!")
