@@ -73,7 +73,7 @@ def load_llm():
         )
         print("✅ LLM Model Loaded!")
 
-def load_colbert():
+def load_colbert_and_bge_reranker():
     """Load the ColBERT model once when the app starts."""
     global colbert_model
     if colbert_model is None:
@@ -82,9 +82,13 @@ def load_colbert():
             model_name=settings.default_colbert_model,
             device=settings.device,
             batch_size=settings.colbert_batch_size,
-            use_fp16=settings.use_fp16
+            use_fp16=settings.use_fp16,
+            use_bge_reranker=settings.use_bge_reranker,
+            colbert_weight=settings.colbert_weight,
+            bge_weight=settings.bge_weight,
+            bge_model_name=settings.default_bge_reranker_model
         )
-        print("✅ ColBERT Model Loaded!")
+        print("✅ ColBERT and BGE Reranker Model Loaded!")
 
 def load_pdf_loader():
     """Load the PDF loader once when the app starts."""
@@ -139,7 +143,7 @@ def load_all_components():
     """Initialize all components at application startup."""
     load_transcribers()
     load_llm()
-    load_colbert()
+    load_colbert_and_bge_reranker()
     load_pdf_loader()
     init_vector_store()
     init_retriever()

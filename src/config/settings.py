@@ -58,12 +58,18 @@ class Settings(BaseSettings):
     colbert_model_path: str = os.getenv("COLBERT_MODEL_PATH", "colbert")
     llm_model_path: str = os.getenv("LLM_MODEL_PATH", "llm")
     whisper_model_path: str = os.getenv("WHISPER_MODEL_PATH", "whisper")
+    bge_reranker_model_path: str = os.getenv("BGE_RERANKER_MODEL_PATH", "bge")
 
     # Default model names
-    default_embedding_model: str = os.getenv("DEFAULT_EMBEDDING_MODEL", "bge-large-en-v1.5")
+    default_embedding_model: str = os.getenv("DEFAULT_EMBEDDING_MODEL", "bge-m3")
     default_colbert_model: str = os.getenv("DEFAULT_COLBERT_MODEL", "colbertv2.0")
     default_llm_model: str = os.getenv("DEFAULT_LLM_MODEL", "DeepSeek-R1-Distill-Qwen-7B")
     default_whisper_model: str = os.getenv("DEFAULT_WHISPER_MODEL", "medium")
+    default_bge_reranker_model: str = os.getenv("DEFAULT_BGE_RERANKER_MODEL", "bge-reranker-large")
+
+    use_bge_reranker: bool = os.getenv("USE_BGE_RERANKER", "true").lower() == "true"
+    colbert_weight: float = float(os.getenv("COLBERT_WEIGHT", "0.8"))
+    bge_weight: float = float(os.getenv("BGE_WEIGHT", "0.2"))
 
     # Full paths to models
     @property
@@ -82,6 +88,10 @@ class Settings(BaseSettings):
     def whisper_model_full_path(self) -> str:
         return os.path.join(self.models_dir, self.whisper_model_path, self.default_whisper_model)
 
+    @property
+    def bge_reranker_model_full_path(self) -> str:
+        return os.path.join(self.models_dir, self.bge_reranker_model_path, self.default_bge_reranker_model)
+
     # LLM settings
     llm_use_4bit: bool = os.getenv("LLM_USE_4BIT", "true").lower() == "true"
     llm_use_8bit: bool = os.getenv("LLM_USE_8BIT", "false").lower() == "true"
@@ -96,7 +106,7 @@ class Settings(BaseSettings):
 
     # PDF OCR settings
     use_pdf_ocr: bool = os.getenv("USE_PDF_OCR", "true").lower() == "true"
-    ocr_languages: str = os.getenv("OCR_LANGUAGES", "en")
+    ocr_languages: str = os.getenv("OCR_LANGUAGES", "en+ch_docs")
 
     # Retrieval settings
     retriever_top_k: int = int(os.getenv("RETRIEVER_TOP_K", "20"))
@@ -157,6 +167,7 @@ class Settings(BaseSettings):
         os.makedirs(os.path.join(models_dir, self.colbert_model_path), exist_ok=True)
         os.makedirs(os.path.join(models_dir, self.llm_model_path), exist_ok=True)
         os.makedirs(os.path.join(models_dir, self.whisper_model_path), exist_ok=True)
+        os.makedirs(os.path.join(models_dir, self.bge_reranker_model_path), exist_ok=True)
         os.makedirs(os.path.join(models_dir, "cache"), exist_ok=True)
         os.makedirs(os.path.join(models_dir, "hub"), exist_ok=True)
 

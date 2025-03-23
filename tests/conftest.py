@@ -58,7 +58,7 @@ def embedding_function() -> HuggingFaceEmbeddings:
     """
     # Use a small, fast model for testing
     return HuggingFaceEmbeddings(
-        model_name="BAAI/bge-large-en-v1.5",
+        model_name="BAAI/bge-m3",
         model_kwargs={"device": "cpu"},  # Use CPU for tests
         encode_kwargs={"normalize_embeddings": True},
     )

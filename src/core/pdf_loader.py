@@ -26,7 +26,7 @@ class PDFLoader:
         chunk_overlap: int = 200,
         device: Optional[str] = None,
         use_ocr: bool = True,
-        ocr_languages: str = "en"
+        ocr_languages: str = "en+ch_docs"
     ):
         """
         Initialize the PDF loader.
@@ -43,30 +43,31 @@ class PDFLoader:
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         self.use_ocr = use_ocr
         self.ocr_languages = ocr_languages
-        
+
         self.text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap,
         )
-        
+
         # Initialize OCR if requested
         self.ocr_model = None
         if use_ocr:
             self._initialize_ocr()
 
     def _initialize_ocr(self):
-        """Initialize OCR models with GPU support if available."""
+        """Initialize OCR models with GPU support for both English and Chinese."""
         try:
             from paddleocr import PaddleOCR
-            
-            # Initialize PaddleOCR with GPU support
+
+            # Initialize PaddleOCR with GPU support and multilingual capability
             self.ocr_model = PaddleOCR(
                 use_angle_cls=True,
-                lang=self.ocr_languages,
+                lang=self.ocr_languages,  # This will be "en+ch_docs"
                 use_gpu=self.device.startswith("cuda"),
                 show_log=False
             )
             print(f"PaddleOCR initialized with GPU support: {self.device.startswith('cuda')}")
+            print(f"OCR languages: {self.ocr_languages}")
         except ImportError:
             print("PaddleOCR not found. OCR functionality will be disabled.")
             print("To enable GPU-accelerated OCR, install with: pip install paddlepaddle-gpu paddleocr")

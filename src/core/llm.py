@@ -11,6 +11,58 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline, BitsAndB
 
 from src.config.settings import settings
 
+
+def _format_documents_for_context(
+        documents: List[Tuple[Document, float]]
+) -> str:
+    """
+    Format retrieved documents into context for the prompt.
+
+    Args:
+        documents: List of (document, score) tuples
+
+    Returns:
+        Formatted context string
+    """
+    context_parts = []
+
+    for i, (doc, score) in enumerate(documents):
+        # Extract metadata for citation
+        metadata = doc.metadata
+        source_type = metadata.get("source", "unknown")
+        title = metadata.get("title", f"Document {i + 1}")
+
+        # Format source information
+        if source_type == "youtube":
+            source_info = f"Source {i + 1}: YouTube - '{title}'"
+            if "url" in metadata:
+                source_info += f" ({metadata['url']})"
+        elif source_type == "pdf":
+            source_info = f"Source {i + 1}: PDF - '{title}'"
+        else:
+            source_info = f"Source {i + 1}: {title}"
+
+        # Add manufacturer and model if available
+        manufacturer = metadata.get("manufacturer")
+        model = metadata.get("model")
+        year = metadata.get("year")
+
+        if manufacturer or model or year:
+            source_info += " - "
+            if manufacturer:
+                source_info += manufacturer
+            if model:
+                source_info += f" {model}"
+            if year:
+                source_info += f" ({year})"
+
+        # Format content block
+        content_block = f"{source_info}\n{doc.page_content}\n"
+        context_parts.append(content_block)
+
+    return "\n\n".join(context_parts)
+
+
 class LocalLLM:
     """
     Local DeepSeek LLM integration for RAG with GPU acceleration.
@@ -98,13 +150,17 @@ class LocalLLM:
             quantization_config = None
 
         # Load model
+        attn_config = {"sliding_window": None}
+        self.attention_type = "default_no_sliding_window"
+
         self.model = AutoModelForCausalLM.from_pretrained(
             self.model_path,
             quantization_config=quantization_config,
             torch_dtype=self.torch_dtype,
             device_map=self.device,
             trust_remote_code=True,
-            local_files_only=True  # Only use local files, don't try to download
+            local_files_only=True, # Only use local files, don't try to download
+            **attn_config
         )
 
         # Create generation pipeline
@@ -147,56 +203,6 @@ When providing your answer, cite the specific sources (document titles or URLs) 
 """
         return template
 
-    def _format_documents_for_context(
-            self, documents: List[Tuple[Document, float]]
-    ) -> str:
-        """
-        Format retrieved documents into context for the prompt.
-
-        Args:
-            documents: List of (document, score) tuples
-
-        Returns:
-            Formatted context string
-        """
-        context_parts = []
-
-        for i, (doc, score) in enumerate(documents):
-            # Extract metadata for citation
-            metadata = doc.metadata
-            source_type = metadata.get("source", "unknown")
-            title = metadata.get("title", f"Document {i + 1}")
-
-            # Format source information
-            if source_type == "youtube":
-                source_info = f"Source {i + 1}: YouTube - '{title}'"
-                if "url" in metadata:
-                    source_info += f" ({metadata['url']})"
-            elif source_type == "pdf":
-                source_info = f"Source {i + 1}: PDF - '{title}'"
-            else:
-                source_info = f"Source {i + 1}: {title}"
-
-            # Add manufacturer and model if available
-            manufacturer = metadata.get("manufacturer")
-            model = metadata.get("model")
-            year = metadata.get("year")
-
-            if manufacturer or model or year:
-                source_info += " - "
-                if manufacturer:
-                    source_info += manufacturer
-                if model:
-                    source_info += f" {model}"
-                if year:
-                    source_info += f" ({year})"
-
-            # Format content block
-            content_block = f"{source_info}\n{doc.page_content}\n"
-            context_parts.append(content_block)
-
-        return "\n\n".join(context_parts)
-
     def answer_query(
             self,
             query: str,
@@ -215,7 +221,7 @@ When providing your answer, cite the specific sources (document titles or URLs) 
             Generated answer
         """
         # Format documents into context
-        context = self._format_documents_for_context(documents)
+        context = _format_documents_for_context(documents)
 
         # Create prompt using template
         prompt = self.qa_prompt_template.format(
@@ -303,6 +309,7 @@ When providing your answer, cite the specific sources (document titles or URLs) 
             "max_tokens": self.max_tokens,
             "quantization": "4-bit" if self.use_4bit else "8-bit" if self.use_8bit else "none",
             "torch_dtype": str(self.torch_dtype),
+            "attention_mechanism": self.attention_type
         }
 
         return {**model_config, **memory_info}

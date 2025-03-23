@@ -1,22 +1,29 @@
 from typing import Dict, List, Optional, Tuple, Union
 import time
+import os
+import numpy as np
 
 import torch
 from langchain_core.documents import Document
 from tqdm import tqdm
 from transformers import AutoTokenizer, AutoModel
+from sentence_transformers import CrossEncoder
 
 from src.config.settings import settings
 
 
 class ColBERTReranker:
     """
-    A GPU-optimized reranker that uses ColBERT v2 for late interaction retrieval.
+    A GPU-optimized reranker that uses ColBERT v2 for late interaction retrieval
+    with BGE-Reranker for enhanced bilingual performance.
 
-    ColBERT v2 is an improved version with enhanced efficiency and effectiveness,
-    preserving token-level representations and performing fine-grained interaction
-    between query and document tokens for precise semantic matching.
+    Uses a hybrid approach that combines:
+    1. ColBERT v2 with token-level representations for fine-grained interaction
+    2. BGE-Reranker for enhanced cross-lingual understanding
+    3. Weighted combination of both scores for optimal bilingual performance
     """
+
+    # Update the __init__ method in src/core/colbert_reranker.py to use local BGE reranker
 
     def __init__(
             self,
@@ -28,9 +35,13 @@ class ColBERTReranker:
             use_fp16: bool = True,
             similarity_metric: str = "maxsim",
             checkpoint_path: Optional[str] = None,
+            use_bge_reranker: bool = True,
+            colbert_weight: float = 0.8,
+            bge_weight: float = 0.2,
+            bge_model_name: str = "BAAI/bge-reranker-large"
     ):
         """
-        Initialize the ColBERT v2 reranker with GPU optimizations.
+        Initialize the hybrid reranker with GPU optimizations.
 
         Args:
             model_name: Name of the ColBERT v2 model to use
@@ -41,6 +52,10 @@ class ColBERTReranker:
             use_fp16: Whether to use mixed precision (FP16) for faster computation
             similarity_metric: Similarity metric to use (maxsim or cosine)
             checkpoint_path: Optional custom path to model checkpoint
+            use_bge_reranker: Whether to use BGE reranker for enhanced bilingual performance
+            colbert_weight: Weight for ColBERT score in hybrid ranking (0.0-1.0)
+            bge_weight: Weight for BGE score in hybrid ranking (0.0-1.0)
+            bge_model_name: Name of the BGE reranker model to use
         """
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         self.model_name = model_name
@@ -56,13 +71,37 @@ class ColBERTReranker:
             model_path = settings.colbert_model_full_path
         self.model_path = model_path
 
-        # Initialize model and tokenizer
+        # Initialize ColBERT model and tokenizer
         self._initialize_model()
 
         # Setup automatic mixed precision for more efficient operations
         self.amp_enabled = self.use_fp16
         if self.amp_enabled:
             print(f"Using mixed precision (FP16) for reranker on {self.device}")
+
+        # Hybrid reranking configuration
+        self.use_bge_reranker = use_bge_reranker
+        self.colbert_weight = colbert_weight
+        self.bge_weight = bge_weight
+        self.bge_model_name = bge_model_name
+
+        # Initialize BGE reranker if enabled
+        if self.use_bge_reranker:
+            # Get BGE reranker path
+            bge_model_path = None
+            if hasattr(settings, 'bge_reranker_model_full_path'):
+                bge_model_path = settings.bge_reranker_model_full_path
+
+            print(f"Initializing BGE reranker: {bge_model_name}")
+            print(f"BGE reranker local path: {bge_model_path}")
+
+            try:
+                print(f"Loading BGE reranker from local path: {bge_model_path}")
+                self.bge_reranker = CrossEncoder(bge_model_path, device=self.device)
+                print(f"BGE reranker loaded successfully on {self.device}")
+            except Exception as e:
+                print(f"Error loading BGE reranker: {str(e)}")
+                self.use_bge_reranker = False
 
     def _initialize_model(self):
         """Initialize the model directly using transformers."""
@@ -229,12 +268,95 @@ class ColBERTReranker:
             self, query: str, documents: List[Document], top_k: Optional[int] = None
     ) -> List[Tuple[Document, float]]:
         """
-        Rerank documents using ColBERT-style late interaction scoring.
+        Hybrid reranking using a weighted combination of ColBERT and BGE reranker.
 
         Args:
             query: The query string
             documents: List of documents to rerank
             top_k: Number of top documents to return
+
+        Returns:
+            List of (document, score) tuples sorted by score in descending order
+        """
+        if not documents:
+            return []
+
+        start_time = time.time()
+
+        # Step 1: Get ColBERT scores
+        colbert_results = self._colbert_rerank(query, documents)
+
+        # If BGE reranker is not enabled, return ColBERT results
+        if not self.use_bge_reranker:
+            # Return top_k if specified
+            if top_k is not None:
+                colbert_results = colbert_results[:top_k]
+            processing_time = time.time() - start_time
+            print(f"ColBERT-only reranking completed in {processing_time:.2f}s")
+            return colbert_results
+
+        # Step 2: Extract documents and scores
+        colbert_docs = [doc for doc, _ in colbert_results]
+        colbert_scores = [score for _, score in colbert_results]
+
+        # Step 3: Normalize ColBERT scores to [0, 1] range
+        if colbert_scores:
+            min_score = min(colbert_scores)
+            max_score = max(colbert_scores)
+            score_range = max_score - min_score
+            if score_range > 0:
+                colbert_scores = [(score - min_score) / score_range for score in colbert_scores]
+            else:
+                colbert_scores = [1.0 for _ in colbert_scores]
+
+        # Step 4: Get BGE reranker scores
+        # Prepare pairs for BGE reranker
+        pairs = [[query, doc.page_content] for doc in colbert_docs]
+
+        # Get scores from BGE reranker
+        bge_scores = self.bge_reranker.predict(pairs)
+
+        # Step 5: Normalize BGE scores to [0, 1] range
+        if len(bge_scores) > 0:
+            min_score = np.min(bge_scores)
+            max_score = np.max(bge_scores)
+            score_range = max_score - min_score
+            if score_range > 0:
+                bge_scores = [(score - min_score) / score_range for score in bge_scores]
+            else:
+                bge_scores = [1.0 for _ in bge_scores]
+
+        # Step 6: Combine scores with weights
+        combined_scores = [
+            self.colbert_weight * colbert_scores[i] + self.bge_weight * bge_scores[i]
+            for i in range(len(colbert_docs))
+        ]
+
+        # Step 7: Create final reranked results
+        hybrid_results = list(zip(colbert_docs, combined_scores))
+
+        # Step 8: Sort by combined score
+        hybrid_results = sorted(hybrid_results, key=lambda x: x[1], reverse=True)
+
+        # Return top_k if specified
+        if top_k is not None:
+            hybrid_results = hybrid_results[:top_k]
+
+        processing_time = time.time() - start_time
+        print(f"Hybrid reranking completed in {processing_time:.2f}s")
+        print(f"ColBERT weight: {self.colbert_weight:.2f}, BGE weight: {self.bge_weight:.2f}")
+
+        return hybrid_results
+
+    def _colbert_rerank(
+            self, query: str, documents: List[Document]
+    ) -> List[Tuple[Document, float]]:
+        """
+        Original ColBERT reranking method, extracted as an internal method.
+
+        Args:
+            query: The query string
+            documents: List of documents to rerank
 
         Returns:
             List of (document, score) tuples sorted by score in descending order
@@ -257,12 +379,8 @@ class ColBERTReranker:
         # Sort by score in descending order
         ranked_docs = sorted(doc_score_pairs, key=lambda x: x[1], reverse=True)
 
-        # Return top_k if specified
-        if top_k is not None:
-            ranked_docs = ranked_docs[:top_k]
-
         processing_time = time.time() - start_time
-        print(f"Document reranking completed in {processing_time:.2f}s for {len(documents)} documents")
+        print(f"ColBERT scoring completed in {processing_time:.2f}s for {len(documents)} documents")
 
         return ranked_docs
 
@@ -282,10 +400,34 @@ class ColBERTReranker:
         Returns:
             List of dictionaries with document, score, and explanations
         """
+        # First perform reranking (hybrid or ColBERT-only)
+        reranked_docs = self.rerank(query, documents, top_k)
+
+        # Extract just the documents (without scores)
+        docs = [doc for doc, _ in reranked_docs]
+
+        # Get explanations (from ColBERT only, as it provides token-level matches)
+        # Note: We only explain using ColBERT since BGE-Reranker doesn't provide token-level explanations
+        explanations = self._explain_colbert_matches(query, docs, num_explanations)
+
+        return explanations
+
+    def _explain_colbert_matches(
+            self, query: str, documents: List[Document], num_explanations: int = 5
+    ) -> List[Dict]:
+        """
+        Provide token-level explanations for ColBERT matches.
+
+        Args:
+            query: The query string
+            documents: List of documents to explain
+            num_explanations: Number of top token matches to explain
+
+        Returns:
+            List of dictionaries with document, score, and explanations
+        """
         if not documents:
             return []
-
-        start_time = time.time()
 
         # Get tokenized query for explanations
         query_encoding = self.tokenizer([query],
@@ -416,13 +558,6 @@ class ColBERTReranker:
         # Sort results by score
         results.sort(key=lambda x: x["score"], reverse=True)
 
-        # Limit to top_k if specified
-        if top_k is not None:
-            results = results[:top_k]
-
-        processing_time = time.time() - start_time
-        print(f"Reranking with explanations completed in {processing_time:.2f}s for {len(documents)} documents")
-
         return results
 
     def batch_rerank_queries(
@@ -463,12 +598,62 @@ class ColBERTReranker:
             # Sort by score in descending order
             ranked_docs = sorted(doc_score_pairs, key=lambda x: x[1], reverse=True)
 
-            # Limit to top_k if specified
-            if top_k is not None:
-                ranked_docs = ranked_docs[:top_k]
+            # Apply BGE reranking if enabled
+            if self.use_bge_reranker:
+                # Get top documents for this query
+                top_docs = ranked_docs[:top_k * 2] if top_k else ranked_docs  # Get 2x for reranking
 
-            # Store results for this query
-            results[query] = ranked_docs
+                # Extract documents and scores
+                colbert_docs = [doc for doc, _ in top_docs]
+                colbert_scores = [score for _, score in top_docs]
+
+                # Normalize ColBERT scores
+                if colbert_scores:
+                    min_score = min(colbert_scores)
+                    max_score = max(colbert_scores)
+                    score_range = max_score - min_score
+                    if score_range > 0:
+                        colbert_scores = [(score - min_score) / score_range for score in colbert_scores]
+                    else:
+                        colbert_scores = [1.0 for _ in colbert_scores]
+
+                # Get BGE scores
+                pairs = [[query, doc.page_content] for doc in colbert_docs]
+                bge_scores = self.bge_reranker.predict(pairs)
+
+                # Normalize BGE scores
+                if len(bge_scores) > 0:
+                    min_score = np.min(bge_scores)
+                    max_score = np.max(bge_scores)
+                    score_range = max_score - min_score
+                    if score_range > 0:
+                        bge_scores = [(score - min_score) / score_range for score in bge_scores]
+                    else:
+                        bge_scores = [1.0 for _ in bge_scores]
+
+                # Combine scores
+                combined_scores = [
+                    self.colbert_weight * colbert_scores[i] + self.bge_weight * bge_scores[i]
+                    for i in range(len(colbert_docs))
+                ]
+
+                # Create and sort hybrid results
+                hybrid_results = list(zip(colbert_docs, combined_scores))
+                hybrid_results = sorted(hybrid_results, key=lambda x: x[1], reverse=True)
+
+                # Limit to top_k if specified
+                if top_k:
+                    hybrid_results = hybrid_results[:top_k]
+
+                # Store results
+                results[query] = hybrid_results
+            else:
+                # Limit to top_k if specified
+                if top_k:
+                    ranked_docs = ranked_docs[:top_k]
+
+                # Store results for this query
+                results[query] = ranked_docs
 
         processing_time = time.time() - start_time
         print(
