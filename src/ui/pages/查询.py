@@ -4,7 +4,20 @@
 
 import streamlit as st
 import time
+import os
 from src.ui.components import header, metadata_filters, api_request, display_document, loading_spinner
+
+# API 配置
+API_URL = os.environ.get("API_URL", "http://localhost:8000")
+API_KEY = os.environ.get("API_KEY", "default-api-key")
+
+# 会话状态初始化
+if "api_url" not in st.session_state:
+    st.session_state.api_url = API_URL
+if "api_key" not in st.session_state:
+    st.session_state.api_key = API_KEY
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
 
 def process_query(query: str, metadata_filter, top_k: int = 5):
     """处理查询并显示结果"""

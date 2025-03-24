@@ -26,7 +26,7 @@ class PDFLoader:
         chunk_overlap: int = 200,
         device: Optional[str] = None,
         use_ocr: bool = True,
-        ocr_languages: str = "en+ch_docs"
+        ocr_languages: str = "en+ch_doc"
     ):
         """
         Initialize the PDF loader.
@@ -62,7 +62,7 @@ class PDFLoader:
             # Initialize PaddleOCR with GPU support and multilingual capability
             self.ocr_model = PaddleOCR(
                 use_angle_cls=True,
-                lang=self.ocr_languages,  # This will be "en+ch_docs"
+                lang=self.ocr_languages,  # This will be "en+ch_doc"
                 use_gpu=self.device.startswith("cuda"),
                 show_log=False
             )

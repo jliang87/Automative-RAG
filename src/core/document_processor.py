@@ -28,6 +28,10 @@ class DocumentProcessor:
         chunk_overlap: int = 200,
         upload_dir: str = "data/uploads",
         device: Optional[str] = None,
+        youtube_transcriber: Optional[YouTubeTranscriber] = None,
+        bilibili_transcriber: Optional[BilibiliTranscriber] = None,
+        youku_transcriber: Optional[YoukuTranscriber] = None,
+        pdf_loader: Optional[PDFLoader] = None,
     ):
         """
         Initialize the document processor.
@@ -45,38 +49,17 @@ class DocumentProcessor:
         self.upload_dir = upload_dir
         self.device = device or settings.device
 
-        # Initialize sub-processors with GPU support
-        self.youtube_transcriber = YouTubeTranscriber(
-            whisper_model_size=settings.whisper_model_size,
-            device=self.device,
-            use_youtube_captions=settings.use_youtube_captions,
-            use_whisper_as_fallback=settings.use_whisper_as_fallback,
-            force_whisper=settings.force_whisper
-        )
+        self.youtube_transcriber = youtube_transcriber
+        self.bilibili_transcriber = bilibili_transcriber
+        self.youku_transcriber = youku_transcriber
+        self.pdf_loader = pdf_loader
 
-        self.bilibili_transcriber = BilibiliTranscriber(
-            whisper_model_size=settings.whisper_model_size,
-            device=self.device,
-            force_whisper=settings.force_whisper
-        )
-
-        self.youku_transcriber = YoukuTranscriber(
-            whisper_model_size=settings.whisper_model_size,
-            device=self.device,
-            force_whisper=settings.force_whisper
-        )
-        
-        self.pdf_loader = PDFLoader(
-            chunk_size=chunk_size,
-            chunk_overlap=chunk_overlap,
-            device=self.device
-        )
-        
+        # Always create the text splitter
         self.text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap,
         )
-        
+
         os.makedirs(upload_dir, exist_ok=True)
 
     def process_youtube_video(

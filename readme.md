@@ -435,7 +435,7 @@ USE_WHISPER_AS_FALLBACK=true  # Use Whisper if captions aren't available
 
 # PDF OCR Settings
 USE_PDF_OCR=true  # Enable GPU-accelerated OCR for scanned PDFs
-OCR_LANGUAGES="en+ch_docs"  # Language codes for OCR
+OCR_LANGUAGES="en+ch_doc"  # Language codes for OCR
 ```
 
 ## Memory Optimization
@@ -507,7 +507,7 @@ from src.core.pdf_loader import PDFLoader
 pdf_loader = PDFLoader(
     device="cuda",
     use_ocr=True,  # Enable GPU-accelerated OCR
-    OCR_LANGUAGES="en+ch_docs"  # Set OCR languages
+    OCR_LANGUAGES="en+ch_doc"  # Set OCR languages
 )
 
 # Process a PDF with GPU-accelerated OCR and extraction

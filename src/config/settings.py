@@ -106,7 +106,7 @@ class Settings(BaseSettings):
 
     # PDF OCR settings
     use_pdf_ocr: bool = os.getenv("USE_PDF_OCR", "true").lower() == "true"
-    ocr_languages: str = os.getenv("OCR_LANGUAGES", "en+ch_docs")
+    ocr_languages: str = os.getenv("OCR_LANGUAGES", "en+ch_doc")
 
     # Retrieval settings
     retriever_top_k: int = int(os.getenv("RETRIEVER_TOP_K", "20"))

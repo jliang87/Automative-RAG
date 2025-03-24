@@ -5,8 +5,14 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, Q
 from pydantic import HttpUrl, BaseModel
 from typing import Dict, Any  # ✅ Import Any from typing
 import torch
+import logging
+import traceback
 
-from src.api.dependencies import get_vector_store, get_youtube_transcriber, get_bilibili_transcriber, get_youku_transcriber, get_pdf_loader
+# Create a logger
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)  # Set to DEBUG level
+
+from src.api.dependencies import get_vector_store, get_youtube_transcriber, get_bilibili_transcriber, get_youku_transcriber, get_pdf_loader, get_document_processor
 from src.core.document_processor import DocumentProcessor
 from src.core.vectorstore import QdrantStore
 from src.core.youtube_transcriber import YouTubeTranscriber, BilibiliTranscriber
@@ -40,42 +46,40 @@ class BatchVideoIngestRequest(BaseModel):
 async def ingest_youtube(
     youtube_request: YouTubeIngestRequest,
     force_whisper: bool = Query(True, description="Force using Whisper for transcription"),
-    vector_store: QdrantStore = Depends(get_vector_store),
-    youtube_transcriber: YouTubeTranscriber = Depends(get_youtube_transcriber),
+    processor: DocumentProcessor = Depends(get_document_processor),
 ) -> IngestResponse:
     """
     Ingest a YouTube video with GPU-accelerated transcription.
-    
+
     Args:
         youtube_request: YouTube ingest request with URL and optional metadata
         force_whisper: Force using Whisper even if captions are available
-        
+
     Returns:
         Ingest response with document IDs
     """
     try:
-        # Initialize document processor
-        processor = DocumentProcessor(
-            vector_store=vector_store,
-            device=youtube_transcriber.device
-        )
-        
-        # Process the YouTube video
+        # Process the YouTube video using pre-initialized processor
         document_ids = processor.process_youtube_video(
             url=str(youtube_request.url),
             custom_metadata=youtube_request.metadata,
             force_whisper=force_whisper
         )
-        
+
         return IngestResponse(
             message=f"Successfully ingested YouTube video: {youtube_request.url}",
             document_count=len(document_ids),
             document_ids=document_ids,
         )
     except Exception as e:
+        # Log the full traceback
+        error_detail = f"Error ingesting YouTube video: {str(e)}\n{traceback.format_exc()}"
+        logger.error(error_detail)
+
+        # Return detailed error information
         raise HTTPException(
             status_code=500,
-            detail=f"Error ingesting YouTube video: {str(e)}",
+            detail=error_detail,
         )
 
 
@@ -83,26 +87,13 @@ async def ingest_youtube(
 async def ingest_bilibili(
         bilibili_request: BilibiliIngestRequest,
         force_whisper: bool = Query(True, description="Force using Whisper for transcription"),
-        vector_store: QdrantStore = Depends(get_vector_store),
-        bilibili_transcriber: BilibiliTranscriber = Depends(get_bilibili_transcriber),
+        processor: DocumentProcessor = Depends(get_document_processor),
 ) -> IngestResponse:
     """
     Ingest a Bilibili video with GPU-accelerated transcription.
-
-    Args:
-        bilibili_request: Bilibili ingest request with URL and optional metadata
-
-    Returns:
-        Ingest response with document IDs
     """
     try:
-        # Initialize document processor
-        processor = DocumentProcessor(
-            vector_store=vector_store,
-            device=bilibili_transcriber.device
-        )
-
-        # Process the Bilibili video
+        # Process the Bilibili video using pre-initialized processor
         document_ids = processor.process_bilibili_video(
             url=str(bilibili_request.url),
             custom_metadata=bilibili_request.metadata,
@@ -115,9 +106,14 @@ async def ingest_bilibili(
             document_ids=document_ids,
         )
     except Exception as e:
+        # Log the full traceback
+        error_detail = f"Error ingesting Bilibili video: {str(e)}\n{traceback.format_exc()}"
+        logger.error(error_detail)
+
+        # Return detailed error information
         raise HTTPException(
             status_code=500,
-            detail=f"Error ingesting Bilibili video: {str(e)}",
+            detail=error_detail,
         )
 
 
@@ -125,27 +121,13 @@ async def ingest_bilibili(
 async def ingest_youku(
         youku_request: YoukuIngestRequest,
         force_whisper: bool = Query(True, description="Force using Whisper for transcription"),
-        vector_store: QdrantStore = Depends(get_vector_store),
-        youku_transcriber: YoukuTranscriber = Depends(get_youku_transcriber),
+        processor: DocumentProcessor = Depends(get_document_processor),
 ) -> IngestResponse:
     """
     Ingest a Youku video with GPU-accelerated transcription.
-
-    Args:
-        youku_request: Youku ingest request with URL and optional metadata
-        force_whisper: Force using Whisper for transcription (default: True)
-
-    Returns:
-        Ingest response with document IDs
     """
     try:
-        # Initialize document processor
-        processor = DocumentProcessor(
-            vector_store=vector_store,
-            device=youku_transcriber.device
-        )
-
-        # Process the Youku video
+        # Process the Youku video using pre-initialized processor
         document_ids = processor.process_youku_video(
             url=str(youku_request.url),
             custom_metadata=youku_request.metadata,
@@ -158,79 +140,65 @@ async def ingest_youku(
             document_ids=document_ids,
         )
     except Exception as e:
+        # Log the full traceback
+        error_detail = f"Error ingesting Youku video: {str(e)}\n{traceback.format_exc()}"
+        logger.error(error_detail)
+
+        # Return detailed error information
         raise HTTPException(
             status_code=500,
-            detail=f"Error ingesting Youku video: {str(e)}",
+            detail=error_detail,
         )
 
 
 @router.post("/batch-videos", response_model=Dict[str, Any])
 async def ingest_batch_videos(
-    batch_request: BatchVideoIngestRequest,
-    vector_store: QdrantStore = Depends(get_vector_store),
-    youtube_transcriber: YouTubeTranscriber = Depends(get_youtube_transcriber),
-    bilibili_transcriber: BilibiliTranscriber = Depends(get_bilibili_transcriber),
+        batch_request: BatchVideoIngestRequest,
+        processor: DocumentProcessor = Depends(get_document_processor),
 ) -> Dict[str, Any]:
     """
     Ingest multiple videos in batch with GPU acceleration.
-    
-    Args:
-        batch_request: Batch video ingest request
-        
-    Returns:
-        Dictionary with processing results
     """
     try:
-        # Initialize document processor with appropriate transcriber
-        processor = DocumentProcessor(
-            vector_store=vector_store,
-            device=youtube_transcriber.device if batch_request.platform == "youtube" else bilibili_transcriber.device
-        )
-        
         # Convert URLs to strings
         urls = [str(url) for url in batch_request.urls]
-        
-        # Process the videos in batch
+
+        # Process the videos in batch using pre-initialized processor
         results = processor.batch_process_videos(
             urls=urls,
             platform=batch_request.platform,
             custom_metadata=batch_request.metadata
         )
-        
+
         # Count successful ingestions
         success_count = sum(1 for result in results.values() if isinstance(result, list))
-        
+
         return {
             "message": f"Batch processing completed. {success_count}/{len(urls)} videos ingested successfully.",
             "results": results,
         }
     except Exception as e:
+        # Log the full traceback
+        error_detail = f"Error in batch processing: {str(e)}\n{traceback.format_exc()}"
+        logger.error(error_detail)
+
+        # Return detailed error information
         raise HTTPException(
             status_code=500,
-            detail=f"Error in batch processing: {str(e)}",
+            detail=error_detail,
         )
 
 
 @router.post("/pdf", response_model=IngestResponse)
 async def ingest_pdf(
-    file: UploadFile = File(...),
-    metadata: Optional[str] = Form(None),
-    use_ocr: Optional[bool] = Form(None),
-    extract_tables: bool = Form(True),
-    vector_store: QdrantStore = Depends(get_vector_store),
-    pdf_loader: PDFLoader = Depends(get_pdf_loader),
+        file: UploadFile = File(...),
+        metadata: Optional[str] = Form(None),
+        use_ocr: Optional[bool] = Form(None),
+        extract_tables: bool = Form(True),
+        processor: DocumentProcessor = Depends(get_document_processor),
 ) -> IngestResponse:
     """
     Ingest a PDF file with GPU-accelerated OCR and table extraction.
-    
-    Args:
-        file: Uploaded PDF file
-        metadata: Optional JSON string with metadata
-        use_ocr: Whether to use OCR (overrides default setting)
-        extract_tables: Whether to extract tables from the PDF
-        
-    Returns:
-        Ingest response with document IDs
     """
     try:
         # Parse metadata
@@ -238,99 +206,90 @@ async def ingest_pdf(
         if metadata:
             import json
             custom_metadata = json.loads(metadata)
-        
+
         # Save the uploaded file
         upload_dir = "data/uploads"
         os.makedirs(upload_dir, exist_ok=True)
-        
+
         file_path = os.path.join(upload_dir, file.filename)
         with open(file_path, "wb") as f:
             contents = await file.read()
             f.write(contents)
-            
-        # Initialize document processor
-        processor = DocumentProcessor(
-            vector_store=vector_store,
-            device=pdf_loader.device
-        )
-        
-        # Process the PDF with GPU acceleration
+
+        # Process the PDF with pre-initialized processor
         document_ids = processor.process_pdf(
             file_path=file_path,
             custom_metadata=custom_metadata,
         )
-        
+
         return IngestResponse(
             message=f"Successfully ingested PDF: {file.filename}",
             document_count=len(document_ids),
             document_ids=document_ids,
         )
     except Exception as e:
+        # Log the full traceback
+        error_detail = f"Error ingesting PDF: {str(e)}\n{traceback.format_exc()}"
+        logger.error(error_detail)
+
+        # Return detailed error information
         raise HTTPException(
             status_code=500,
-            detail=f"Error ingesting PDF: {str(e)}",
+            detail=error_detail,
         )
 
 
 @router.post("/text", response_model=IngestResponse)
 async def ingest_text(
-    manual_request: ManualIngestRequest,
-    vector_store: QdrantStore = Depends(get_vector_store),
+        manual_request: ManualIngestRequest,
+        processor: DocumentProcessor = Depends(get_document_processor),
 ) -> IngestResponse:
     """
     Ingest manually entered text.
-    
-    Args:
-        manual_request: Manual ingest request with text content and metadata
-        
-    Returns:
-        Ingest response with document IDs
     """
     try:
-        # Initialize document processor
-        processor = DocumentProcessor(vector_store=vector_store)
-        
-        # Process the text
+        # Process the text using pre-initialized processor
         document_ids = processor.process_text(manual_request)
-        
+
         return IngestResponse(
             message="Successfully ingested manual text",
             document_count=len(document_ids),
             document_ids=document_ids,
         )
     except Exception as e:
+        # Log the full traceback
+        error_detail = f"Error ingesting text: {str(e)}\n{traceback.format_exc()}"
+        logger.error(error_detail)
+
+        # Return detailed error information
         raise HTTPException(
             status_code=500,
-            detail=f"Error ingesting text: {str(e)}",
+            detail=error_detail,
         )
 
 
 @router.delete("/documents/{doc_id}", response_model=Dict[str, str])
 async def delete_document(
-    doc_id: str,
-    vector_store: QdrantStore = Depends(get_vector_store),
+        doc_id: str,
+        processor: DocumentProcessor = Depends(get_document_processor),
 ) -> Dict[str, str]:
     """
     Delete a document by ID.
-    
-    Args:
-        doc_id: Document ID to delete
-        
-    Returns:
-        Success message
     """
     try:
-        # Initialize document processor
-        processor = DocumentProcessor(vector_store=vector_store)
-        
-        # Delete the document
+        # Delete the document using pre-initialized processor
         processor.delete_documents([doc_id])
-        
+
         return {"message": f"Successfully deleted document: {doc_id}"}
     except Exception as e:
+        # Log the full traceback
+        error_detail = f"Error deleting document: {str(e)}\n{traceback.format_exc()}"
+        logger.error(error_detail)
+
+        # Return detailed error information
         raise HTTPException(
             status_code=500,
-            detail=f"Error deleting document: {str(e)}",
+            detail=error_detail,
         )
 
 

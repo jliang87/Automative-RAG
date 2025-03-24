@@ -12,6 +12,7 @@ from src.core.vectorstore import QdrantStore
 from src.core.youtube_transcriber import YouTubeTranscriber, BilibiliTranscriber
 from src.core.youku_transcriber import YoukuTranscriber
 from src.core.pdf_loader import PDFLoader
+from src.core.document_processor import DocumentProcessor
 
 # Global instances that will be initialized during app startup
 llm_model = None  # LLM instance
@@ -23,6 +24,7 @@ pdf_loader = None
 qdrant_client = None
 vector_store = None
 retriever = None
+document_processor = None
 
 def load_transcribers():
     """Load transcriber models once at startup."""
@@ -139,6 +141,20 @@ def init_retriever():
     elif vector_store is None or colbert_model is None:
         print("⚠️ Cannot initialize retriever: vector_store or colbert_model not loaded")
 
+def init_document_processor():
+    """Initialize document processor once at app startup."""
+    global document_processor, vector_store, youtube_transcriber, bilibili_transcriber, youku_transcriber, pdf_loader
+    if document_processor is None:
+        print("🚀 Initializing Document Processor...")
+        document_processor = DocumentProcessor(
+            vector_store=vector_store,
+            youtube_transcriber=youtube_transcriber,
+            bilibili_transcriber=bilibili_transcriber,
+            youku_transcriber=youku_transcriber,
+            pdf_loader=pdf_loader
+        )
+        print("✅ Document Processor Initialized!")
+
 def load_all_components():
     """Initialize all components at application startup."""
     load_transcribers()
@@ -147,6 +163,7 @@ def load_all_components():
     load_pdf_loader()
     init_vector_store()
     init_retriever()
+    init_document_processor()
 
 # Authentication dependency
 async def get_token_header(x_token: str = Header(...)):
@@ -216,3 +233,9 @@ def get_pdf_loader() -> PDFLoader:
     if pdf_loader is None:
         raise HTTPException(status_code=500, detail="PDF Loader is not initialized. Call `load_pdf_loader()` first.")
     return pdf_loader
+
+def get_document_processor() -> DocumentProcessor:
+    """Get the cached document processor instance."""
+    if document_processor is None:
+        raise HTTPException(status_code=500, detail="Document Processor not initialized yet.")
+    return document_processor

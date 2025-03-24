@@ -3,8 +3,21 @@
 """
 
 import json
+import os
 import streamlit as st
 from src.ui.components import header, api_request, loading_spinner
+
+# API 配置
+API_URL = os.environ.get("API_URL", "http://localhost:8000")
+API_KEY = os.environ.get("API_KEY", "default-api-key")
+
+# 会话状态初始化
+if "api_url" not in st.session_state:
+    st.session_state.api_url = API_URL
+if "api_key" not in st.session_state:
+    st.session_state.api_key = API_KEY
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
 
 header(
     "导入汽车数据",
@@ -29,7 +42,15 @@ def render_youtube_tab():
     with st.expander("附加元数据"):
         yt_manufacturer = st.text_input("制造商", key="yt_manufacturer")
         yt_model = st.text_input("车型", key="yt_model")
-        yt_year = st.number_input("年份", min_value=1900, max_value=2100, value=2023, key="yt_year")
+        yt_year = st.text_input("年份", value="2023", key="yt_year")
+        # Validate year format if needed
+        if yt_year:
+            try:
+                year_value = int(yt_year)
+                if year_value < 1900 or year_value > 2100:
+                    st.warning("年份应该在1900-2100之间")
+            except ValueError:
+                st.warning("请输入有效的年份")
 
         yt_categories = ["", "轿车", "SUV", "卡车", "跑车", "MPV", "双门轿车", "敞篷车", "掀背车", "旅行车"]
         yt_category = st.selectbox("类别", yt_categories, key="yt_category")
