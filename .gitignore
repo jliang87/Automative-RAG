@@ -35,8 +35,7 @@ ENV/
 .ipynb_checkpoints
 
 # Data and logs
-data/vector_store/
-data/models/
+data/
 models/
 logs/
 *.log

@@ -61,15 +61,15 @@ class YouTubeTranscriber:
             print(f"Loading Whisper {self.whisper_model_size} model on {self.device}...")
 
             # Check if using custom model path
-            if hasattr(settings, 'whisper_model_path') and settings.whisper_model_path and os.path.exists(
-                    settings.whisper_model_path):
+            if hasattr(settings, 'whisper_model_full_path') and settings.whisper_model_full_path and os.path.exists(
+                    settings.whisper_model_full_path):
                 # Load from local path
-                print(f"Loading Whisper model from local path: {settings.whisper_model_path}")
+                print(f"Loading Whisper model from local path: {settings.whisper_model_full_path}")
 
                 self.whisper_model = whisper.load_model(
                     name=self.whisper_model_size,
                     device=self.device,
-                    download_root=settings.whisper_model_path
+                    download_root=settings.whisper_model_full_path
                 )
             else:
                 # Load from default location
@@ -520,7 +520,7 @@ class BilibiliTranscriber(YouTubeTranscriber):
         try:
             subprocess.run([
                 "yt-dlp",
-                "-f", "best",
+                "-f", "30280",
                 "-o", video_path,
                 url
             ], check=True)

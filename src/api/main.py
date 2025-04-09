@@ -9,6 +9,15 @@ from src.api.routers import auth, ingest, query
 from src.config.settings import settings
 from src.api.dependencies import get_token_header, load_all_components
 
+# when uncommented, run without reload to debug
+# import pydevd_pycharm
+# pydevd_pycharm.settrace(
+#     'localhost',
+#     port=5678,
+#     stdoutToServer=True,
+#     stderrToServer=True,
+#     suspend=True  # Pause execution
+# )
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
