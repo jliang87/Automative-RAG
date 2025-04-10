@@ -3590,6 +3590,18 @@ triton = {version = ">=2.0.0", markers = "platform_machine == \"x86_64\" and sys
 dev = ["black", "flake8", "isort", "pytest", "scipy"]
 
 [[package]]
+name = "opencc-python-reimplemented"
+version = "0.1.7"
+description = "OpenCC made with Python"
+optional = false
+python-versions = "*"
+groups = ["main"]
+files = [
+    {file = "opencc-python-reimplemented-0.1.7.tar.gz", hash = "sha256:4f777ea3461a25257a7b876112cfa90bb6acabc6dfb843bf4d11266e43579dee"},
+    {file = "opencc_python_reimplemented-0.1.7-py2.py3-none-any.whl", hash = "sha256:41b3b92943c7bed291f448e9c7fad4b577c8c2eae30fcfe5a74edf8818493aa6"},
+]
+
+[[package]]
 name = "opencv-contrib-python"
 version = "4.11.0.86"
 description = "Wrapper package for OpenCV python bindings."
@@ -4926,18 +4938,6 @@ groups = ["main"]
 files = [
     {file = "python_multipart-0.0.20-py3-none-any.whl", hash = "sha256:8a62d3a8335e06589fe01f2a3e178cdcc632f3fbe0d492ad9ee0ec35aab1f104"},
     {file = "python_multipart-0.0.20.tar.gz", hash = "sha256:8dd0cab45b8e23064ae09147625994d090fa46f5b0d1e13af944c331a7fa9d13"},
-]
-
-[[package]]
-name = "pytube"
-version = "15.0.0"
-description = "Python 3 library for downloading YouTube Videos."
-optional = false
-python-versions = ">=3.7"
-groups = ["main"]
-files = [
-    {file = "pytube-15.0.0-py3-none-any.whl", hash = "sha256:07b9904749e213485780d7eb606e5e5b8e4341aa4dccf699160876da00e12d78"},
-    {file = "pytube-15.0.0.tar.gz", hash = "sha256:076052efe76f390dfa24b1194ff821d4e86c17d41cb5562f3a276a8bcbfc9d1d"},
 ]
 
 [[package]]
@@ -7481,4 +7481,4 @@ cffi = ["cffi (>=1.11)"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.10,<3.11"
-content-hash = "66c5430f9a16ab541df73ad43a5acf0a5a848e22a39dd7190ae9835f4801a4bc"
+content-hash = "7a5bed4d90cd896fef7153cbb85564db05e2df70e5323ce1e6a4f38b9ee1a0a2"

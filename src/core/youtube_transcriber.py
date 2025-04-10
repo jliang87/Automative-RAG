@@ -1,12 +1,12 @@
 import os
 import re
 import tempfile
+import subprocess
+import json
 from typing import Dict, List, Optional, Tuple, Union
 
 import torch
-import pytube
 from langchain_core.documents import Document
-from pytube import YouTube
 import whisper
 
 from src.models.schema import DocumentMetadata, DocumentSource
@@ -17,7 +17,7 @@ class YouTubeTranscriber:
     """
     Enhanced class for downloading and transcribing YouTube videos with GPU acceleration.
 
-    Uses PyTube for video downloading and Whisper for high-quality transcription.
+    Uses yt-dlp for video downloading and Whisper for high-quality transcription.
     Supports loading Whisper from local paths.
     """
 
@@ -55,28 +55,35 @@ class YouTubeTranscriber:
         self.use_whisper_as_fallback = use_whisper_as_fallback
         self.force_whisper = force_whisper
 
+        # Add Chinese converter if available
+        try:
+            import opencc
+            self.chinese_converter = opencc.OpenCC('t2s')  # Traditional to Simplified
+            print("Chinese character conversion enabled")
+        except ImportError:
+            print("Warning: opencc-python-reimplemented not installed. Chinese character conversion disabled.")
+            self.chinese_converter = None
+
     def _load_whisper_model(self):
         """Load the Whisper model if not already loaded."""
         if self.whisper_model is None:
             print(f"Loading Whisper {self.whisper_model_size} model on {self.device}...")
 
-            # Check if using custom model path
-            if hasattr(settings, 'whisper_model_full_path') and settings.whisper_model_full_path and os.path.exists(
-                    settings.whisper_model_full_path):
-                # Load from local path
-                print(f"Loading Whisper model from local path: {settings.whisper_model_full_path}")
+            # Check if we should use models directory for downloading/loading
+            models_dir = None
+            if hasattr(settings, 'models_dir') and settings.models_dir:
+                models_dir = os.path.join(settings.models_dir, settings.whisper_model_path)
+                print(f"Using models directory: {models_dir}")
 
-                self.whisper_model = whisper.load_model(
-                    name=self.whisper_model_size,
-                    device=self.device,
-                    download_root=settings.whisper_model_full_path
-                )
-            else:
-                # Load from default location
-                self.whisper_model = whisper.load_model(
-                    self.whisper_model_size,
-                    device=self.device
-                )
+                # Ensure directory exists
+                os.makedirs(models_dir, exist_ok=True)
+
+            # Load model from cache or download if needed
+            self.whisper_model = whisper.load_model(
+                name=self.whisper_model_size,
+                device=self.device,
+                download_root=models_dir
+            )
 
             print("Whisper model loaded successfully")
 
@@ -90,11 +97,23 @@ class YouTubeTranscriber:
         Returns:
             Video ID
         """
-        return YouTube(url).video_id
+        # YouTube URL patterns
+        patterns = [
+            r'(?:youtube\.com/watch\?v=|youtu\.be/)([a-zA-Z0-9_-]{11})',
+            r'youtube\.com/embed/([a-zA-Z0-9_-]{11})',
+            r'youtube\.com/v/([a-zA-Z0-9_-]{11})',
+        ]
+
+        for pattern in patterns:
+            match = re.search(pattern, url)
+            if match:
+                return match.group(1)
+
+        raise ValueError(f"Could not extract YouTube video ID from URL: {url}")
 
     def extract_audio(self, url: str) -> str:
         """
-        Extract audio from a YouTube video.
+        Extract audio from a YouTube video using yt-dlp.
 
         Args:
             url: YouTube URL
@@ -102,8 +121,7 @@ class YouTubeTranscriber:
         Returns:
             Path to the extracted audio file
         """
-        yt = YouTube(url)
-        video_id = yt.video_id
+        video_id = self.extract_video_id(url)
 
         # Define output file path
         audio_path = os.path.join(self.audio_dir, f"{video_id}.mp3")
@@ -113,24 +131,33 @@ class YouTubeTranscriber:
             print(f"Audio already exists for video ID: {video_id}")
             return audio_path
 
-        # Get the audio stream
-        audio_stream = yt.streams.filter(only_audio=True).order_by('abr').desc().first()
-
-        if not audio_stream:
-            raise ValueError(f"Could not find audio stream for YouTube video: {url}")
-
-        # Download the audio
+        # Download audio using yt-dlp
         print(f"Downloading audio for YouTube video: {video_id}")
-        download_path = audio_stream.download(
-            output_path=self.audio_dir,
-            filename=f"{video_id}.mp3"
-        )
 
-        return download_path
+        try:
+            # Use yt-dlp to download audio directly in mp3 format
+            subprocess.run([
+                "yt-dlp",
+                "-x",  # Extract audio
+                "--audio-format", "mp3",  # Convert to mp3
+                "--audio-quality", "0",  # Best quality
+                "-o", audio_path,  # Output file
+                url
+            ], check=True)
+
+            if os.path.exists(audio_path):
+                return audio_path
+            else:
+                raise ValueError(f"Audio file not found after download: {audio_path}")
+
+        except subprocess.CalledProcessError as e:
+            raise ValueError(f"Error downloading audio with yt-dlp: {str(e)}")
+        except FileNotFoundError:
+            raise ValueError("yt-dlp not found. Please install it with: pip install yt-dlp")
 
     def get_video_metadata(self, url: str) -> Dict[str, Union[str, int]]:
         """
-        Get metadata from a YouTube video.
+        Get metadata from a YouTube video using yt-dlp.
 
         Args:
             url: YouTube URL
@@ -139,26 +166,61 @@ class YouTubeTranscriber:
             Dictionary containing video metadata
         """
         try:
-            yt = YouTube(url)
+            video_id = self.extract_video_id(url)
 
-            metadata = {
-                "title": yt.title,
-                "author": yt.author,
-                "published_date": yt.publish_date,
-                "video_id": yt.video_id,
-                "url": url,
-                "length": yt.length,
-                "views": yt.views,
-                "description": yt.description,
-            }
+            # Use yt-dlp to get metadata
+            result = subprocess.run([
+                "yt-dlp",
+                "--dump-json",
+                "--skip-download",
+                url
+            ], capture_output=True, text=True, check=True)
 
-            return metadata
+            if result.stdout:
+                data = json.loads(result.stdout)
+
+                # Extract relevant metadata
+                metadata = {
+                    "title": data.get("title", f"YouTube Video {video_id}"),
+                    "author": data.get("uploader", "Unknown"),
+                    "published_date": data.get("upload_date"),
+                    "video_id": video_id,
+                    "url": url,
+                    "length": data.get("duration", 0),
+                    "views": data.get("view_count", 0),
+                    "description": data.get("description", ""),
+                }
+                return metadata
+            else:
+                raise ValueError("No metadata returned from yt-dlp")
+
         except Exception as e:
-            raise ValueError(f"Error fetching YouTube metadata: {str(e)}")
+            # Fallback metadata if yt-dlp fails
+            print(f"Warning: Error fetching YouTube metadata: {str(e)}")
+            print(f"Using fallback metadata for video ID: {video_id if 'video_id' in locals() else 'unknown'}")
+
+            # Try to extract video_id if not already done
+            if 'video_id' not in locals():
+                try:
+                    video_id = self.extract_video_id(url)
+                except Exception:
+                    video_id = "unknown"
+
+            # Create minimal metadata to allow processing to continue
+            return {
+                "title": f"YouTube Video {video_id}",
+                "author": "Unknown Author",
+                "published_date": None,
+                "video_id": video_id,
+                "url": url,
+                "length": 0,
+                "views": 0,
+                "description": "",
+            }
 
     def download_youtube_captions(self, url: str) -> Optional[str]:
         """
-        Download the transcript from a YouTube video's captions.
+        Download the transcript from a YouTube video's captions using yt-dlp.
 
         Args:
             url: YouTube URL
@@ -167,21 +229,37 @@ class YouTubeTranscriber:
             Video transcript text or None if no captions are available
         """
         try:
-            yt = YouTube(url)
+            video_id = self.extract_video_id(url)
 
-            # Try to get transcript
-            transcript_list = yt.captions.get_by_language_code('en')
-            if transcript_list:
-                return transcript_list.generate_srt_captions()
+            # Create a temporary directory for the subtitles
+            with tempfile.TemporaryDirectory() as temp_dir:
+                srt_path = os.path.join(temp_dir, f"{video_id}.en.vtt")
 
-            # If no transcript, use automatic captions
-            transcript_list = yt.captions.all()
-            if transcript_list:
-                for transcript in transcript_list:
-                    if 'a.en' in transcript.code:
-                        return transcript.generate_srt_captions()
+                # Try to download subtitles
+                try:
+                    subprocess.run([
+                        "yt-dlp",
+                        "--skip-download",  # Don't download the video
+                        "--write-sub",  # Write subtitles
+                        "--write-auto-sub",  # Write auto-generated subtitles if available
+                        "--sub-lang", "en",  # English subtitles
+                        "--sub-format", "vtt",  # VTT format
+                        "-o", os.path.join(temp_dir, video_id),  # Output filename
+                        url
+                    ], check=True, capture_output=True)
+                except subprocess.CalledProcessError:
+                    return None
 
-            return None  # No captions available
+                # Check if subtitles were downloaded
+                srt_files = [f for f in os.listdir(temp_dir) if f.endswith('.vtt')]
+                if not srt_files:
+                    return None
+
+                # Read the subtitle file
+                srt_path = os.path.join(temp_dir, srt_files[0])
+                with open(srt_path, 'r', encoding='utf-8') as f:
+                    return f.read()
+
         except Exception as e:
             print(f"Warning: Could not download YouTube captions: {str(e)}")
             return None
@@ -204,7 +282,14 @@ class YouTubeTranscriber:
         # Transcribe the audio
         result = self.whisper_model.transcribe(audio_path)
 
-        return result["text"]
+        # Get the transcript text
+        transcript = result["text"]
+
+        # Convert traditional to simplified Chinese if needed
+        if hasattr(self, 'chinese_converter') and self.chinese_converter:
+            transcript = self.chinese_converter.convert(transcript)
+
+        return transcript
 
     def format_transcript(self, transcript: str, is_srt: bool = False) -> str:
         """
@@ -220,29 +305,55 @@ class YouTubeTranscriber:
         if not is_srt:
             return transcript  # Already plain text (from Whisper)
 
-        # Format SRT transcript
+        # Format SRT/VTT transcript
         lines = transcript.split('\n')
         formatted_lines = []
+        current_text = ""
 
-        i = 0
-        while i < len(lines):
-            # Skip index lines (numbers)
-            if lines[i].strip().isdigit():
+        # For VTT format
+        if "WEBVTT" in lines[0]:
+            in_cue = False
+            for line in lines:
+                # Skip header and timing lines
+                if "-->" in line or line.strip() == "" or line.startswith("WEBVTT"):
+                    if in_cue and current_text:
+                        formatted_lines.append(current_text.strip())
+                        current_text = ""
+                    in_cue = False
+                    continue
+
+                # We're in a text cue
+                in_cue = True
+                current_text += " " + line.strip()
+
+        # For SRT format
+        else:
+            i = 0
+            while i < len(lines):
+                # Skip index lines (numbers)
+                if lines[i].strip().isdigit():
+                    i += 1
+                    continue
+
+                # Skip timestamp lines
+                if '-->' in lines[i]:
+                    i += 1
+                    continue
+
+                # Add text content
+                if lines[i].strip():
+                    formatted_lines.append(lines[i].strip())
+
                 i += 1
-                continue
 
-            # Skip timestamp lines
-            if '-->' in lines[i]:
-                i += 1
-                continue
+        # Convert to plain text
+        formatted_text = ' '.join(formatted_lines)
 
-            # Add text content
-            if lines[i].strip():
-                formatted_lines.append(lines[i].strip())
+        # Convert traditional to simplified Chinese if needed
+        if hasattr(self, 'chinese_converter') and self.chinese_converter:
+            formatted_text = self.chinese_converter.convert(formatted_text)
 
-            i += 1
-
-        return ' '.join(formatted_lines)
+        return formatted_text
 
     def extract_automotive_metadata(self, metadata: Dict[str, any]) -> Dict[str, any]:
         """
@@ -257,6 +368,9 @@ class YouTubeTranscriber:
         title = metadata.get("title", "")
         description = metadata.get("description", "")
 
+        # Combine for search
+        text = title + " " + description
+
         auto_metadata = {}
 
         # Common manufacturers
@@ -264,17 +378,19 @@ class YouTubeTranscriber:
             "Toyota", "Honda", "Ford", "Chevrolet", "BMW", "Mercedes", "Audi",
             "Volkswagen", "Nissan", "Hyundai", "Kia", "Subaru", "Mazda",
             "Porsche", "Ferrari", "Lamborghini", "Tesla", "Volvo", "Jaguar",
-            "Land Rover", "Lexus", "Acura", "Infiniti", "Cadillac", "Jeep"
+            "Land Rover", "Lexus", "Acura", "Infiniti", "Cadillac", "Jeep",
+            # Chinese manufacturers
+            "BYD", "NIO", "Xpeng", "Li Auto", "Geely", "Great Wall", "Chery", "SAIC"
         ]
 
         # Look for manufacturer
         for manufacturer in manufacturers:
-            if manufacturer.lower() in title.lower() or manufacturer.lower() in description.lower():
+            if manufacturer.lower() in text.lower():
                 auto_metadata["manufacturer"] = manufacturer
                 break
 
         # Extract year (4-digit number between 1900 and 2100)
-        year_match = re.search(r'(19\d{2}|20\d{2})', title + " " + description)
+        year_match = re.search(r'(19\d{2}|20\d{2})', text)
         if year_match:
             auto_metadata["year"] = int(year_match.group(0))
 
@@ -293,9 +409,11 @@ class YouTubeTranscriber:
 
         for category, keywords in categories.items():
             for keyword in keywords:
-                if keyword.lower() in title.lower() or keyword.lower() in description.lower():
+                if keyword.lower() in text.lower():
                     auto_metadata["category"] = category
                     break
+            if "category" in auto_metadata:
+                break
 
         # Engine types
         engine_types = {
@@ -308,9 +426,11 @@ class YouTubeTranscriber:
 
         for engine_type, keywords in engine_types.items():
             for keyword in keywords:
-                if keyword.lower() in title.lower() or keyword.lower() in description.lower():
+                if keyword.lower() in text.lower():
                     auto_metadata["engine_type"] = engine_type
                     break
+            if "engine_type" in auto_metadata:
+                break
 
         # Transmission types
         transmission_types = {
@@ -322,9 +442,11 @@ class YouTubeTranscriber:
 
         for transmission, keywords in transmission_types.items():
             for keyword in keywords:
-                if keyword.lower() in title.lower() or keyword.lower() in description.lower():
+                if keyword.lower() in text.lower():
                     auto_metadata["transmission"] = transmission
                     break
+            if "transmission" in auto_metadata:
+                break
 
         return auto_metadata
 

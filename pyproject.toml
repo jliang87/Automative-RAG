@@ -22,7 +22,7 @@ qdrant-client = "*"
 sentence-transformers = "*"
 torch = {version = "*", extras = ["cuda"]}
 transformers = "*"
-pytube = "*"
+opencc-python-reimplemented = "*"
 yt-dlp = "*"  # For Bilibili and enhanced YouTube downloading
 python-dotenv = "*"
 pytest = "*"

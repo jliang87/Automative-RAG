@@ -3927,3 +3927,23 @@ zstandard==0.23.0 ; python_version == "3.10" and platform_system == "Windows" \
     --hash=sha256:fd30d9c67d13d891f2360b2a120186729c111238ac63b43dbd37a5a40670b8ca \
     --hash=sha256:fd7699e8fd9969f455ef2926221e0233f81a2542921471382e77a9e2f2b57f4b \
     --hash=sha256:fe3b385d996ee0822fd46528d9f0443b880d4d05528fd26a9119a54ec3f91c69
+
+streamlit~=1.43.2
+httpx~=0.28.1
+fastapi~=0.115.11
+python-jose~=3.4.0
+passlib~=1.7.4
+torch~=2.6.0
+pydantic~=2.10.6
+qdrant-client~=1.13.3
+langchain-core~=0.3.45
+transformers~=4.49.0
+langchain-community~=0.3.19
+langchain-text-splitters~=0.3.6
+numpy~=2.1.3
+tqdm~=4.67.1
+sentence-transformers~=3.4.1
+openai-whisper~=20240930
+pydantic-settings~=2.8.1
+python-dotenv~=1.0.1
+pytest~=8.3.5
