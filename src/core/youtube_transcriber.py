@@ -69,21 +69,23 @@ class YouTubeTranscriber:
         if self.whisper_model is None:
             print(f"Loading Whisper {self.whisper_model_size} model on {self.device}...")
 
-            # Check if we should use models directory for downloading/loading
-            models_dir = None
-            if hasattr(settings, 'models_dir') and settings.models_dir:
-                models_dir = os.path.join(settings.models_dir, settings.whisper_model_path)
-                print(f"Using models directory: {models_dir}")
+            # Check if using custom model path
+            if hasattr(settings, 'whisper_model_full_path') and settings.whisper_model_full_path and os.path.exists(
+                    settings.whisper_model_full_path):
+                # Load from local path
+                print(f"Loading Whisper model from local path: {settings.whisper_model_full_path}")
 
-                # Ensure directory exists
-                os.makedirs(models_dir, exist_ok=True)
-
-            # Load model from cache or download if needed
-            self.whisper_model = whisper.load_model(
-                name=self.whisper_model_size,
-                device=self.device,
-                download_root=models_dir
-            )
+                self.whisper_model = whisper.load_model(
+                    name=self.whisper_model_size,
+                    device=self.device,
+                    download_root=settings.whisper_model_full_path
+                )
+            else:
+                # Load from default location
+                self.whisper_model = whisper.load_model(
+                    self.whisper_model_size,
+                    device=self.device
+                )
 
             print("Whisper model loaded successfully")
 
