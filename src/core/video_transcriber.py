@@ -26,17 +26,15 @@ from src.utils.helpers import (
 
 class VideoTranscriber:
     """
-    Unified video transcriber that can handle multiple platforms (YouTube, Bilibili, etc.).
+    Unified video transcriber that handles multiple platforms (YouTube, Bilibili, etc.)
+    using Whisper for all transcription tasks.
     """
 
     def __init__(
             self,
             output_dir: str = "data/videos",
             whisper_model_size: str = "medium",
-            device: Optional[str] = None,
-            use_youtube_captions: bool = False,
-            use_whisper_as_fallback: bool = False,
-            force_whisper: bool = True
+            device: Optional[str] = None
     ):
         """
         Initialize the video transcriber.
@@ -45,9 +43,6 @@ class VideoTranscriber:
             output_dir: Directory to save downloaded videos and audio
             whisper_model_size: Size of the Whisper model (tiny, base, small, medium, large)
             device: Device to run Whisper on (cuda or cpu), defaults to cuda if available
-            use_youtube_captions: Whether to use YouTube's captions if available
-            use_whisper_as_fallback: Whether to use Whisper as fallback when captions aren't available
-            force_whisper: Always use Whisper for transcription
         """
         self.output_dir = output_dir
         self.audio_dir = os.path.join(output_dir, "audio")
@@ -58,13 +53,6 @@ class VideoTranscriber:
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         self.whisper_model_size = whisper_model_size
         self.whisper_model = None  # Lazy-load the model when needed
-
-        # YouTube-specific settings
-        self.use_youtube_captions = use_youtube_captions
-        self.use_whisper_as_fallback = use_whisper_as_fallback
-
-        # General settings
-        self.force_whisper = force_whisper
 
         # Add Chinese converter if available
         try:
@@ -388,66 +376,17 @@ class VideoTranscriber:
 
         return formatted_text
 
-    def download_youtube_captions(self, url: str) -> Optional[str]:
-        """
-        Download the transcript from a YouTube video's captions using yt-dlp.
 
-        Args:
-            url: YouTube URL
-
-        Returns:
-            Video transcript text or None if no captions are available
-        """
-        # Only attempt for YouTube URLs
-        if self.detect_platform(url) != "youtube":
-            return None
-
-        try:
-            video_id = self.extract_video_id(url)
-
-            # Create a temporary directory for the subtitles
-            with tempfile.TemporaryDirectory() as temp_dir:
-                srt_path = os.path.join(temp_dir, f"{video_id}.en.vtt")
-
-                # Try to download subtitles
-                try:
-                    subprocess.run([
-                        "yt-dlp",
-                        "--skip-download",  # Don't download the video
-                        "--write-sub",  # Write subtitles
-                        "--write-auto-sub",  # Write auto-generated subtitles if available
-                        "--sub-lang", "en",  # English subtitles
-                        "--sub-format", "vtt",  # VTT format
-                        "-o", os.path.join(temp_dir, video_id),  # Output filename
-                        url
-                    ], check=True, capture_output=True)
-                except subprocess.CalledProcessError:
-                    return None
-
-                # Check if subtitles were downloaded
-                srt_files = [f for f in os.listdir(temp_dir) if f.endswith('.vtt')]
-                if not srt_files:
-                    return None
-
-                # Read the subtitle file
-                srt_path = os.path.join(temp_dir, srt_files[0])
-                with open(srt_path, 'r', encoding='utf-8') as f:
-                    return f.read()
-
-        except Exception as e:
-            print(f"Warning: Could not download YouTube captions: {str(e)}")
-            return None
 
     def process_video(
-            self, url: str, custom_metadata: Optional[Dict[str, str]] = None, force_whisper: bool = None
+            self, url: str, custom_metadata: Optional[Dict[str, str]] = None
     ) -> List[Document]:
         """
-        Process a video and return Langchain documents.
+        Process a video and return Langchain documents using Whisper for transcription.
 
         Args:
             url: Video URL
             custom_metadata: Optional custom metadata
-            force_whisper: Whether to force using Whisper even if captions are available
 
         Returns:
             List of Langchain Document objects
@@ -462,38 +401,22 @@ class VideoTranscriber:
         auto_metadata = extract_metadata_from_text(video_metadata.get("title", "") + " " +
                                                   video_metadata.get("description", ""))
 
-        # If force_whisper parameter is provided, use it; otherwise, use the instance attribute
-        use_force_whisper = self.force_whisper if force_whisper is None else force_whisper
-
         # Determine the source based on platform
         source = DocumentSource.YOUTUBE if platform == "youtube" else DocumentSource.BILIBILI
 
-        # Get transcript
-        transcript_text = None
-        used_whisper = False
+        # Transcribe using Whisper
+        try:
+            # Extract audio
+            media_path = self.extract_audio(url)
 
-        # YouTube-specific: Try YouTube captions first if enabled and not forced to use Whisper
-        if platform == "youtube" and self.use_youtube_captions and not use_force_whisper:
-            youtube_captions = self.download_youtube_captions(url)
-            if youtube_captions:
-                transcript_text = self.format_transcript(youtube_captions, is_srt=True)
-                print(f"Using YouTube captions for video ID: {video_metadata['video_id']}")
+            # Transcribe with Whisper
+            transcript_text = self.transcribe_with_whisper(media_path)
+            print(f"Using Whisper transcription for video ID: {video_metadata['video_id']}")
+        except Exception as e:
+            raise ValueError(f"Error transcribing video with Whisper: {str(e)}")
 
-        # Use Whisper if no transcript yet or force_whisper is True
-        if transcript_text is None and (self.use_whisper_as_fallback or use_force_whisper or platform != "youtube"):
-            try:
-                # Extract audio
-                media_path = self.extract_audio(url)
-
-                # Transcribe with Whisper
-                transcript_text = self.transcribe_with_whisper(media_path)
-                used_whisper = True
-                print(f"Using Whisper transcription for video ID: {video_metadata['video_id']}")
-            except Exception as e:
-                raise ValueError(f"Error transcribing video with Whisper: {str(e)}")
-
-        if transcript_text is None:
-            raise ValueError("No transcript available for this video and transcription failed")
+        if not transcript_text:
+            raise ValueError("Transcription failed: no text was generated")
 
         # Create metadata object
         metadata = DocumentMetadata(
@@ -512,10 +435,9 @@ class VideoTranscriber:
             custom_metadata=custom_metadata or {},
         )
 
-        # Add transcription method to metadata
-        metadata.custom_metadata["transcription_method"] = "whisper" if used_whisper else "youtube_captions"
-        if used_whisper:
-            metadata.custom_metadata["whisper_model"] = self.whisper_model_size
+        # Add transcription info to metadata
+        metadata.custom_metadata["transcription_method"] = "whisper"
+        metadata.custom_metadata["whisper_model"] = self.whisper_model_size
 
         # Add platform information
         metadata.custom_metadata["platform"] = platform
@@ -532,7 +454,7 @@ class VideoTranscriber:
             self, urls: List[str], custom_metadata: Optional[List[Dict[str, str]]] = None
     ) -> Dict[str, Union[List[str], Dict[str, str]]]:
         """
-        Process multiple videos in batch.
+        Process multiple videos in batch using Whisper for transcription.
 
         Args:
             urls: List of Video URLs
@@ -547,9 +469,8 @@ class VideoTranscriber:
 
         results = {}
 
-        # Load model once for all videos
-        if self.force_whisper:
-            self._load_whisper_model()
+        # Load Whisper model once for all videos
+        self._load_whisper_model()
 
         # Process each video
         for i, url in enumerate(urls):

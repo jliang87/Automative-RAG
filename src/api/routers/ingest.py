@@ -36,15 +36,13 @@ class BatchVideoIngestRequest(BaseModel):
 @router.post("/video", response_model=IngestResponse)
 async def ingest_video(
         video_request: VideoIngestRequest,
-        force_whisper: bool = Query(True, description="Force using Whisper for transcription"),
         processor: DocumentProcessor = Depends(get_document_processor),
 ) -> IngestResponse:
     """
-    Ingest a video from any supported platform (YouTube, Bilibili, etc.) with GPU-accelerated transcription.
+    Ingest a video from any supported platform (YouTube, Bilibili, etc.) with GPU-accelerated Whisper transcription.
 
     Args:
         video_request: Video ingest request with URL and optional metadata
-        force_whisper: Force using Whisper even if captions are available
         processor: Document processor dependency
 
     Returns:
@@ -54,8 +52,7 @@ async def ingest_video(
         # Process the video using unified processor
         document_ids = processor.process_video(
             url=str(video_request.url),
-            custom_metadata=video_request.metadata,
-            force_whisper=force_whisper
+            custom_metadata=video_request.metadata
         )
 
         # Determine platform for more helpful user feedback

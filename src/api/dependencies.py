@@ -30,10 +30,7 @@ def load_video_transcriber():
         print("🚀 Loading Video Transcriber...")
         video_transcriber = VideoTranscriber(
             whisper_model_size=settings.whisper_model_size,
-            device=settings.device,
-            use_youtube_captions=settings.use_youtube_captions,
-            use_whisper_as_fallback=settings.use_whisper_as_fallback,
-            force_whisper=settings.force_whisper
+            device=settings.device
         )
         print("✅ Video Transcriber Loaded!")
 

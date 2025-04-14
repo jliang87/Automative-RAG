@@ -48,11 +48,7 @@ def render_video_tab():
         platform = detect_platform(video_url)
         st.info(f"检测到 {platform} 平台")
 
-    force_whisper = st.checkbox(
-        "强制使用 Whisper 转录",
-        value=True,
-        help="使用 Whisper 进行转录，而不是平台提供的字幕。这通常提供更高质量的转录结果。"
-    )
+    st.info("所有视频将使用 Whisper AI 进行转录以提供高质量的字幕")
 
     with st.expander("附加元数据"):
         video_manufacturer = st.text_input("制造商", key="video_manufacturer")
@@ -102,7 +98,7 @@ def render_video_tab():
 
         # 发送 API 请求
         with loading_spinner(f"正在处理{platform}视频... 这可能需要几分钟。"):
-            endpoint = f"/ingest/video{'?force_whisper=true' if force_whisper else '?force_whisper=false'}"
+            endpoint = "/ingest/video"
 
             result = api_request(
                 endpoint=endpoint,

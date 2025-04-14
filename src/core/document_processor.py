@@ -50,10 +50,7 @@ class DocumentProcessor:
         # Initialize video transcriber if not provided
         self.video_transcriber = video_transcriber or VideoTranscriber(
             whisper_model_size=settings.whisper_model_size,
-            device=self.device,
-            use_youtube_captions=settings.use_youtube_captions,
-            use_whisper_as_fallback=settings.use_whisper_as_fallback,
-            force_whisper=settings.force_whisper
+            device=self.device
         )
 
         # Initialize PDF loader if not provided
@@ -74,15 +71,14 @@ class DocumentProcessor:
         os.makedirs(upload_dir, exist_ok=True)
 
     def process_video(
-            self, url: str, custom_metadata: Optional[Dict[str, str]] = None, force_whisper: bool = None
+            self, url: str, custom_metadata: Optional[Dict[str, str]] = None
     ) -> List[str]:
         """
-        Process a video from any platform with GPU-accelerated transcription.
+        Process a video from any platform with GPU-accelerated Whisper transcription.
 
         Args:
             url: Video URL
             custom_metadata: Optional custom metadata
-            force_whisper: Whether to force using Whisper for transcription
 
         Returns:
             List of document IDs
@@ -93,8 +89,7 @@ class DocumentProcessor:
         # Get documents from transcriber
         documents = self.video_transcriber.process_video(
             url=url,
-            custom_metadata=custom_metadata,
-            force_whisper=force_whisper
+            custom_metadata=custom_metadata
         )
 
         # Split into chunks
