@@ -25,114 +25,122 @@ header(
 )
 
 # 不同数据导入方式的选项卡
-tab1, tab2, tab3, tab4 = st.tabs(["YouTube", "Bilibili", "PDF", "手动输入"])
+tab1, tab2, tab3 = st.tabs(["视频", "PDF", "手动输入"])
 
-def render_youtube_tab():
-    """渲染 YouTube 数据导入选项卡"""
-    st.header("导入 YouTube 视频")
+def detect_platform(url):
+    """检测视频平台"""
+    if "youtube.com" in url or "youtu.be" in url:
+        return "YouTube"
+    elif "bilibili.com" in url:
+        return "Bilibili"
+    else:
+        return "未知平台"
 
-    youtube_url = st.text_input("YouTube 链接", placeholder="https://www.youtube.com/watch?v=...")
+def render_video_tab():
+    """渲染统一的视频数据导入选项卡"""
+    st.header("导入视频")
+
+    video_url = st.text_input("视频链接", placeholder="https://www.youtube.com/watch?v=... 或 https://www.bilibili.com/video/...")
+
+    # 检测视频平台
+    platform = "未知平台"
+    if video_url:
+        platform = detect_platform(video_url)
+        st.info(f"检测到 {platform} 平台")
 
     force_whisper = st.checkbox(
         "强制使用 Whisper 转录",
         value=True,
-        help="使用 Whisper 进行转录，而不是 YouTube 提供的字幕。这通常提供更高质量的转录结果。"
+        help="使用 Whisper 进行转录，而不是平台提供的字幕。这通常提供更高质量的转录结果。"
     )
 
     with st.expander("附加元数据"):
-        yt_manufacturer = st.text_input("制造商", key="yt_manufacturer")
-        yt_model = st.text_input("车型", key="yt_model")
-        yt_year = st.text_input("年份", value="2023", key="yt_year")
+        video_manufacturer = st.text_input("制造商", key="video_manufacturer")
+        video_model = st.text_input("车型", key="video_model")
+        video_year = st.text_input("年份", value="2023", key="video_year")
         # Validate year format if needed
-        if yt_year:
+        if video_year:
             try:
-                year_value = int(yt_year)
+                year_value = int(video_year)
                 if year_value < 1900 or year_value > 2100:
                     st.warning("年份应该在1900-2100之间")
             except ValueError:
                 st.warning("请输入有效的年份")
 
-        yt_categories = ["", "轿车", "SUV", "卡车", "跑车", "MPV", "双门轿车", "敞篷车", "掀背车", "旅行车"]
-        yt_category = st.selectbox("类别", yt_categories, key="yt_category")
+        video_categories = ["", "轿车", "SUV", "卡车", "跑车", "MPV", "双门轿车", "敞篷车", "掀背车", "旅行车"]
+        video_category = st.selectbox("类别", video_categories, key="video_category")
 
-        yt_engine_types = ["", "汽油", "柴油", "电动", "混合动力", "氢能"]
-        yt_engine_type = st.selectbox("发动机类型", yt_engine_types, key="yt_engine_type")
+        video_engine_types = ["", "汽油", "柴油", "电动", "混合动力", "氢能"]
+        video_engine_type = st.selectbox("发动机类型", video_engine_types, key="video_engine_type")
 
-        yt_transmission = ["", "自动挡", "手动挡", "CVT", "DCT"]
-        yt_transmission_type = st.selectbox("变速箱", yt_transmission, key="yt_transmission")
+        video_transmission = ["", "自动挡", "手动挡", "CVT", "DCT"]
+        video_transmission_type = st.selectbox("变速箱", video_transmission, key="video_transmission")
 
-    if st.button("导入 YouTube 视频", type="primary", key="youtube_btn"):
-        if not youtube_url:
-            st.warning("请输入 YouTube 视频链接")
+    if st.button("导入视频", type="primary", key="video_btn"):
+        if not video_url:
+            st.warning("请输入视频链接")
             return
 
         # 构建元数据
         custom_metadata = {}
-        if yt_manufacturer:
-            custom_metadata["制造商"] = yt_manufacturer
-        if yt_model:
-            custom_metadata["车型"] = yt_model
-        if yt_year:
-            custom_metadata["年份"] = yt_year
-        if yt_category:
-            custom_metadata["类别"] = yt_category
-        if yt_engine_type:
-            custom_metadata["发动机类型"] = yt_engine_type
-        if yt_transmission_type:
-            custom_metadata["变速箱"] = yt_transmission_type
+        if video_manufacturer:
+            custom_metadata["manufacturer"] = video_manufacturer
+        if video_model:
+            custom_metadata["model"] = video_model
+        if video_year:
+            try:
+                custom_metadata["year"] = int(video_year)
+            except ValueError:
+                st.warning("请输入有效的年份")
+                return
+        if video_category:
+            custom_metadata["category"] = video_category
+        if video_engine_type:
+            custom_metadata["engine_type"] = video_engine_type
+        if video_transmission_type:
+            custom_metadata["transmission"] = video_transmission_type
 
         # 发送 API 请求
-        with loading_spinner("正在处理 YouTube 视频... 这可能需要几分钟。"):
-            endpoint = f"/ingest/youtube{'?force_whisper=true' if force_whisper else ''}"
+        with loading_spinner(f"正在处理{platform}视频... 这可能需要几分钟。"):
+            endpoint = f"/ingest/video{'?force_whisper=true' if force_whisper else '?force_whisper=false'}"
 
             result = api_request(
                 endpoint=endpoint,
                 method="POST",
                 data={
-                    "url": youtube_url,
+                    "url": video_url,
                     "metadata": custom_metadata if custom_metadata else None,
                 },
             )
 
         if result:
-            st.success(f"成功导入 YouTube 视频：已创建 {result.get('document_count', 0)} 个数据块")
-
-def render_bilibili_tab():
-    """渲染 Bilibili 数据导入选项卡"""
-    st.header("导入 Bilibili 视频")
-
-    bilibili_url = st.text_input("Bilibili 视频链接", placeholder="https://www.bilibili.com/video/...")
-
-    force_whisper = st.checkbox(
-        "强制使用 Whisper 转录",
-        value=True,
-        help="Whisper 总是用于 Bilibili 视频的高质量转录",
-        key="bilibili_force_whisper",
-        disabled=True
-    )
-
-    if st.button("导入 Bilibili 视频", type="primary", key="bilibili_btn"):
-        if not bilibili_url:
-            st.warning("请输入 Bilibili 视频链接")
-            return
-
-        with loading_spinner("正在处理 Bilibili 视频... 这可能需要几分钟。"):
-            endpoint = "/ingest/bilibili"
-
-            result = api_request(
-                endpoint=endpoint,
-                method="POST",
-                data={
-                    "url": bilibili_url,
-                },
-            )
-
-        if result:
-            st.success(f"成功导入 Bilibili 视频：已创建 {result.get('document_count', 0)} 个数据块")
+            st.success(f"成功导入{platform}视频：已创建 {result.get('document_count', 0)} 个数据块")
 
 def render_pdf_tab():
     """渲染 PDF 数据导入选项卡"""
     st.header("导入 PDF 文件")
+
+    with st.expander("附加元数据"):
+        pdf_manufacturer = st.text_input("制造商", key="pdf_manufacturer")
+        pdf_model = st.text_input("车型", key="pdf_model")
+        pdf_year = st.text_input("年份", value="2023", key="pdf_year")
+        # Validate year format if needed
+        if pdf_year:
+            try:
+                year_value = int(pdf_year)
+                if year_value < 1900 or year_value > 2100:
+                    st.warning("年份应该在1900-2100之间")
+            except ValueError:
+                st.warning("请输入有效的年份")
+
+        pdf_categories = ["", "轿车", "SUV", "卡车", "跑车", "MPV", "双门轿车", "敞篷车", "掀背车", "旅行车"]
+        pdf_category = st.selectbox("类别", pdf_categories, key="pdf_category")
+
+        pdf_engine_types = ["", "汽油", "柴油", "电动", "混合动力", "氢能"]
+        pdf_engine_type = st.selectbox("发动机类型", pdf_engine_types, key="pdf_engine_type")
+
+        pdf_transmission = ["", "自动挡", "手动挡", "CVT", "DCT"]
+        pdf_transmission_type = st.selectbox("变速箱", pdf_transmission, key="pdf_transmission")
 
     pdf_file = st.file_uploader("上传 PDF 文件", type=["pdf"])
 
@@ -141,12 +149,35 @@ def render_pdf_tab():
             st.warning("请上传 PDF 文件")
             return
 
+        # 构建元数据
+        custom_metadata = {}
+        if pdf_manufacturer:
+            custom_metadata["manufacturer"] = pdf_manufacturer
+        if pdf_model:
+            custom_metadata["model"] = pdf_model
+        if pdf_year:
+            try:
+                custom_metadata["year"] = int(pdf_year)
+            except ValueError:
+                st.warning("请输入有效的年份")
+                return
+        if pdf_category:
+            custom_metadata["category"] = pdf_category
+        if pdf_engine_type:
+            custom_metadata["engine_type"] = pdf_engine_type
+        if pdf_transmission_type:
+            custom_metadata["transmission"] = pdf_transmission_type
+
         with loading_spinner("正在处理 PDF 文件..."):
             files = {"file": (pdf_file.name, pdf_file, "application/pdf")}
+            data = {}
+            if custom_metadata:
+                data["metadata"] = json.dumps(custom_metadata)
 
             result = api_request(
                 endpoint="/ingest/pdf",
                 method="POST",
+                data=data,
                 files=files,
             )
 
@@ -157,6 +188,28 @@ def render_manual_tab():
     """渲染手动输入选项卡"""
     st.header("手动输入数据")
 
+    with st.expander("元数据"):
+        manual_manufacturer = st.text_input("制造商", key="manual_manufacturer")
+        manual_model = st.text_input("车型", key="manual_model")
+        manual_year = st.text_input("年份", value="2023", key="manual_year")
+        # Validate year format if needed
+        if manual_year:
+            try:
+                year_value = int(manual_year)
+                if year_value < 1900 or year_value > 2100:
+                    st.warning("年份应该在1900-2100之间")
+            except ValueError:
+                st.warning("请输入有效的年份")
+
+        manual_categories = ["", "轿车", "SUV", "卡车", "跑车", "MPV", "双门轿车", "敞篷车", "掀背车", "旅行车"]
+        manual_category = st.selectbox("类别", manual_categories, key="manual_category")
+
+        manual_engine_types = ["", "汽油", "柴油", "电动", "混合动力", "氢能"]
+        manual_engine_type = st.selectbox("发动机类型", manual_engine_types, key="manual_engine_type")
+
+        manual_transmission = ["", "自动挡", "手动挡", "CVT", "DCT"]
+        manual_transmission_type = st.selectbox("变速箱", manual_transmission, key="manual_transmission")
+
     manual_content = st.text_area("输入内容", height=300)
 
     if st.button("导入手动输入数据", type="primary", key="manual_btn"):
@@ -164,12 +217,36 @@ def render_manual_tab():
             st.warning("请输入内容")
             return
 
+        # 构建元数据
+        metadata = {
+            "source": "manual",
+            "title": f"{manual_manufacturer} {manual_model} 规格",
+        }
+
+        if manual_manufacturer:
+            metadata["manufacturer"] = manual_manufacturer
+        if manual_model:
+            metadata["model"] = manual_model
+        if manual_year:
+            try:
+                metadata["year"] = int(manual_year)
+            except ValueError:
+                st.warning("请输入有效的年份")
+                return
+        if manual_category:
+            metadata["category"] = manual_category
+        if manual_engine_type:
+            metadata["engine_type"] = manual_engine_type
+        if manual_transmission_type:
+            metadata["transmission"] = manual_transmission_type
+
         with loading_spinner("正在处理手动输入内容..."):
             result = api_request(
                 endpoint="/ingest/text",
                 method="POST",
                 data={
                     "content": manual_content,
+                    "metadata": metadata
                 },
             )
 
@@ -178,13 +255,10 @@ def render_manual_tab():
 
 # 渲染各个选项卡
 with tab1:
-    render_youtube_tab()
+    render_video_tab()
 
 with tab2:
-    render_bilibili_tab()
-
-with tab3:
     render_pdf_tab()
 
-with tab4:
+with tab3:
     render_manual_tab()

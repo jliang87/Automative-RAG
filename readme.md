@@ -481,7 +481,7 @@ If GPU acceleration isn't providing expected speedups:
 ## Example: Processing YouTube Videos with GPU
 
 ```python
-from src.core.base_video_transcriber import YouTubeTranscriber
+from src.core.video_transcriber import YouTubeTranscriber
 
 # Initialize with GPU support
 transcriber = YouTubeTranscriber(

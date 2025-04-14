@@ -1,7 +1,7 @@
 """
 Module for transcribing videos from various platforms with GPU-accelerated Whisper.
 
-This module provides transcriber classes for YouTube, Bilibili, and xxx videos,
+This module provides a unified transcriber for YouTube, Bilibili, and other video platforms,
 with GPU acceleration using Whisper for high-quality transcription.
 """
 
@@ -10,7 +10,7 @@ import re
 import tempfile
 import subprocess
 import json
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Dict, List, Optional, Tuple, Union, Literal
 
 import torch
 from langchain_core.documents import Document
@@ -24,25 +24,29 @@ from src.utils.helpers import (
 )
 
 
-class BaseVideoTranscriber:
+class VideoTranscriber:
     """
-    Base class for video transcribers with common functionality.
+    Unified video transcriber that can handle multiple platforms (YouTube, Bilibili, etc.).
     """
 
     def __init__(
             self,
-            output_dir: str,
+            output_dir: str = "data/videos",
             whisper_model_size: str = "medium",
             device: Optional[str] = None,
+            use_youtube_captions: bool = False,
+            use_whisper_as_fallback: bool = False,
             force_whisper: bool = True
     ):
         """
-        Initialize the base video transcriber.
+        Initialize the video transcriber.
 
         Args:
             output_dir: Directory to save downloaded videos and audio
             whisper_model_size: Size of the Whisper model (tiny, base, small, medium, large)
             device: Device to run Whisper on (cuda or cpu), defaults to cuda if available
+            use_youtube_captions: Whether to use YouTube's captions if available
+            use_whisper_as_fallback: Whether to use Whisper as fallback when captions aren't available
             force_whisper: Always use Whisper for transcription
         """
         self.output_dir = output_dir
@@ -54,6 +58,12 @@ class BaseVideoTranscriber:
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         self.whisper_model_size = whisper_model_size
         self.whisper_model = None  # Lazy-load the model when needed
+
+        # YouTube-specific settings
+        self.use_youtube_captions = use_youtube_captions
+        self.use_whisper_as_fallback = use_whisper_as_fallback
+
+        # General settings
         self.force_whisper = force_whisper
 
         # Add Chinese converter if available
@@ -90,9 +100,26 @@ class BaseVideoTranscriber:
 
             print("Whisper model loaded successfully")
 
+    def detect_platform(self, url: str) -> Literal["youtube", "bilibili", "unknown"]:
+        """
+        Detect the platform based on the URL.
+
+        Args:
+            url: Video URL
+
+        Returns:
+            Platform name ("youtube", "bilibili", or "unknown")
+        """
+        if "youtube.com" in url or "youtu.be" in url:
+            return "youtube"
+        elif "bilibili.com" in url:
+            return "bilibili"
+        else:
+            return "unknown"
+
     def extract_video_id(self, url: str) -> str:
         """
-        Extract the video ID from a URL.
+        Extract the video ID from a URL based on the detected platform.
 
         Args:
             url: Video URL
@@ -103,7 +130,32 @@ class BaseVideoTranscriber:
         Raises:
             ValueError: If video ID cannot be extracted
         """
-        raise NotImplementedError("Subclasses must implement extract_video_id method")
+        platform = self.detect_platform(url)
+
+        if platform == "youtube":
+            # YouTube URL patterns
+            patterns = [
+                r'(?:youtube\.com/watch\?v=|youtu\.be/)([a-zA-Z0-9_-]{11})',
+                r'youtube\.com/embed/([a-zA-Z0-9_-]{11})',
+                r'youtube\.com/v/([a-zA-Z0-9_-]{11})',
+            ]
+
+            for pattern in patterns:
+                match = re.search(pattern, url)
+                if match:
+                    return match.group(1)
+
+            raise ValueError(f"Could not extract YouTube video ID from URL: {url}")
+
+        elif platform == "bilibili":
+            # Extract Bilibili video ID (BV or AV id)
+            match = re.search(r'/(BV\w+|av\d+)', url)
+            if not match:
+                raise ValueError(f"Could not extract Bilibili video ID from URL: {url}")
+            return match.group(1)
+
+        else:
+            raise ValueError(f"Unsupported platform for URL: {url}")
 
     def extract_audio(self, url: str) -> str:
         """
@@ -336,117 +388,6 @@ class BaseVideoTranscriber:
 
         return formatted_text
 
-    def process_video(
-            self, url: str, custom_metadata: Optional[Dict[str, str]] = None, force_whisper: bool = None
-    ) -> List[Document]:
-        """
-        Process a video and return Langchain documents.
-
-        Args:
-            url: Video URL
-            custom_metadata: Optional custom metadata
-            force_whisper: Whether to force using Whisper even if captions are available
-
-        Returns:
-            List of Langchain Document objects
-        """
-        raise NotImplementedError("Subclasses must implement process_video method")
-
-    def batch_process_videos(
-            self, urls: List[str], custom_metadata: Optional[List[Dict[str, str]]] = None
-    ) -> List[Document]:
-        """
-        Process multiple videos in batch.
-
-        Args:
-            urls: List of Video URLs
-            custom_metadata: Optional list of custom metadata dictionaries (same length as urls)
-
-        Returns:
-            List of Langchain Document objects
-        """
-        # Ensure custom_metadata is the right length or None
-        if custom_metadata and len(custom_metadata) != len(urls):
-            raise ValueError("custom_metadata list must be the same length as urls")
-
-        documents = []
-
-        # Load model once for all videos
-        if self.force_whisper:
-            self._load_whisper_model()
-
-        # Process each video
-        for i, url in enumerate(urls):
-            metadata = custom_metadata[i] if custom_metadata else None
-            try:
-                video_docs = self.process_video(url, metadata)
-                documents.extend(video_docs)
-                print(f"Successfully processed video {i + 1}/{len(urls)}: {url}")
-            except Exception as e:
-                print(f"Error processing video {i + 1}/{len(urls)}: {url}")
-                print(f"Error: {str(e)}")
-
-        return documents
-
-
-class YouTubeTranscriber(BaseVideoTranscriber):
-    """
-    Enhanced class for downloading and transcribing YouTube videos with GPU acceleration.
-
-    Uses yt-dlp for video downloading and Whisper for high-quality transcription.
-    Supports loading Whisper from local paths.
-    """
-
-    def __init__(
-            self,
-            output_dir: str = "data/youtube",
-            whisper_model_size: str = "medium",
-            device: Optional[str] = None,
-            use_youtube_captions: bool = False,
-            use_whisper_as_fallback: bool = False,
-            force_whisper: bool = True
-    ):
-        """
-        Initialize the YouTube transcriber.
-
-        Args:
-            output_dir: Directory to save downloaded videos and audio
-            whisper_model_size: Size of the Whisper model (tiny, base, small, medium, large)
-            device: Device to run Whisper on (cuda or cpu), defaults to cuda if available
-            use_youtube_captions: Whether to use YouTube's captions if available
-            use_whisper_as_fallback: Whether to use Whisper as fallback when YouTube captions aren't available
-            force_whisper: Always use Whisper for transcription
-        """
-        super().__init__(output_dir, whisper_model_size, device, force_whisper)
-
-        # Additional YouTube-specific configuration
-        self.use_youtube_captions = use_youtube_captions
-        self.use_whisper_as_fallback = use_whisper_as_fallback
-
-    def extract_video_id(self, url: str) -> str:
-        """
-        Extract the video ID from a YouTube URL.
-
-        Args:
-            url: YouTube URL
-
-        Returns:
-            Video ID
-        """
-        # YouTube URL patterns
-        patterns = [
-            r'(?:youtube\.com/watch\?v=|youtu\.be/)([a-zA-Z0-9_-]{11})',
-            r'youtube\.com/embed/([a-zA-Z0-9_-]{11})',
-            r'youtube\.com/v/([a-zA-Z0-9_-]{11})',
-        ]
-
-        for pattern in patterns:
-            match = re.search(pattern, url)
-            if match:
-                return match.group(1)
-
-        raise ValueError(f"Could not extract YouTube video ID from URL: {url}")
-
     def download_youtube_captions(self, url: str) -> Optional[str]:
         """
         Download the transcript from a YouTube video's captions using yt-dlp.
@@ -457,6 +398,10 @@ class YouTubeTranscriber(BaseVideoTranscriber):
         Returns:
             Video transcript text or None if no captions are available
         """
+        # Only attempt for YouTube URLs
+        if self.detect_platform(url) != "youtube":
+            return None
+
         try:
             video_id = self.extract_video_id(url)
 
@@ -497,42 +442,45 @@ class YouTubeTranscriber(BaseVideoTranscriber):
             self, url: str, custom_metadata: Optional[Dict[str, str]] = None, force_whisper: bool = None
     ) -> List[Document]:
         """
-        Process a YouTube video and return Langchain documents.
+        Process a video and return Langchain documents.
 
         Args:
-            url: YouTube URL
+            url: Video URL
             custom_metadata: Optional custom metadata
-            force_whisper: Whether to force using Whisper even if YouTube captions are available
+            force_whisper: Whether to force using Whisper even if captions are available
 
         Returns:
             List of Langchain Document objects
         """
+        # Detect platform from URL
+        platform = self.detect_platform(url)
+
         # Extract metadata
         video_metadata = self.get_video_metadata(url)
 
-        # Extract automotive metadata using helper function instead of duplicating code
+        # Extract automotive metadata using helper function
         auto_metadata = extract_metadata_from_text(video_metadata.get("title", "") + " " +
                                                   video_metadata.get("description", ""))
 
         # If force_whisper parameter is provided, use it; otherwise, use the instance attribute
         use_force_whisper = self.force_whisper if force_whisper is None else force_whisper
 
+        # Determine the source based on platform
+        source = DocumentSource.YOUTUBE if platform == "youtube" else DocumentSource.BILIBILI
+
         # Get transcript
         transcript_text = None
         used_whisper = False
 
-        # Use Whisper directly if force_whisper is enabled
-        if use_force_whisper:
-            print(f"Using Whisper for transcription as configured for video ID: {video_metadata['video_id']}")
-        # Otherwise, try YouTube captions first if enabled and not forced to use Whisper
-        elif self.use_youtube_captions and not use_force_whisper:
+        # YouTube-specific: Try YouTube captions first if enabled and not forced to use Whisper
+        if platform == "youtube" and self.use_youtube_captions and not use_force_whisper:
             youtube_captions = self.download_youtube_captions(url)
             if youtube_captions:
                 transcript_text = self.format_transcript(youtube_captions, is_srt=True)
                 print(f"Using YouTube captions for video ID: {video_metadata['video_id']}")
 
         # Use Whisper if no transcript yet or force_whisper is True
-        if transcript_text is None and (self.use_whisper_as_fallback or use_force_whisper):
+        if transcript_text is None and (self.use_whisper_as_fallback or use_force_whisper or platform != "youtube"):
             try:
                 # Extract audio
                 media_path = self.extract_audio(url)
@@ -549,7 +497,7 @@ class YouTubeTranscriber(BaseVideoTranscriber):
 
         # Create metadata object
         metadata = DocumentMetadata(
-            source=DocumentSource.YOUTUBE,
+            source=source,
             source_id=video_metadata["video_id"],
             url=url,
             title=video_metadata["title"],
@@ -569,6 +517,9 @@ class YouTubeTranscriber(BaseVideoTranscriber):
         if used_whisper:
             metadata.custom_metadata["whisper_model"] = self.whisper_model_size
 
+        # Add platform information
+        metadata.custom_metadata["platform"] = platform
+
         # Create document
         document = Document(
             page_content=transcript_text,
@@ -577,140 +528,41 @@ class YouTubeTranscriber(BaseVideoTranscriber):
 
         return [document]
 
-
-class BilibiliTranscriber(BaseVideoTranscriber):
-    """
-    Class for downloading and transcribing Bilibili videos with GPU acceleration.
-    """
-
-    def __init__(
-            self,
-            output_dir: str = "data/bilibili",
-            whisper_model_size: str = "medium",
-            device: Optional[str] = None,
-            force_whisper: bool = True
-    ):
+    def batch_process_videos(
+            self, urls: List[str], custom_metadata: Optional[List[Dict[str, str]]] = None
+    ) -> Dict[str, Union[List[str], Dict[str, str]]]:
         """
-        Initialize the Bilibili transcriber.
+        Process multiple videos in batch.
 
         Args:
-            output_dir: Directory to save downloaded videos and audio
-            whisper_model_size: Size of the Whisper model (tiny, base, small, medium, large)
-            device: Device to run Whisper on (cuda or cpu), defaults to cuda if available
-            force_whisper: Always use Whisper for transcription
-        """
-        super().__init__(output_dir, whisper_model_size, device, force_whisper)
-
-    def extract_video_id(self, url: str) -> str:
-        """
-        Extract the video ID from a Bilibili URL.
-
-        Args:
-            url: Bilibili URL
+            urls: List of Video URLs
+            custom_metadata: Optional list of custom metadata dictionaries (same length as urls)
 
         Returns:
-            Video ID
+            Dictionary mapping URLs to lists of document IDs or error messages
         """
-        # Extract Bilibili video ID (BV or AV id)
-        match = re.search(r'/(BV\w+|av\d+)', url)
-        if not match:
-            raise ValueError(f"Could not extract Bilibili video ID from URL: {url}")
-        return match.group(1)
+        # Ensure custom_metadata is the right length or None
+        if custom_metadata and len(custom_metadata) != len(urls):
+            raise ValueError("custom_metadata list must be the same length as urls")
 
-    def process_video(
-            self, url: str, custom_metadata: Optional[Dict[str, str]] = None, force_whisper: bool = None
-    ) -> List[Document]:
-        """
-        Process a Bilibili video and return Langchain documents.
+        results = {}
 
-        Args:
-            url: Bilibili URL
-            custom_metadata: Optional custom metadata
-            force_whisper: Whether to force using Whisper (not used for Bilibili, always True)
+        # Load model once for all videos
+        if self.force_whisper:
+            self._load_whisper_model()
 
-        Returns:
-            List of Langchain Document objects
-        """
-        # Extract metadata
-        video_metadata = self.get_video_metadata(url)
+        # Process each video
+        for i, url in enumerate(urls):
+            metadata = custom_metadata[i] if custom_metadata else None
+            try:
+                documents = self.process_video(url, metadata)
+                # Extract document IDs after they're added to the vector store
+                # This will be handled by the DocumentProcessor that calls this method
+                results[url] = [doc.metadata.get("id", "") for doc in documents]
+                print(f"Successfully processed video {i + 1}/{len(urls)}: {url}")
+            except Exception as e:
+                print(f"Error processing video {i + 1}/{len(urls)}: {url}")
+                print(f"Error: {str(e)}")
+                results[url] = {"error": str(e)}
 
-        # Extract automotive metadata
-        auto_metadata = extract_metadata_from_text(video_metadata.get("title", "") + " " +
-                                                 video_metadata.get("description", ""))
-
-        try:
-            # Extract audio or download video
-            media_path = self.extract_audio(url)
-
-            # Always use Whisper for transcription
-            print(f"Using Whisper for Bilibili video transcription: {video_metadata['video_id']}")
-            transcript_text = self.transcribe_with_whisper(media_path)
-
-            # Create metadata object
-            metadata = DocumentMetadata(
-                source=DocumentSource.BILIBILI,
-                source_id=video_metadata["video_id"],
-                url=url,
-                title=video_metadata["title"],
-                author=video_metadata.get("author"),
-                published_date=video_metadata.get("published_date"),
-                manufacturer=auto_metadata.get("manufacturer"),
-                model=custom_metadata.get("model") if custom_metadata else None,
-                year=auto_metadata.get("year"),
-                category=auto_metadata.get("category"),
-                engine_type=auto_metadata.get("engine_type"),
-                transmission=auto_metadata.get("transmission"),
-                custom_metadata=custom_metadata or {},
-            )
-
-            # Add platform and transcription info to metadata
-            metadata.custom_metadata["platform"] = "bilibili"
-            metadata.custom_metadata["transcription_method"] = "whisper"
-            metadata.custom_metadata["whisper_model"] = self.whisper_model_size
-
-            # Create document
-            document = Document(
-                page_content=transcript_text,
-                metadata=metadata.dict(),
-            )
-
-            return [document]
-        except Exception as e:
-            raise ValueError(f"Error processing Bilibili video: {str(e)}")
-
-# Factory function to create the appropriate transcriber based on the URL
-def create_transcriber_for_url(
-    url: str,
-    whisper_model_size: str = "medium",
-    device: Optional[str] = None,
-    force_whisper: bool = True
-) -> BaseVideoTranscriber:
-    """
-    Create the appropriate transcriber based on the URL.
-
-    Args:
-        url: Video URL
-        whisper_model_size: Size of the Whisper model
-        device: Device to run Whisper on
-        force_whisper: Whether to force using Whisper
-
-    Returns:
-        VideoTranscriber instance for the appropriate platform
-
-    Raises:
-        ValueError: If URL platform cannot be determined
-    """
-    if "youtube.com" in url or "youtu.be" in url:
-        return YouTubeTranscriber(
-            whisper_model_size=whisper_model_size,
-            device=device,
-            force_whisper=force_whisper
-        )
-    elif "bilibili.com" in url:
-        return BilibiliTranscriber(
-            whisper_model_size=whisper_model_size,
-            device=device,
-            force_whisper=force_whisper
-        )
-    else:
-        raise ValueError(f"Unsupported video platform URL: {url}")
+        return results

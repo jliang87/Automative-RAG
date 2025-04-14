@@ -7,7 +7,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from src.core.pdf_loader import PDFLoader
 from src.core.vectorstore import QdrantStore
-from src.core.base_video_transcriber import YouTubeTranscriber, BilibiliTranscriber, create_transcriber_for_url
+from src.core.video_transcriber import VideoTranscriber
 
 from src.models.schema import DocumentMetadata, DocumentSource, ManualIngestRequest
 from src.config.settings import settings
@@ -16,21 +16,20 @@ from src.config.settings import settings
 class DocumentProcessor:
     """
     Class for processing documents from various sources with GPU acceleration.
-    
-    Handles YouTube/Bilibili videos, PDFs, and manual text entry.
+
+    Handles videos (YouTube, Bilibili), PDFs, and manual text entry.
     Chunks documents and adds them to the vector store.
     """
 
     def __init__(
-        self,
-        vector_store: QdrantStore,
-        chunk_size: int = 1000,
-        chunk_overlap: int = 200,
-        upload_dir: str = "data/uploads",
-        device: Optional[str] = None,
-        youtube_transcriber: Optional[YouTubeTranscriber] = None,
-        bilibili_transcriber: Optional[BilibiliTranscriber] = None,
-        pdf_loader: Optional[PDFLoader] = None,
+            self,
+            vector_store: QdrantStore,
+            chunk_size: int = 1000,
+            chunk_overlap: int = 200,
+            upload_dir: str = "data/uploads",
+            device: Optional[str] = None,
+            video_transcriber: Optional[VideoTranscriber] = None,
+            pdf_loader: Optional[PDFLoader] = None,
     ):
         """
         Initialize the document processor.
@@ -48,11 +47,25 @@ class DocumentProcessor:
         self.upload_dir = upload_dir
         self.device = device or settings.device
 
-        self.youtube_transcriber = youtube_transcriber
-        self.bilibili_transcriber = bilibili_transcriber
-        self.pdf_loader = pdf_loader
+        # Initialize video transcriber if not provided
+        self.video_transcriber = video_transcriber or VideoTranscriber(
+            whisper_model_size=settings.whisper_model_size,
+            device=self.device,
+            use_youtube_captions=settings.use_youtube_captions,
+            use_whisper_as_fallback=settings.use_whisper_as_fallback,
+            force_whisper=settings.force_whisper
+        )
 
-        # Always create the text splitter
+        # Initialize PDF loader if not provided
+        self.pdf_loader = pdf_loader or PDFLoader(
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+            device=self.device,
+            use_ocr=settings.use_pdf_ocr,
+            ocr_languages=settings.ocr_languages
+        )
+
+        # Create the text splitter
         self.text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap,
@@ -60,74 +73,45 @@ class DocumentProcessor:
 
         os.makedirs(upload_dir, exist_ok=True)
 
-    def process_youtube_video(
-        self, url: str, custom_metadata: Optional[Dict[str, str]] = None, force_whisper: bool = False
+    def process_video(
+            self, url: str, custom_metadata: Optional[Dict[str, str]] = None, force_whisper: bool = None
     ) -> List[str]:
         """
-        Process a YouTube video with GPU-accelerated transcription.
+        Process a video from any platform with GPU-accelerated transcription.
 
         Args:
-            url: YouTube URL
+            url: Video URL
             custom_metadata: Optional custom metadata
-            force_whisper: Whether to force using Whisper even if YouTube captions are available
+            force_whisper: Whether to force using Whisper for transcription
 
         Returns:
             List of document IDs
         """
+        # Get platform from the video URL
+        platform = self.video_transcriber.detect_platform(url)
+
         # Get documents from transcriber
-        documents = self.youtube_transcriber.process_video(
+        documents = self.video_transcriber.process_video(
             url=url,
             custom_metadata=custom_metadata,
             force_whisper=force_whisper
         )
-        
-        # Split into chunks
-        chunked_documents = self.text_splitter.split_documents(documents)
-        
-        # Assign IDs to chunks
-        video_id = self.youtube_transcriber.extract_video_id(url)
-        for i, doc in enumerate(chunked_documents):
-            doc.metadata["id"] = f"youtube-{video_id}-{i}"
-            doc.metadata["chunk_id"] = i
-        
-        # Add to vector store
-        return self.vector_store.add_documents(chunked_documents)
-
-    def process_bilibili_video(
-            self, url: str, custom_metadata: Optional[Dict[str, str]] = None, force_whisper: bool = True
-    ) -> List[str]:
-        """
-        Process a Bilibili video with GPU-accelerated transcription.
-
-        Args:
-            url: Bilibili URL
-            custom_metadata: Optional custom metadata
-            force_whisper: Whether to force using Whisper for transcription (default: True)
-
-        Returns:
-            List of document IDs
-        """
-        # Get documents from transcriber
-        documents = self.bilibili_transcriber.process_video(
-            url=url,
-            custom_metadata=custom_metadata
-        )
 
         # Split into chunks
         chunked_documents = self.text_splitter.split_documents(documents)
 
         # Assign IDs to chunks
-        video_id = self.bilibili_transcriber.extract_video_id(url)
+        video_id = self.video_transcriber.extract_video_id(url)
         for i, doc in enumerate(chunked_documents):
-            doc.metadata["id"] = f"bilibili-{video_id}-{i}"
+            doc.metadata["id"] = f"{platform}-{video_id}-{i}"
             doc.metadata["chunk_id"] = i
+            doc.metadata["platform"] = platform
 
         # Add to vector store
         return self.vector_store.add_documents(chunked_documents)
-
 
     def process_pdf(
-        self, file_path: str, custom_metadata: Optional[Dict[str, str]] = None
+            self, file_path: str, custom_metadata: Optional[Dict[str, str]] = None
     ) -> List[str]:
         """
         Process a PDF file with GPU-accelerated OCR if needed.
@@ -144,13 +128,13 @@ class DocumentProcessor:
             file_path=file_path,
             custom_metadata=custom_metadata,
         )
-        
+
         # Assign IDs to chunks
         base_name = os.path.basename(file_path)
         for i, doc in enumerate(documents):
             doc.metadata["id"] = f"pdf-{base_name}-{i}"
             doc.metadata["chunk_id"] = i
-        
+
         # Add to vector store
         return self.vector_store.add_documents(documents)
 
@@ -169,28 +153,27 @@ class DocumentProcessor:
             page_content=request.content,
             metadata=request.metadata.dict(),
         )
-        
+
         # Split into chunks
         chunked_documents = self.text_splitter.split_documents([document])
-        
+
         # Assign IDs to chunks
         doc_id = str(uuid.uuid4())
         for i, doc in enumerate(chunked_documents):
             doc.metadata["id"] = f"manual-{doc_id}-{i}"
             doc.metadata["chunk_id"] = i
-        
+
         # Add to vector store
         return self.vector_store.add_documents(chunked_documents)
 
     def batch_process_videos(
-            self, urls: List[str], platform: str = "youtube", custom_metadata: Optional[List[Dict[str, str]]] = None
+            self, urls: List[str], custom_metadata: Optional[List[Dict[str, str]]] = None
     ) -> Dict[str, List[str]]:
         """
         Process multiple videos in batch with GPU acceleration.
 
         Args:
             urls: List of video URLs
-            platform: Platform of the videos ("youtube", "bilibili")
             custom_metadata: Optional list of custom metadata (same length as urls)
 
         Returns:
@@ -202,16 +185,11 @@ class DocumentProcessor:
         if custom_metadata and len(custom_metadata) != len(urls):
             raise ValueError("If provided, custom_metadata must have the same length as urls")
 
+        # Process each URL
         for i, url in enumerate(urls):
             metadata = custom_metadata[i] if custom_metadata else None
             try:
-                if platform.lower() == "youtube":
-                    doc_ids = self.process_youtube_video(url, metadata)
-                elif platform.lower() == "bilibili":
-                    doc_ids = self.process_bilibili_video(url, metadata)
-                else:
-                    raise ValueError(f"Unsupported platform: {platform}")
-
+                doc_ids = self.process_video(url, metadata)
                 result[url] = doc_ids
             except Exception as e:
                 result[url] = {"error": str(e)}
@@ -240,32 +218,3 @@ class DocumentProcessor:
         # This would require implementing a method to search by metadata in QdrantStore
         # For simplicity, we'll just return a stub
         return []
-
-    def process_video_generic(self, url, custom_metadata=None, force_whisper=True):
-        """Process any supported video URL automatically."""
-        transcriber = create_transcriber_for_url(
-            url,
-            device=self.device,
-            force_whisper=force_whisper
-        )
-
-        documents = transcriber.process_video(
-            url=url,
-            custom_metadata=custom_metadata,
-            force_whisper=force_whisper
-        )
-
-        # Split into chunks
-        chunked_documents = self.text_splitter.split_documents(documents)
-
-        # Assign IDs to chunks
-        video_id = transcriber.extract_video_id(url)
-        platform = transcriber.__class__.__name__.replace('Transcriber', '').lower()
-
-        for i, doc in enumerate(chunked_documents):
-            doc.metadata["id"] = f"{platform}-{video_id}-{i}"
-            doc.metadata["chunk_id"] = i
-            doc.metadata["platform"] = platform
-
-        # Add to vector store
-        return self.vector_store.add_documents(chunked_documents)

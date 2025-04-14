@@ -9,44 +9,33 @@ from src.core.colbert_reranker import ColBERTReranker
 from src.core.llm import LocalLLM
 from src.core.retriever import HybridRetriever
 from src.core.vectorstore import QdrantStore
-from src.core.base_video_transcriber import YouTubeTranscriber, BilibiliTranscriber, create_transcriber_for_url
-
+from src.core.video_transcriber import VideoTranscriber
 from src.core.pdf_loader import PDFLoader
 from src.core.document_processor import DocumentProcessor
 
 # Global instances that will be initialized during app startup
 llm_model = None  # LLM instance
 colbert_model = None  # ColBERT instance
-youtube_transcriber = None
-bilibili_transcriber = None
+video_transcriber = None  # Unified video transcriber
 pdf_loader = None
 qdrant_client = None
 vector_store = None
 retriever = None
 document_processor = None
 
-def load_transcribers():
-    """Load transcriber models once at startup."""
-    global youtube_transcriber, bilibili_transcriber
-    if youtube_transcriber is None:
-        print("🚀 Loading YouTube Transcriber...")
-        youtube_transcriber = YouTubeTranscriber(
+def load_video_transcriber():
+    """Load video transcriber model once at startup."""
+    global video_transcriber
+    if video_transcriber is None:
+        print("🚀 Loading Video Transcriber...")
+        video_transcriber = VideoTranscriber(
             whisper_model_size=settings.whisper_model_size,
             device=settings.device,
             use_youtube_captions=settings.use_youtube_captions,
             use_whisper_as_fallback=settings.use_whisper_as_fallback,
             force_whisper=settings.force_whisper
         )
-        print("✅ YouTube Transcriber Loaded!")
-
-    if bilibili_transcriber is None:
-        print("🚀 Loading Bilibili Transcriber...")
-        bilibili_transcriber = BilibiliTranscriber(
-            whisper_model_size=settings.whisper_model_size,
-            device=settings.device,
-            force_whisper=settings.force_whisper
-        )
-        print("✅ Bilibili Transcriber Loaded!")
+        print("✅ Video Transcriber Loaded!")
 
 
 def load_llm():
@@ -134,20 +123,19 @@ def init_retriever():
 
 def init_document_processor():
     """Initialize document processor once at app startup."""
-    global document_processor, vector_store, youtube_transcriber, bilibili_transcriber, pdf_loader
+    global document_processor, vector_store, video_transcriber, pdf_loader
     if document_processor is None:
         print("🚀 Initializing Document Processor...")
         document_processor = DocumentProcessor(
             vector_store=vector_store,
-            youtube_transcriber=youtube_transcriber,
-            bilibili_transcriber=bilibili_transcriber,
+            video_transcriber=video_transcriber,
             pdf_loader=pdf_loader
         )
         print("✅ Document Processor Initialized!")
 
 def load_all_components():
     """Initialize all components at application startup."""
-    load_transcribers()
+    load_video_transcriber()
     load_llm()
     load_colbert_and_bge_reranker()
     load_pdf_loader()
@@ -196,20 +184,12 @@ def get_llm() -> LocalLLM:
         raise HTTPException(status_code=500, detail="LLM not initialized yet.")
     return llm_model
 
-# YouTube transcriber dependency with GPU support
-def get_youtube_transcriber() -> YouTubeTranscriber:
-    """Retrieve the preloaded YouTube transcriber."""
-    if youtube_transcriber is None:
-        raise HTTPException(status_code=500, detail="YouTube Transcriber is not initialized. Call `load_transcribers()` first.")
-    return youtube_transcriber
-
-# Bilibili transcriber dependency with GPU support
-def get_bilibili_transcriber() -> BilibiliTranscriber:
-    """Retrieve the preloaded Bilibili transcriber."""
-    if bilibili_transcriber is None:
-        raise HTTPException(status_code=500, detail="Bilibili Transcriber is not initialized. Call `load_transcribers()` first.")
-    return bilibili_transcriber
-
+# Video transcriber dependency with GPU support
+def get_video_transcriber() -> VideoTranscriber:
+    """Retrieve the preloaded video transcriber."""
+    if video_transcriber is None:
+        raise HTTPException(status_code=500, detail="Video Transcriber is not initialized. Call `load_video_transcriber()` first.")
+    return video_transcriber
 
 # PDF loader dependency with GPU support
 def get_pdf_loader() -> PDFLoader:
