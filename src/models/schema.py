@@ -8,7 +8,6 @@ from pydantic import BaseModel, Field, HttpUrl
 class DocumentSource(str, Enum):
     YOUTUBE = "youtube"
     BILIBILI = "bilibili"
-    YOUKU = "youku"
     PDF = "pdf"
     MANUAL = "manual"
 
@@ -41,11 +40,6 @@ class YouTubeIngestRequest(BaseModel):
 
 
 class BilibiliIngestRequest(BaseModel):
-    url: HttpUrl
-    metadata: Optional[Dict[str, str]] = None
-
-
-class YoukuIngestRequest(BaseModel):
     url: HttpUrl
     metadata: Optional[Dict[str, str]] = None
 

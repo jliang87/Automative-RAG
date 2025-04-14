@@ -7,8 +7,8 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from src.core.pdf_loader import PDFLoader
 from src.core.vectorstore import QdrantStore
-from src.core.youtube_transcriber import YouTubeTranscriber, BilibiliTranscriber
-from src.core.youku_transcriber import YoukuTranscriber
+from src.core.base_video_transcriber import YouTubeTranscriber, BilibiliTranscriber, create_transcriber_for_url
+
 from src.models.schema import DocumentMetadata, DocumentSource, ManualIngestRequest
 from src.config.settings import settings
 
@@ -30,7 +30,6 @@ class DocumentProcessor:
         device: Optional[str] = None,
         youtube_transcriber: Optional[YouTubeTranscriber] = None,
         bilibili_transcriber: Optional[BilibiliTranscriber] = None,
-        youku_transcriber: Optional[YoukuTranscriber] = None,
         pdf_loader: Optional[PDFLoader] = None,
     ):
         """
@@ -51,7 +50,6 @@ class DocumentProcessor:
 
         self.youtube_transcriber = youtube_transcriber
         self.bilibili_transcriber = bilibili_transcriber
-        self.youku_transcriber = youku_transcriber
         self.pdf_loader = pdf_loader
 
         # Always create the text splitter
@@ -127,39 +125,6 @@ class DocumentProcessor:
         # Add to vector store
         return self.vector_store.add_documents(chunked_documents)
 
-    def process_youku_video(
-            self, url: str, custom_metadata: Optional[Dict[str, str]] = None, force_whisper: bool = True
-    ) -> List[str]:
-        """
-        Process a Youku video with GPU-accelerated transcription.
-
-        Args:
-            url: Youku URL
-            custom_metadata: Optional custom metadata
-            force_whisper: Whether to force using Whisper for transcription (default: True)
-
-        Returns:
-            List of document IDs
-        """
-        # Get documents from transcriber
-        documents = self.youku_transcriber.process_video(
-            url=url,
-            custom_metadata=custom_metadata,
-            force_whisper=force_whisper
-        )
-
-        # Split into chunks
-        chunked_documents = self.text_splitter.split_documents(documents)
-
-        # Assign IDs to chunks
-        video_id = self.youku_transcriber.extract_video_id(url)
-        for i, doc in enumerate(chunked_documents):
-            doc.metadata["id"] = f"youku-{video_id}-{i}"
-            doc.metadata["chunk_id"] = i
-            doc.metadata["platform"] = "youku"  # Explicitly mark the platform
-
-        # Add to vector store
-        return self.vector_store.add_documents(chunked_documents)
 
     def process_pdf(
         self, file_path: str, custom_metadata: Optional[Dict[str, str]] = None
@@ -225,7 +190,7 @@ class DocumentProcessor:
 
         Args:
             urls: List of video URLs
-            platform: Platform of the videos ("youtube", "bilibili", or "youku")
+            platform: Platform of the videos ("youtube", "bilibili")
             custom_metadata: Optional list of custom metadata (same length as urls)
 
         Returns:
@@ -244,8 +209,6 @@ class DocumentProcessor:
                     doc_ids = self.process_youtube_video(url, metadata)
                 elif platform.lower() == "bilibili":
                     doc_ids = self.process_bilibili_video(url, metadata)
-                elif platform.lower() == "youku":
-                    doc_ids = self.process_youku_video(url, metadata)
                 else:
                     raise ValueError(f"Unsupported platform: {platform}")
 
@@ -277,3 +240,32 @@ class DocumentProcessor:
         # This would require implementing a method to search by metadata in QdrantStore
         # For simplicity, we'll just return a stub
         return []
+
+    def process_video_generic(self, url, custom_metadata=None, force_whisper=True):
+        """Process any supported video URL automatically."""
+        transcriber = create_transcriber_for_url(
+            url,
+            device=self.device,
+            force_whisper=force_whisper
+        )
+
+        documents = transcriber.process_video(
+            url=url,
+            custom_metadata=custom_metadata,
+            force_whisper=force_whisper
+        )
+
+        # Split into chunks
+        chunked_documents = self.text_splitter.split_documents(documents)
+
+        # Assign IDs to chunks
+        video_id = transcriber.extract_video_id(url)
+        platform = transcriber.__class__.__name__.replace('Transcriber', '').lower()
+
+        for i, doc in enumerate(chunked_documents):
+            doc.metadata["id"] = f"{platform}-{video_id}-{i}"
+            doc.metadata["chunk_id"] = i
+            doc.metadata["platform"] = platform
+
+        # Add to vector store
+        return self.vector_store.add_documents(chunked_documents)

@@ -160,7 +160,6 @@ class Settings(BaseSettings):
         os.makedirs(os.path.join(data_dir, self.upload_dir), exist_ok=True)
         os.makedirs(os.path.join(data_dir, "youtube"), exist_ok=True)
         os.makedirs(os.path.join(data_dir, "bilibili"), exist_ok=True)
-        os.makedirs(os.path.join(data_dir, "youku"), exist_ok=True)
 
         os.makedirs(models_dir, exist_ok=True)
         os.makedirs(os.path.join(models_dir, self.embedding_model_path), exist_ok=True)

@@ -5,7 +5,7 @@ from .llm import LocalLLM
 from .pdf_loader import PDFLoader
 from .retriever import HybridRetriever
 from .vectorstore import QdrantStore
-from .youtube_transcriber import YouTubeTranscriber, BilibiliTranscriber
+from .base_video_transcriber import YouTubeTranscriber, BilibiliTranscriber, create_transcriber_for_url, BaseVideoTranscriber
 
 __all__ = [
     "ColBERTReranker",
@@ -16,4 +16,6 @@ __all__ = [
     "QdrantStore",
     "YouTubeTranscriber",
     "BilibiliTranscriber",
+    "BaseVideoTranscriber",
+    "create_transcriber_for_url"
 ]

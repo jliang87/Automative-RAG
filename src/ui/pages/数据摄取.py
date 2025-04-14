@@ -25,7 +25,7 @@ header(
 )
 
 # 不同数据导入方式的选项卡
-tab1, tab2, tab3, tab4, tab5 = st.tabs(["YouTube", "Bilibili", "优酷", "PDF", "手动输入"])
+tab1, tab2, tab3, tab4 = st.tabs(["YouTube", "Bilibili", "PDF", "手动输入"])
 
 def render_youtube_tab():
     """渲染 YouTube 数据导入选项卡"""
@@ -130,31 +130,6 @@ def render_bilibili_tab():
         if result:
             st.success(f"成功导入 Bilibili 视频：已创建 {result.get('document_count', 0)} 个数据块")
 
-def render_youku_tab():
-    """渲染优酷数据导入选项卡"""
-    st.header("导入优酷视频")
-
-    youku_url = st.text_input("优酷视频链接", placeholder="https://v.youku.com/v_show/id_...")
-
-    if st.button("导入优酷视频", type="primary", key="youku_btn"):
-        if not youku_url:
-            st.warning("请输入优酷视频链接")
-            return
-
-        with loading_spinner("正在处理优酷视频... 这可能需要几分钟。"):
-            endpoint = "/ingest/youku"
-
-            result = api_request(
-                endpoint=endpoint,
-                method="POST",
-                data={
-                    "url": youku_url,
-                },
-            )
-
-        if result:
-            st.success(f"成功导入优酷视频：已创建 {result.get('document_count', 0)} 个数据块")
-
 def render_pdf_tab():
     """渲染 PDF 数据导入选项卡"""
     st.header("导入 PDF 文件")
@@ -209,10 +184,7 @@ with tab2:
     render_bilibili_tab()
 
 with tab3:
-    render_youku_tab()
-
-with tab4:
     render_pdf_tab()
 
-with tab5:
+with tab4:
     render_manual_tab()

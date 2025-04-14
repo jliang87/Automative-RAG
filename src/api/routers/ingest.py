@@ -12,11 +12,10 @@ import traceback
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)  # Set to DEBUG level
 
-from src.api.dependencies import get_vector_store, get_youtube_transcriber, get_bilibili_transcriber, get_youku_transcriber, get_pdf_loader, get_document_processor
+from src.api.dependencies import get_vector_store, get_youtube_transcriber, get_pdf_loader, get_document_processor
 from src.core.document_processor import DocumentProcessor
 from src.core.vectorstore import QdrantStore
-from src.core.youtube_transcriber import YouTubeTranscriber, BilibiliTranscriber
-from src.core.youku_transcriber import YoukuTranscriber
+from src.core.base_video_transcriber import YouTubeTranscriber
 from src.core.pdf_loader import PDFLoader
 from src.models.schema import IngestResponse, ManualIngestRequest, YouTubeIngestRequest
 
@@ -29,16 +28,10 @@ class BilibiliIngestRequest(BaseModel):
     metadata: Optional[Dict[str, str]] = None
 
 
-class YoukuIngestRequest(BaseModel):
-    """Request model for Youku video ingestion."""
-    url: HttpUrl
-    metadata: Optional[Dict[str, str]] = None
-
-
 class BatchVideoIngestRequest(BaseModel):
     """Request model for batch video ingestion."""
     urls: List[HttpUrl]
-    platform: str = "youtube"  # "youtube", "bilibili", or "youku"
+    platform: str = "youtube"  # "youtube", "bilibili"
     metadata: Optional[List[Dict[str, str]]] = None
 
 
@@ -108,40 +101,6 @@ async def ingest_bilibili(
     except Exception as e:
         # Log the full traceback
         error_detail = f"Error ingesting Bilibili video: {str(e)}\n{traceback.format_exc()}"
-        logger.error(error_detail)
-
-        # Return detailed error information
-        raise HTTPException(
-            status_code=500,
-            detail=error_detail,
-        )
-
-
-@router.post("/youku", response_model=IngestResponse)
-async def ingest_youku(
-        youku_request: YoukuIngestRequest,
-        force_whisper: bool = Query(True, description="Force using Whisper for transcription"),
-        processor: DocumentProcessor = Depends(get_document_processor),
-) -> IngestResponse:
-    """
-    Ingest a Youku video with GPU-accelerated transcription.
-    """
-    try:
-        # Process the Youku video using pre-initialized processor
-        document_ids = processor.process_youku_video(
-            url=str(youku_request.url),
-            custom_metadata=youku_request.metadata,
-            force_whisper=force_whisper
-        )
-
-        return IngestResponse(
-            message=f"Successfully ingested Youku video: {youku_request.url}",
-            document_count=len(document_ids),
-            document_ids=document_ids,
-        )
-    except Exception as e:
-        # Log the full traceback
-        error_detail = f"Error ingesting Youku video: {str(e)}\n{traceback.format_exc()}"
         logger.error(error_detail)
 
         # Return detailed error information
@@ -359,3 +318,38 @@ async def reset_vector_store(
             status_code=500,
             detail=f"Error resetting vector store: {str(e)}",
         )
+
+@router.post("/video", response_model=IngestResponse)
+async def ingest_video(
+        video_request: Dict,
+        processor: DocumentProcessor = Depends(get_document_processor),
+) -> IngestResponse:
+    """
+    Ingest a video from any supported platform.
+    """
+    try:
+        url = video_request.get("url")
+        if not url:
+            raise HTTPException(status_code=400, detail="URL is required")
+
+        # Use the generic processor method
+        document_ids = processor.process_video_generic(
+            url=url,
+            custom_metadata=video_request.get("metadata"),
+            force_whisper=video_request.get("force_whisper", True)
+        )
+
+        # Determine platform for message
+        platform = "video"
+        if "youtube" in url:
+            platform = "YouTube"
+        elif "bilibili" in url:
+            platform = "Bilibili"
+
+        return IngestResponse(
+            message=f"Successfully ingested {platform} video: {url}",
+            document_count=len(document_ids),
+            document_ids=document_ids,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error ingesting video: {str(e)}")

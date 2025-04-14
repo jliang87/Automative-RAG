@@ -86,29 +86,6 @@ BILIBILI_EXAMPLES = [
     }
 ]
 
-# Example Youku videos about cars
-YOUKU_EXAMPLES = [
-    {
-        "url": "https://v.youku.com/v_show/id_XNTk1NDAxMzgwNA==.html",
-        "metadata": {
-            "manufacturer": "Geely",
-            "model": "Geometry A",
-            "year": 2023,
-            "category": "sedan",
-            "engine_type": "electric"
-        }
-    },
-    {
-        "url": "https://v.youku.com/v_show/id_XNTk1MDk5OTk4OA==.html",
-        "metadata": {
-            "manufacturer": "Xpeng",
-            "model": "P7",
-            "year": 2022,
-            "category": "sedan",
-            "engine_type": "electric"
-        }
-    }
-]
 
 # Example manual entries for car specifications
 MANUAL_EXAMPLES = [
@@ -252,28 +229,6 @@ def load_bilibili_examples(api_key: str, base_url: str) -> None:
             print(f"Error: {response.text if response else 'No response'}")
 
 
-def load_youku_examples(api_key: str, base_url: str) -> None:
-    """Load Youku examples."""
-    print("Loading Youku examples...")
-
-    for i, example in enumerate(YOUKU_EXAMPLES):
-        print(f"Loading Youku example {i+1}/{len(YOUKU_EXAMPLES)}: {example['url']}")
-
-        response = make_api_request(
-            endpoint="/ingest/youku?force_whisper=true",
-            method="POST",
-            data=example,
-            api_key=api_key,
-            base_url=base_url,
-        )
-
-        if response and response.status_code == 200:
-            result = response.json()
-            print(f"Success: {result['message']}")
-        else:
-            print(f"Error: {response.text if response else 'No response'}")
-
-
 def load_pdf_examples(api_key: str, base_url: str, data_dir: str) -> None:
     """Load PDF examples from the data directory."""
     print("Loading PDF examples...")
@@ -358,7 +313,6 @@ def main():
     parser.add_argument("--data-dir", default="data", help="Directory containing data files")
     parser.add_argument("--skip-youtube", action="store_true", help="Skip loading YouTube examples")
     parser.add_argument("--skip-bilibili", action="store_true", help="Skip loading Bilibili examples")
-    parser.add_argument("--skip-youku", action="store_true", help="Skip loading Youku examples")
     parser.add_argument("--skip-pdf", action="store_true", help="Skip loading PDF examples")
     parser.add_argument("--skip-manual", action="store_true", help="Skip loading manual entry examples")
 
@@ -384,9 +338,6 @@ def main():
 
     if not args.skip_bilibili:
         load_bilibili_examples(args.api_key, args.base_url)
-
-    if not args.skip_youku:
-        load_youku_examples(args.api_key, args.base_url)
 
     if not args.skip_pdf:
         load_pdf_examples(args.api_key, args.base_url, args.data_dir)

@@ -9,8 +9,8 @@ from src.core.colbert_reranker import ColBERTReranker
 from src.core.llm import LocalLLM
 from src.core.retriever import HybridRetriever
 from src.core.vectorstore import QdrantStore
-from src.core.youtube_transcriber import YouTubeTranscriber, BilibiliTranscriber
-from src.core.youku_transcriber import YoukuTranscriber
+from src.core.base_video_transcriber import YouTubeTranscriber, BilibiliTranscriber, create_transcriber_for_url
+
 from src.core.pdf_loader import PDFLoader
 from src.core.document_processor import DocumentProcessor
 
@@ -19,7 +19,6 @@ llm_model = None  # LLM instance
 colbert_model = None  # ColBERT instance
 youtube_transcriber = None
 bilibili_transcriber = None
-youku_transcriber = None
 pdf_loader = None
 qdrant_client = None
 vector_store = None
@@ -28,7 +27,7 @@ document_processor = None
 
 def load_transcribers():
     """Load transcriber models once at startup."""
-    global youtube_transcriber, bilibili_transcriber, youku_transcriber
+    global youtube_transcriber, bilibili_transcriber
     if youtube_transcriber is None:
         print("🚀 Loading YouTube Transcriber...")
         youtube_transcriber = YouTubeTranscriber(
@@ -49,14 +48,6 @@ def load_transcribers():
         )
         print("✅ Bilibili Transcriber Loaded!")
 
-    if youku_transcriber is None:
-        print("🚀 Loading Youku Transcriber...")
-        youku_transcriber = YoukuTranscriber(
-            whisper_model_size=settings.whisper_model_size,
-            device=settings.device,
-            force_whisper=settings.force_whisper
-        )
-        print("✅ Youku Transcriber Loaded!")
 
 def load_llm():
     """Load the LLM model once when the app starts."""
@@ -143,14 +134,13 @@ def init_retriever():
 
 def init_document_processor():
     """Initialize document processor once at app startup."""
-    global document_processor, vector_store, youtube_transcriber, bilibili_transcriber, youku_transcriber, pdf_loader
+    global document_processor, vector_store, youtube_transcriber, bilibili_transcriber, pdf_loader
     if document_processor is None:
         print("🚀 Initializing Document Processor...")
         document_processor = DocumentProcessor(
             vector_store=vector_store,
             youtube_transcriber=youtube_transcriber,
             bilibili_transcriber=bilibili_transcriber,
-            youku_transcriber=youku_transcriber,
             pdf_loader=pdf_loader
         )
         print("✅ Document Processor Initialized!")
@@ -220,12 +210,6 @@ def get_bilibili_transcriber() -> BilibiliTranscriber:
         raise HTTPException(status_code=500, detail="Bilibili Transcriber is not initialized. Call `load_transcribers()` first.")
     return bilibili_transcriber
 
-# Youku transcriber dependency with GPU support
-def get_youku_transcriber() -> YoukuTranscriber:
-    """Retrieve the preloaded Youku transcriber."""
-    if youku_transcriber is None:
-        raise HTTPException(status_code=500, detail="Youku Transcriber is not initialized. Call `load_transcribers()` first.")
-    return youku_transcriber
 
 # PDF loader dependency with GPU support
 def get_pdf_loader() -> PDFLoader:

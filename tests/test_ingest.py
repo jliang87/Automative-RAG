@@ -9,7 +9,7 @@ import torch
 from langchain_core.documents import Document
 
 from src.core.document_processor import DocumentProcessor
-from src.core.youtube_transcriber import YouTubeTranscriber, BilibiliTranscriber
+from src.core.base_video_transcriber import YouTubeTranscriber, BilibiliTranscriber, create_transcriber_for_url
 from src.core.pdf_loader import PDFLoader
 
 

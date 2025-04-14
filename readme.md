@@ -481,20 +481,20 @@ If GPU acceleration isn't providing expected speedups:
 ## Example: Processing YouTube Videos with GPU
 
 ```python
-from src.core.youtube_transcriber import YouTubeTranscriber
+from src.core.base_video_transcriber import YouTubeTranscriber
 
 # Initialize with GPU support
 transcriber = YouTubeTranscriber(
-    whisper_model_size="medium",  # Options: tiny, base, small, medium, large
-    device="cuda",  # Will default to CUDA if available
-    use_youtube_captions=True,  # Try YouTube captions first (faster)
-    use_whisper_as_fallback=True  # Use Whisper if captions unavailable
+   whisper_model_size="medium",  # Options: tiny, base, small, medium, large
+   device="cuda",  # Will default to CUDA if available
+   use_youtube_captions=True,  # Try YouTube captions first (faster)
+   use_whisper_as_fallback=True  # Use Whisper if captions unavailable
 )
 
 # Process a single video with GPU acceleration
 documents = transcriber.process_video(
-    url="https://www.youtube.com/watch?v=example",
-    force_whisper=True  # Force using Whisper even if captions exist
+   url="https://www.youtube.com/watch?v=example",
+   force_whisper=True  # Force using Whisper even if captions exist
 )
 ```
 
