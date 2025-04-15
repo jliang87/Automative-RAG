@@ -148,7 +148,7 @@ class Settings(BaseSettings):
             )
         except Exception as e:
             raise ValueError(f"Failed to load embedding model from {self.embedding_model_full_path}. Error: {str(e)}\n"
-                             "Please run './download_models.sh' or './download_models_cn.sh' first to download models.")
+                             "Please run './download_models.sh'")
 
     # Ensure required directories exist
     def initialize_directories(self) -> None:

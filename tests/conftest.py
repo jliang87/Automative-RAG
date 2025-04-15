@@ -14,6 +14,7 @@ import torch
 from fastapi.testclient import TestClient
 from qdrant_client import QdrantClient
 from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_core.documents import Document
 
 # Add the project root to the Python path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -22,13 +23,14 @@ from src.api.main import app
 from src.core.vectorstore import QdrantStore
 from src.core.colbert_reranker import ColBERTReranker
 from src.core.llm import LocalLLM
+from src.core.video_transcriber import VideoTranscriber
 
 
 @pytest.fixture
 def test_client() -> Generator[TestClient, None, None]:
     """
     Create a FastAPI test client.
-    
+
     Returns:
         TestClient: FastAPI test client
     """
@@ -40,7 +42,7 @@ def test_client() -> Generator[TestClient, None, None]:
 def temp_data_dir() -> Generator[str, None, None]:
     """
     Create a temporary directory for test data.
-    
+
     Returns:
         str: Path to temporary directory
     """
@@ -52,7 +54,7 @@ def temp_data_dir() -> Generator[str, None, None]:
 def embedding_function() -> HuggingFaceEmbeddings:
     """
     Create an embedding function for testing.
-    
+
     Returns:
         HuggingFaceEmbeddings: Embedding function
     """
@@ -68,10 +70,10 @@ def embedding_function() -> HuggingFaceEmbeddings:
 def mock_qdrant_client(temp_data_dir: str) -> QdrantClient:
     """
     Create a Qdrant client with an in-memory database for testing.
-    
+
     Args:
         temp_data_dir: Temporary directory for storage
-        
+
     Returns:
         QdrantClient: In-memory Qdrant client
     """
@@ -82,11 +84,11 @@ def mock_qdrant_client(temp_data_dir: str) -> QdrantClient:
 def vector_store(mock_qdrant_client: QdrantClient, embedding_function: HuggingFaceEmbeddings) -> QdrantStore:
     """
     Create a vector store for testing.
-    
+
     Args:
         mock_qdrant_client: Qdrant client
         embedding_function: Embedding function
-        
+
     Returns:
         QdrantStore: Vector store
     """
@@ -95,6 +97,44 @@ def vector_store(mock_qdrant_client: QdrantClient, embedding_function: HuggingFa
         collection_name="test_collection",
         embedding_function=embedding_function,
     )
+
+
+@pytest.fixture
+def video_transcriber() -> VideoTranscriber:
+    """
+    Create a video transcriber for testing.
+
+    Returns:
+        VideoTranscriber: Transcriber instance
+    """
+    # Create a mock video transcriber for testing
+    class MockVideoTranscriber:
+        def detect_platform(self, url):
+            if "youtube" in url:
+                return "youtube"
+            elif "bilibili" in url:
+                return "bilibili"
+            return "unknown"
+
+        def extract_video_id(self, url):
+            if "youtube" in url:
+                return "test123"
+            elif "bilibili" in url:
+                return "BV123"
+            return "unknown"
+
+        def process_video(self, url, custom_metadata=None):
+            platform = self.detect_platform(url)
+            return [Document(
+                page_content="Test transcript",
+                metadata={
+                    "source": platform,
+                    "title": f"Test {platform} video",
+                    "video_id": self.extract_video_id(url)
+                }
+            )]
+
+    return MockVideoTranscriber()
 
 
 @pytest.fixture

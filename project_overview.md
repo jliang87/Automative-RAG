@@ -9,7 +9,7 @@ A production-grade AI workflow for automotive specifications using hybrid search
 ### Components
 
 1. **Data Ingestion Pipeline**
-   - YouTube video transcription
+   - Video transcription (YouTube, Bilibili) using Whisper
    - PDF parsing
    - Metadata extraction
    - Document chunking
@@ -50,7 +50,8 @@ A production-grade AI workflow for automotive specifications using hybrid search
 
 - **Hybrid Search**: Combine vector similarity search with metadata filtering
 - **Late Interaction Retrieval**: ColBERT reranking for high-precision document matching
-- **Multi-modal Input**: Process both YouTube videos and PDFs
+- **Multi-modal Input**: Process both videos and PDFs
 - **Source Attribution**: Track provenance of information through the pipeline
 - **Automotive Domain Specialization**: Optimized for automotive specifications
 - **Production-Ready**: Containerized with proper dependency management and API documentation
+- **Unified Video Processing**: Process videos from multiple platforms with Whisper transcription
