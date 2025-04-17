@@ -11,6 +11,7 @@ services:
       - QDRANT_PORT=6333
       - DEVICE=cuda
       - USE_FP16=true
+      - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
       - WHISPER_MODEL_SIZE=medium
       - USE_YOUTUBE_CAPTIONS=false
       - USE_WHISPER_AS_FALLBACK=false

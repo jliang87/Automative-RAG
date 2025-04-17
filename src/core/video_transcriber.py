@@ -297,6 +297,10 @@ class VideoTranscriber:
         Returns:
             Transcribed text
         """
+        # Try to free up GPU memory
+        if self.device.startswith("cuda"):
+            torch.cuda.empty_cache()
+
         # Load model if not already loaded
         self._load_whisper_model()
 
