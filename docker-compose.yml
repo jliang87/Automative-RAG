@@ -6,6 +6,7 @@ services:
       dockerfile: Dockerfile.api
     ports:
       - "8000:8000"
+    runtime: nvidia
     environment:
       - QDRANT_HOST=qdrant
       - QDRANT_PORT=6333
@@ -19,18 +20,12 @@ services:
       - USE_PDF_OCR=true
       - LOG_LEVEL=INFO
       - CONTAINER_RUNTIME=docker
+      - NVIDIA_VISIBLE_DEVICES=all
     volumes:
       - ./data:/app/data
-      - ./models:/app/models  # Map host models directory to container
+      - ./models:/app/models
     env_file:
       - .env
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
     ulimits:
       memlock: -1
       stack: 67108864
@@ -50,7 +45,7 @@ services:
       - CONTAINER_RUNTIME=docker
     volumes:
       - ./data:/app/data
-      - ./models:/app/models  # Map host models directory to container
+      - ./models:/app/models
     env_file:
       - .env
     depends_on:

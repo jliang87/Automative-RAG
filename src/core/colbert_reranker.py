@@ -57,12 +57,12 @@ class ColBERTReranker:
             bge_weight: Weight for BGE score in hybrid ranking (0.0-1.0)
             bge_model_name: Name of the BGE reranker model to use
         """
-        self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = device or ("cuda:0" if torch.cuda.is_available() else "cpu")
         self.model_name = model_name
         self.max_query_length = max_query_length
         self.max_doc_length = max_doc_length
         self.batch_size = batch_size
-        self.use_fp16 = use_fp16 and self.device == "cuda" and torch.cuda.is_available()
+        self.use_fp16 = use_fp16 and self.device.startswith("cuda") and torch.cuda.is_available()
         self.similarity_metric = similarity_metric
 
         # Get model path (either from settings or provided checkpoint)

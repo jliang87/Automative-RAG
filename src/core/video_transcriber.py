@@ -50,7 +50,7 @@ class VideoTranscriber:
         os.makedirs(self.audio_dir, exist_ok=True)
 
         # Determine device (use CUDA if available)
-        self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = device or ("cuda:0" if torch.cuda.is_available() else "cpu")
         self.whisper_model_size = whisper_model_size
         self.whisper_model = None  # Lazy-load the model when needed
 
@@ -76,14 +76,14 @@ class VideoTranscriber:
 
                 self.whisper_model = whisper.load_model(
                     name=self.whisper_model_size,
-                    device=self.device,
+                    device="cpu",
                     download_root=settings.whisper_model_full_path
                 )
             else:
                 # Load from default location
                 self.whisper_model = whisper.load_model(
                     self.whisper_model_size,
-                    device=self.device
+                    device="cpu"
                 )
 
             print("Whisper model loaded successfully")

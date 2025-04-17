@@ -40,7 +40,7 @@ class PDFLoader:
         """
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
-        self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = device or ("cuda:0" if torch.cuda.is_available() else "cpu")
         self.use_ocr = use_ocr
         self.ocr_languages = ocr_languages
 
@@ -63,7 +63,7 @@ class PDFLoader:
             self.ocr_model = PaddleOCR(
                 use_angle_cls=True,
                 lang=self.ocr_languages,  # This will be "en+ch_doc"
-                use_gpu=self.device.startswith("cuda"),
+                use_gpu=False,
                 show_log=False
             )
             print(f"PaddleOCR initialized with GPU support: {self.device.startswith('cuda')}")
