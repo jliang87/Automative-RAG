@@ -14,7 +14,9 @@ from typing import Dict, List, Optional, Tuple, Union, Literal
 
 import torch
 from langchain_core.documents import Document
-import whisper
+# import whisper
+# Import the faster-whisper package for transcription on CPU
+from faster_whisper import WhisperModel
 
 from src.models.schema import DocumentMetadata, DocumentSource
 from src.config.settings import settings
@@ -27,22 +29,24 @@ from src.utils.helpers import (
 class VideoTranscriber:
     """
     Unified video transcriber that handles multiple platforms (YouTube, Bilibili, etc.)
-    using Whisper for all transcription tasks.
+    using faster-whisper for CPU-optimized transcription.
     """
 
     def __init__(
             self,
             output_dir: str = "data/videos",
             whisper_model_size: str = "medium",
-            device: Optional[str] = None
+            device: Optional[str] = "cpu",
+            num_workers: int = 4  # Number of CPU workers for parallel processing
     ):
         """
-        Initialize the video transcriber.
+        Initialize the video transcriber with CPU-optimized faster-whisper.
 
         Args:
             output_dir: Directory to save downloaded videos and audio
             whisper_model_size: Size of the Whisper model (tiny, base, small, medium, large)
-            device: Device to run Whisper on (cuda or cpu), defaults to cuda if available
+            device: Device to run Whisper on (should be "cpu" for faster-whisper)
+            num_workers: Number of workers for parallel processing
         """
         self.output_dir = output_dir
         self.audio_dir = os.path.join(output_dir, "audio")
@@ -53,6 +57,7 @@ class VideoTranscriber:
         self.device = device or ("cuda:0" if torch.cuda.is_available() else "cpu")
         self.whisper_model_size = whisper_model_size
         self.whisper_model = None  # Lazy-load the model when needed
+        self.num_workers = num_workers  # Number of CPU cores to use
 
         # Add Chinese converter if available
         try:
@@ -64,29 +69,34 @@ class VideoTranscriber:
             self.chinese_converter = None
 
     def _load_whisper_model(self):
-        """Load the Whisper model if not already loaded."""
+        """Load the faster-whisper model if not already loaded, optimized for CPU."""
         if self.whisper_model is None:
-            print(f"Loading Whisper {self.whisper_model_size} model on {self.device}...")
+            print(f"Loading faster-whisper {self.whisper_model_size} model on CPU with {self.num_workers} workers...")
 
-            # Check if using custom model path
-            if hasattr(settings, 'whisper_model_full_path') and settings.whisper_model_full_path and os.path.exists(
-                    settings.whisper_model_full_path):
-                # Load from local path
-                print(f"Loading Whisper model from local path: {settings.whisper_model_full_path}")
+            try:
+                # Check if using custom model path
+                if hasattr(settings, 'whisper_model_full_path') and settings.whisper_model_full_path and os.path.exists(
+                        settings.whisper_model_full_path):
+                    # Load from local path
+                    model_path = settings.whisper_model_full_path
+                    print(f"Loading faster-whisper model from local path: {model_path}")
+                else:
+                    # Use model name for faster-whisper to download
+                    model_path = self.whisper_model_size
 
-                self.whisper_model = whisper.load_model(
-                    name=self.whisper_model_size,
+                # Initialize the faster-whisper model with CPU optimizations
+                self.whisper_model = WhisperModel(
+                    model_path,
                     device="cpu",
-                    download_root=settings.whisper_model_full_path
-                )
-            else:
-                # Load from default location
-                self.whisper_model = whisper.load_model(
-                    self.whisper_model_size,
-                    device="cpu"
+                    compute_type="int8",  # Use int8 quantization for CPU efficiency
+                    cpu_threads=self.num_workers,  # Use multiple CPU threads
+                    num_workers=self.num_workers  # Number of workers for parallel processing
                 )
 
-            print("Whisper model loaded successfully")
+                print(f"faster-whisper model loaded successfully with {self.num_workers} parallel workers")
+            except Exception as e:
+                print(f"Error loading faster-whisper model: {str(e)}")
+                raise
 
     def detect_platform(self, url: str) -> Literal["youtube", "bilibili", "unknown"]:
         """
@@ -289,7 +299,7 @@ class VideoTranscriber:
 
     def transcribe_with_whisper(self, media_path: str) -> str:
         """
-        Transcribe audio or video file using Whisper with GPU acceleration.
+        Transcribe audio or video file using faster-whisper with CPU parallelization.
 
         Args:
             media_path: Path to the audio or video file
@@ -297,23 +307,38 @@ class VideoTranscriber:
         Returns:
             Transcribed text
         """
-        # Try to free up GPU memory
-        if self.device.startswith("cuda"):
-            torch.cuda.empty_cache()
+        # # Try to free up GPU memory
+        # if self.device.startswith("cuda"):
+        #     torch.cuda.empty_cache()
 
         # Load model if not already loaded
         self._load_whisper_model()
 
-        print(f"Transcribing with Whisper ({self.whisper_model_size}) on {self.device}...")
+        print(f"Transcribing with faster-whisper ({self.whisper_model_size}) using {self.num_workers} CPU workers...")
 
-        # Whisper can directly handle both audio and video files
-        result = self.whisper_model.transcribe(media_path)
-        transcript = result["text"]
+        # Use faster-whisper to transcribe
+        segments, info = self.whisper_model.transcribe(
+            media_path,
+            beam_size=5,  # Larger beam size for better accuracy
+            vad_filter=True,  # Voice activity detection for better segmentation
+            vad_parameters=dict(  # Fine-tuned VAD parameters
+                min_silence_duration_ms=500
+            ),
+            language="auto"
+        )
+
+        # Collect all segments and join them
+        all_text = []
+        for segment in segments:
+            all_text.append(segment.text)
+
+        transcript = " ".join(all_text)
 
         # Convert traditional to simplified Chinese if needed
         if hasattr(self, 'chinese_converter') and self.chinese_converter:
             transcript = self.chinese_converter.convert(transcript)
 
+        print(f"Transcription complete. Detected language: {info.language}, Duration: {info.duration:.2f}s")
         return transcript
 
     def process_video(
