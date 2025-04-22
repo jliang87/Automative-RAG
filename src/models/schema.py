@@ -1,6 +1,6 @@
 from datetime import datetime
 from enum import Enum
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional, Union, Any
 
 from pydantic import BaseModel, Field, HttpUrl
 
@@ -10,6 +10,41 @@ class DocumentSource(str, Enum):
     BILIBILI = "bilibili"
     PDF = "pdf"
     MANUAL = "manual"
+
+
+class JobType(str, Enum):
+    VIDEO_PROCESSING = "video_processing"
+    PDF_PROCESSING = "pdf_processing"
+    BATCH_VIDEO_PROCESSING = "batch_video_processing"
+    MANUAL_TEXT = "manual_text"
+
+
+class JobStatus(str, Enum):
+    PENDING = "pending"
+    PROCESSING = "processing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    TIMEOUT = "timeout"
+
+
+class BackgroundJobResponse(BaseModel):
+    """Response for a background job submission."""
+    message: str
+    job_id: str
+    job_type: str
+    status: str = "pending"
+
+
+class JobDetails(BaseModel):
+    """Detailed information about a background job."""
+    job_id: str
+    job_type: str
+    status: JobStatus
+    created_at: float
+    updated_at: float
+    result: Optional[Any] = None
+    error: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
 
 
 class DocumentMetadata(BaseModel):

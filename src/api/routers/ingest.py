@@ -1,5 +1,6 @@
 import os
-from typing import Dict, List, Optional
+import uuid
+from typing import Dict, List, Optional, Union
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, Query
 from pydantic import HttpUrl, BaseModel
@@ -16,7 +17,8 @@ from src.api.dependencies import get_vector_store, get_document_processor, get_p
 from src.core.document_processor import DocumentProcessor
 from src.core.vectorstore import QdrantStore
 from src.core.pdf_loader import PDFLoader
-from src.models.schema import IngestResponse, ManualIngestRequest
+from src.models.schema import IngestResponse, ManualIngestRequest, BackgroundJobResponse
+from src.core.background_tasks import job_tracker, process_video, process_pdf, batch_process_videos
 
 router = APIRouter()
 
@@ -33,40 +35,55 @@ class BatchVideoIngestRequest(BaseModel):
     metadata: Optional[List[Dict[str, str]]] = None
 
 
-@router.post("/video", response_model=IngestResponse)
+@router.post("/video", response_model=BackgroundJobResponse)
 async def ingest_video(
         video_request: VideoIngestRequest,
         processor: DocumentProcessor = Depends(get_document_processor),
-) -> IngestResponse:
+) -> BackgroundJobResponse:
     """
     Ingest a video from any supported platform (YouTube, Bilibili, etc.) with GPU-accelerated Whisper transcription.
+    All processing happens asynchronously in the background.
 
     Args:
         video_request: Video ingest request with URL and optional metadata
         processor: Document processor dependency
 
     Returns:
-        Ingest response with document IDs
+        Background job response with job ID
     """
     try:
-        # Process the video using unified processor
-        document_ids = processor.process_video(
-            url=str(video_request.url),
-            custom_metadata=video_request.metadata
-        )
+        url_str = str(video_request.url)
 
         # Determine platform for more helpful user feedback
         platform = "video"
-        url_str = str(video_request.url)
         if "youtube" in url_str:
             platform = "YouTube"
         elif "bilibili" in url_str:
             platform = "Bilibili"
 
-        return IngestResponse(
-            message=f"Successfully ingested {platform} video: {video_request.url}",
-            document_count=len(document_ids),
-            document_ids=document_ids,
+        # Generate a unique job ID
+        job_id = str(uuid.uuid4())
+
+        # Create a job record
+        job_tracker.create_job(
+            job_id=job_id,
+            job_type="video_processing",
+            metadata={
+                "url": url_str,
+                "platform": platform,
+                "custom_metadata": video_request.metadata
+            }
+        )
+
+        # Start the background job
+        process_video.send(job_id, url_str, video_request.metadata)
+
+        # Return the job ID immediately
+        return BackgroundJobResponse(
+            message=f"Processing {platform} video in the background",
+            job_id=job_id,
+            job_type="video_processing",
+            status="pending",
         )
     except Exception as e:
         # Log the full traceback
@@ -80,38 +97,49 @@ async def ingest_video(
         )
 
 
-@router.post("/batch-videos", response_model=Dict[str, Any])
+@router.post("/batch-videos", response_model=BackgroundJobResponse)
 async def ingest_batch_videos(
         batch_request: BatchVideoIngestRequest,
         processor: DocumentProcessor = Depends(get_document_processor),
-) -> Dict[str, Any]:
+) -> BackgroundJobResponse:
     """
     Ingest multiple videos in batch with GPU acceleration.
+    All processing happens asynchronously in the background.
 
     Args:
         batch_request: Batch video request with URLs and optional metadata
         processor: Document processor dependency
 
     Returns:
-        Dictionary with results for each URL
+        Background job response with job ID
     """
     try:
         # Convert URLs to strings
         urls = [str(url) for url in batch_request.urls]
 
-        # Process the videos in batch
-        results = processor.batch_process_videos(
-            urls=urls,
-            custom_metadata=batch_request.metadata
+        # Generate a unique job ID
+        job_id = str(uuid.uuid4())
+
+        # Create a job record
+        job_tracker.create_job(
+            job_id=job_id,
+            job_type="batch_video_processing",
+            metadata={
+                "urls": urls,
+                "custom_metadata": batch_request.metadata
+            }
         )
 
-        # Count successful ingestions
-        success_count = sum(1 for result in results.values() if isinstance(result, list))
+        # Start the background job
+        batch_process_videos.send(job_id, urls, batch_request.metadata)
 
-        return {
-            "message": f"Batch processing completed. {success_count}/{len(urls)} videos ingested successfully.",
-            "results": results,
-        }
+        # Return the job ID immediately
+        return BackgroundJobResponse(
+            message=f"Processing {len(urls)} videos in the background",
+            job_id=job_id,
+            job_type="batch_video_processing",
+            status="pending",
+        )
     except Exception as e:
         # Log the full traceback
         error_detail = f"Error in batch processing: {str(e)}\n{traceback.format_exc()}"
@@ -124,16 +152,17 @@ async def ingest_batch_videos(
         )
 
 
-@router.post("/pdf", response_model=IngestResponse)
+@router.post("/pdf", response_model=BackgroundJobResponse)
 async def ingest_pdf(
         file: UploadFile = File(...),
         metadata: Optional[str] = Form(None),
         use_ocr: Optional[bool] = Form(None),
         extract_tables: bool = Form(True),
         processor: DocumentProcessor = Depends(get_document_processor),
-) -> IngestResponse:
+) -> BackgroundJobResponse:
     """
     Ingest a PDF file with GPU-accelerated OCR and table extraction.
+    All processing happens asynchronously in the background.
     """
     try:
         # Parse metadata
@@ -151,16 +180,31 @@ async def ingest_pdf(
             contents = await file.read()
             f.write(contents)
 
-        # Process the PDF with pre-initialized processor
-        document_ids = processor.process_pdf(
-            file_path=file_path,
-            custom_metadata=custom_metadata,
+        # Generate a unique job ID
+        job_id = str(uuid.uuid4())
+
+        # Create a job record
+        job_tracker.create_job(
+            job_id=job_id,
+            job_type="pdf_processing",
+            metadata={
+                "filename": file.filename,
+                "filepath": file_path,
+                "custom_metadata": custom_metadata,
+                "use_ocr": use_ocr,
+                "extract_tables": extract_tables
+            }
         )
 
-        return IngestResponse(
-            message=f"Successfully ingested PDF: {file.filename}",
-            document_count=len(document_ids),
-            document_ids=document_ids,
+        # Start the background job
+        process_pdf.send(job_id, file_path, custom_metadata)
+
+        # Return the job ID immediately
+        return BackgroundJobResponse(
+            message=f"Processing PDF in the background: {file.filename}",
+            job_id=job_id,
+            job_type="pdf_processing",
+            status="pending",
         )
     except Exception as e:
         # Log the full traceback
@@ -174,22 +218,39 @@ async def ingest_pdf(
         )
 
 
-@router.post("/text", response_model=IngestResponse)
+@router.post("/text", response_model=BackgroundJobResponse)
 async def ingest_text(
         manual_request: ManualIngestRequest,
         processor: DocumentProcessor = Depends(get_document_processor),
-) -> IngestResponse:
+) -> BackgroundJobResponse:
     """
     Ingest manually entered text.
+    All processing happens asynchronously in the background.
     """
     try:
-        # Process the text using pre-initialized processor
-        document_ids = processor.process_text(manual_request)
+        # Generate a unique job ID
+        job_id = str(uuid.uuid4())
 
-        return IngestResponse(
-            message="Successfully ingested manual text",
-            document_count=len(document_ids),
-            document_ids=document_ids,
+        # Create a job record
+        job_tracker.create_job(
+            job_id=job_id,
+            job_type="manual_text",
+            metadata={
+                "title": manual_request.metadata.title if manual_request.metadata.title else "Manual Text Input",
+                "content_length": len(manual_request.content)
+            }
+        )
+
+        # Start the background job
+        from src.core.background_tasks import process_text
+        process_text.send(job_id, manual_request.content, manual_request.metadata.dict())
+
+        # Return the job ID immediately
+        return BackgroundJobResponse(
+            message="Processing text input in the background",
+            job_id=job_id,
+            job_type="manual_text",
+            status="pending",
         )
     except Exception as e:
         # Log the full traceback
@@ -201,6 +262,68 @@ async def ingest_text(
             status_code=500,
             detail=error_detail,
         )
+
+
+@router.get("/jobs/{job_id}", response_model=Dict[str, Any])
+async def get_job_status(job_id: str) -> Dict[str, Any]:
+    """
+    Get the status of a background job.
+
+    Args:
+        job_id: ID of the job to check
+
+    Returns:
+        Job information including status, result, and error if any
+    """
+    job_data = job_tracker.get_job(job_id)
+
+    if not job_data:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Job with ID {job_id} not found"
+        )
+
+    return job_data
+
+
+@router.get("/jobs", response_model=List[Dict[str, Any]])
+async def get_all_jobs(
+        limit: int = Query(50, ge=1, le=100),
+        job_type: Optional[str] = Query(None)
+) -> List[Dict[str, Any]]:
+    """
+    Get all background jobs, optionally filtered by type.
+
+    Args:
+        limit: Maximum number of jobs to return (default: 50)
+        job_type: Filter jobs by type (e.g., 'video_processing', 'pdf_processing')
+
+    Returns:
+        List of job information
+    """
+    return job_tracker.get_all_jobs(limit=limit, job_type=job_type)
+
+
+@router.delete("/jobs/{job_id}", response_model=Dict[str, str])
+async def delete_job(job_id: str) -> Dict[str, str]:
+    """
+    Delete a job by ID.
+
+    Args:
+        job_id: ID of the job to delete
+
+    Returns:
+        Success message
+    """
+    deleted = job_tracker.delete_job(job_id)
+
+    if not deleted:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Job with ID {job_id} not found"
+        )
+
+    return {"message": f"Successfully deleted job: {job_id}"}
 
 
 @router.delete("/documents/{doc_id}", response_model=Dict[str, str])
@@ -258,12 +381,23 @@ async def get_ingest_status(
                 "ocr_enabled": pdf_loader.use_ocr
             }
 
+        # Get background job stats
+        job_stats = {
+            "pending_jobs": len([j for j in job_tracker.get_all_jobs(limit=1000) if j.get("status") == "pending"]),
+            "processing_jobs": len(
+                [j for j in job_tracker.get_all_jobs(limit=1000) if j.get("status") == "processing"]),
+            "completed_jobs": len([j for j in job_tracker.get_all_jobs(limit=1000) if j.get("status") == "completed"]),
+            "failed_jobs": len([j for j in job_tracker.get_all_jobs(limit=1000) if
+                                j.get("status") == "failed" or j.get("status") == "timeout"])
+        }
+
         return {
             "status": "healthy",
             "collection": stats.get("name"),
             "document_count": stats.get("vectors_count", 0),
             "collection_size": stats.get("disk_data_size", 0),
-            "gpu_info": gpu_info
+            "gpu_info": gpu_info,
+            "job_stats": job_stats
         }
     except Exception as e:
         raise HTTPException(

@@ -21,6 +21,8 @@ services:
       - LOG_LEVEL=INFO
       - CONTAINER_RUNTIME=docker
       - NVIDIA_VISIBLE_DEVICES=all
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
     volumes:
       - ./data:/app/data
       - ./models:/app/models
@@ -32,6 +34,46 @@ services:
     shm_size: 8gb
     depends_on:
       - qdrant
+      - redis
+
+  # Dramatiq Workers
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    runtime: nvidia
+    command: python -m dramatiq src.core.background_tasks
+    environment:
+      - QDRANT_HOST=qdrant
+      - QDRANT_PORT=6333
+      - DEVICE=cuda
+      - USE_FP16=true
+      - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+      - WHISPER_MODEL_SIZE=medium
+      - USE_YOUTUBE_CAPTIONS=false
+      - USE_WHISPER_AS_FALLBACK=false
+      - FORCE_WHISPER=true
+      - USE_PDF_OCR=true
+      - LOG_LEVEL=INFO
+      - CONTAINER_RUNTIME=docker
+      - NVIDIA_VISIBLE_DEVICES=all
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    volumes:
+      - ./data:/app/data
+      - ./models:/app/models
+    env_file:
+      - .env
+    ulimits:
+      memlock: -1
+      stack: 67108864
+    shm_size: 8gb
+    depends_on:
+      - qdrant
+      - redis
+    deploy:
+      replicas: 2  # Number of worker instances to run
+    restart: unless-stopped
 
   # Streamlit UI
   ui:
@@ -43,6 +85,8 @@ services:
     environment:
       - API_URL=http://api:8000
       - CONTAINER_RUNTIME=docker
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
     volumes:
       - ./data:/app/data
       - ./models:/app/models
@@ -61,6 +105,18 @@ services:
       - qdrant-data:/qdrant/storage
     environment:
       - QDRANT_ALLOW_CORS=true
+    restart: unless-stopped
+
+  # Redis for Background Task Queue
+  redis:
+    image: redis:7.0-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes
+    restart: unless-stopped
 
 volumes:
   qdrant-data:
+  redis-data:

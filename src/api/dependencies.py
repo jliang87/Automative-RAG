@@ -13,6 +13,24 @@ from src.core.video_transcriber import VideoTranscriber
 from src.core.pdf_loader import PDFLoader
 from src.core.document_processor import DocumentProcessor
 
+import os
+import redis
+from typing import Annotated, Any, Dict, List, Optional, Tuple
+
+from fastapi import Depends, HTTPException, Header, status
+
+# Import the JobTracker
+from src.core.background_tasks import JobTracker
+
+# Redis client configuration
+redis_host = os.environ.get("REDIS_HOST", "localhost")
+redis_port = int(os.environ.get("REDIS_PORT", "6379"))
+redis_password = os.environ.get("REDIS_PASSWORD", None)
+
+# Global instance
+redis_client = None
+job_tracker = None
+
 # Global instances that will be initialized during app startup
 llm_model = None  # LLM instance
 colbert_model = None  # ColBERT instance
@@ -130,6 +148,50 @@ def init_document_processor():
         )
         print("✅ Document Processor Initialized!")
 
+def init_redis_client():
+    """Initialize Redis client."""
+    global redis_client
+    if redis_client is None:
+        redis_kwargs = {
+            "host": redis_host,
+            "port": redis_port,
+            "decode_responses": True,
+            "socket_connect_timeout": 5,
+            "socket_timeout": 5,
+            "retry_on_timeout": True,
+        }
+        if redis_password:
+            redis_kwargs["password"] = redis_password
+
+        redis_client = redis.Redis(**redis_kwargs)
+        print("✅ Redis Client Initialized!")
+    return redis_client
+
+def init_job_tracker():
+    """Initialize job tracker."""
+    global job_tracker
+    if job_tracker is None:
+        print("🚀 Initializing Job Tracker...")
+        # Use the existing Redis client
+        client = init_redis_client()
+        job_tracker = JobTracker(redis_client=client)
+        print("✅ Job Tracker Initialized!")
+    return job_tracker
+
+# Redis client dependency
+def get_redis_client() -> redis.Redis:
+    """Get the cached Redis client instance."""
+    if redis_client is None:
+        raise HTTPException(status_code=500, detail="Redis client not initialized yet.")
+    return redis_client
+
+# JobTracker dependency
+def get_job_tracker() -> JobTracker:
+    """Get the cached JobTracker instance."""
+    if job_tracker is None:
+        raise HTTPException(status_code=500, detail="Job tracker not initialized yet.")
+    return job_tracker
+
 def load_all_components():
     """Initialize all components at application startup."""
     load_video_transcriber()
@@ -139,6 +201,8 @@ def load_all_components():
     init_vector_store()
     init_retriever()
     init_document_processor()
+    init_redis_client()
+    init_job_tracker()
 
 # Authentication dependency
 async def get_token_header(x_token: str = Header(...)):

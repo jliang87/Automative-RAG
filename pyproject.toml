@@ -52,6 +52,11 @@ langchain_huggingface = "*"
 langchain-qdrant ="*"
 numpy = "*"
 faster-whisper = "*"
+# New background processing requirements
+dramatiq = ">=1.15.0"
+redis = ">=5.0.0"
+pandas = "*"  # For data display in the UI
+watchdog = "*"  # For watching file changes
 
 [tool.poetry.group.dev.dependencies]
 black = "*"
