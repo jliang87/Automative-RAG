@@ -13,7 +13,7 @@ services:
       - DEVICE=cuda
       - USE_FP16=true
       - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
-      - WHISPER_MODEL_SIZE=medium
+      - WHISPER_MODEL_SIZE=small
       - USE_YOUTUBE_CAPTIONS=false
       - USE_WHISPER_AS_FALLBACK=false
       - FORCE_WHISPER=true
@@ -42,14 +42,14 @@ services:
       context: .
       dockerfile: Dockerfile.api
     runtime: nvidia
-    command: python -m dramatiq src.core.background_tasks
+    command: python -m dramatiq src.core.background_tasks --processes 1 --threads 1
     environment:
       - QDRANT_HOST=qdrant
       - QDRANT_PORT=6333
       - DEVICE=cuda
       - USE_FP16=true
       - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
-      - WHISPER_MODEL_SIZE=medium
+      - WHISPER_MODEL_SIZE=small
       - USE_YOUTUBE_CAPTIONS=false
       - USE_WHISPER_AS_FALLBACK=false
       - FORCE_WHISPER=true
