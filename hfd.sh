@@ -55,6 +55,8 @@ INCLUDE_PATTERNS=()
 EXCLUDE_PATTERNS=()
 REVISION="main"
 
+export HF_ENDPOINT=https://hf-mirror.com
+
 validate_number() {
     [[ "$2" =~ ^[1-9][0-9]*$ && "$2" -le "$3" ]] || { printf "${RED}[Error] $1 must be 1-$3${NC}\n"; exit 1; }
 }

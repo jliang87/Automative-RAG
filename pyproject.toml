@@ -67,6 +67,7 @@ pytest-cov = "*"
 mypy = "*"
 debugpy = "*"
 pydevd_pycharm = "~243.25659.43"
+ctranslate2 = "*"
 
 [build-system]
 requires = ["poetry-core"]

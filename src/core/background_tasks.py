@@ -181,6 +181,27 @@ class JobTracker:
 job_tracker = JobTracker()
 
 
+# Centralized function to get vector store for background tasks
+def get_vector_store():
+    """Get a vector store instance for background tasks."""
+    from src.core.vectorstore import QdrantStore
+    from src.config.settings import settings
+
+    # Initialize qdrant client
+    from qdrant_client import QdrantClient
+    qdrant_client = QdrantClient(
+        host=settings.qdrant_host,
+        port=settings.qdrant_port,
+    )
+
+    # Initialize vector store
+    return QdrantStore(
+        client=qdrant_client,
+        collection_name=settings.qdrant_collection,
+        embedding_function=settings.embedding_function,
+    )
+
+
 # Video processing actor
 @dramatiq.actor(max_retries=3, time_limit=3600000)  # 1 hour timeout
 def process_video(job_id: str, url: str, custom_metadata: Optional[Dict[str, Any]] = None):
@@ -191,10 +212,12 @@ def process_video(job_id: str, url: str, custom_metadata: Optional[Dict[str, Any
 
         # Import here to avoid circular imports
         from src.core.document_processor import DocumentProcessor
-        from src.config.settings import settings
 
-        # Initialize components
-        processor = DocumentProcessor()
+        # Get vector store
+        vector_store = get_vector_store()
+
+        # Initialize components with vector store
+        processor = DocumentProcessor(vector_store=vector_store)
 
         # Process the video
         document_ids = processor.process_video(url=url, custom_metadata=custom_metadata)
@@ -245,8 +268,11 @@ def process_pdf(job_id: str, file_path: str, custom_metadata: Optional[Dict[str,
         # Import here to avoid circular imports
         from src.core.document_processor import DocumentProcessor
 
-        # Initialize components
-        processor = DocumentProcessor()
+        # Get vector store
+        vector_store = get_vector_store()
+
+        # Initialize components with vector store
+        processor = DocumentProcessor(vector_store=vector_store)
 
         # Process the PDF
         document_ids = processor.process_pdf(file_path=file_path, custom_metadata=custom_metadata)
@@ -298,8 +324,11 @@ def process_text(job_id: str, content: str, metadata: Dict[str, Any]):
         from src.core.document_processor import DocumentProcessor
         from src.models.schema import ManualIngestRequest, DocumentMetadata
 
-        # Initialize components
-        processor = DocumentProcessor()
+        # Get vector store
+        vector_store = get_vector_store()
+
+        # Initialize components with vector store
+        processor = DocumentProcessor(vector_store=vector_store)
 
         # Create a proper request object
         request = ManualIngestRequest(
@@ -332,6 +361,60 @@ def process_text(job_id: str, content: str, metadata: Dict[str, Any]):
     except Exception as e:
         import traceback
         error_detail = f"Error processing text: {str(e)}\n{traceback.format_exc()}"
+        logger.error(error_detail)
+
+        # Update job with error
+        job_tracker.update_job_status(
+            job_id,
+            JobStatus.FAILED,
+            error=error_detail
+        )
+
+        # Re-raise for dramatiq retry mechanism
+        raise
+
+
+# Batch videos processing actor
+@dramatiq.actor(max_retries=3, time_limit=7200000)  # 2 hour timeout
+def batch_process_videos(job_id: str, urls: List[str], custom_metadata: Optional[List[Dict[str, Any]]] = None):
+    """Process multiple videos in batch."""
+    try:
+        # Update job status to processing
+        job_tracker.update_job_status(job_id, JobStatus.PROCESSING)
+
+        # Import here to avoid circular imports
+        from src.core.document_processor import DocumentProcessor
+
+        # Get vector store
+        vector_store = get_vector_store()
+
+        # Initialize components with vector store
+        processor = DocumentProcessor(vector_store=vector_store)
+
+        # Process the videos
+        results = processor.batch_process_videos(urls=urls, custom_metadata=custom_metadata)
+
+        # Update job with success result
+        job_tracker.update_job_status(
+            job_id,
+            JobStatus.COMPLETED,
+            result={
+                "message": f"Successfully processed {len(urls)} videos",
+                "results": results,
+            }
+        )
+
+        return results
+
+    except TimeLimitExceeded:
+        job_tracker.update_job_status(
+            job_id,
+            JobStatus.TIMEOUT,
+            error="Processing timeout exceeded"
+        )
+    except Exception as e:
+        import traceback
+        error_detail = f"Error processing batch videos: {str(e)}\n{traceback.format_exc()}"
         logger.error(error_detail)
 
         # Update job with error

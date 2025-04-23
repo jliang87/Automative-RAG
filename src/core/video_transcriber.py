@@ -37,7 +37,7 @@ class VideoTranscriber:
             output_dir: str = "data/videos",
             whisper_model_size: str = "medium",
             device: Optional[str] = "cpu",
-            num_workers: int = 4  # Number of CPU workers for parallel processing
+            num_workers: int = 3  # Number of threads for parallel processing
     ):
         """
         Initialize the video transcriber with CPU-optimized faster-whisper.
@@ -57,7 +57,7 @@ class VideoTranscriber:
         self.device = device or ("cuda:0" if torch.cuda.is_available() else "cpu")
         self.whisper_model_size = whisper_model_size
         self.whisper_model = None  # Lazy-load the model when needed
-        self.num_workers = num_workers  # Number of CPU cores to use
+        self.num_workers = num_workers
 
         # Add Chinese converter if available
         try:
@@ -323,23 +323,19 @@ class VideoTranscriber:
             vad_filter=True,  # Voice activity detection for better segmentation
             vad_parameters=dict(  # Fine-tuned VAD parameters
                 min_silence_duration_ms=500
-            ),
-            language="auto"
+            )
         )
 
-        # Collect all segments and join them
-        all_text = []
-        for segment in segments:
-            all_text.append(segment.text)
-
+        all_text = [segment.text for segment in segments]
         transcript = " ".join(all_text)
 
-        # Convert traditional to simplified Chinese if needed
-        if hasattr(self, 'chinese_converter') and self.chinese_converter:
+        # ✅ Convert only if detected language is Chinese
+        if info.language.startswith("zh") and self.chinese_converter:
+            print("Detected Chinese. Converting to Simplified Chinese...")
             transcript = self.chinese_converter.convert(transcript)
 
         print(f"Transcription complete. Detected language: {info.language}, Duration: {info.duration:.2f}s")
-        return transcript
+        return transcript, info
 
     def process_video(
             self, url: str, custom_metadata: Optional[Dict[str, str]] = None
@@ -373,7 +369,9 @@ class VideoTranscriber:
             media_path = self.extract_audio(url)
 
             # Transcribe with Whisper
-            transcript_text = self.transcribe_with_whisper(media_path)
+            transcript_text, info = self.transcribe_with_whisper(media_path)
+            custom_metadata = custom_metadata or {}
+            custom_metadata["language"] = info.language
             print(f"Using Whisper transcription for video ID: {video_metadata['video_id']}")
         except Exception as e:
             raise ValueError(f"Error transcribing video with Whisper: {str(e)}")
@@ -395,7 +393,7 @@ class VideoTranscriber:
             category=auto_metadata.get("category"),
             engine_type=auto_metadata.get("engine_type"),
             transmission=auto_metadata.get("transmission"),
-            custom_metadata=custom_metadata or {},
+            custom_metadata=custom_metadata,
         )
 
         # Add transcription info to metadata

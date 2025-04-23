@@ -336,4 +336,4 @@ if jobs_data:
                 else:
                     st.caption("提示: 开启侧边栏中的「自动刷新」功能可以自动更新任务状态")
 else:
-    st.error("无法获取任务列表，请检查API连接")
+    st.info("当前无任务")

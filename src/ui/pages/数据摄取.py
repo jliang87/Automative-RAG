@@ -50,7 +50,7 @@ if st.session_state.redirect_to_jobs:
     )
 
     if st.button("立即跳转到任务页面"):
-        st.switch_page("src/ui/pages/后台任务.py")
+        st.switch_page("pages/后台任务.py")
 
     # 停止页面的其余部分渲染
     st.stop()
@@ -58,7 +58,7 @@ if st.session_state.redirect_to_jobs:
 st.info("""
 ### 所有数据处理均在后台进行
 
-所有数据处理（包括视频转录、PDF解析和文本处理）均在后台异步执行，不会阻塞用户界面。
+所有数据处理（包括视频转录、PDF解析和文本处理）均在后台异步执行。
 提交后，您将被自动重定向到任务管理页面，以便跟踪处理进度。
 """)
 
@@ -86,12 +86,10 @@ def render_video_tab():
         platform = detect_platform(video_url)
         st.info(f"检测到 {platform} 平台")
 
-    st.info("所有视频将使用 Whisper AI 进行转录，处理将在后台完成")
-
     with st.expander("附加元数据"):
         video_manufacturer = st.text_input("制造商", key="video_manufacturer")
         video_model = st.text_input("车型", key="video_model")
-        video_year = st.text_input("年份", value="2023", key="video_year")
+        video_year = st.text_input("年份", key="video_year")
         # Validate year format if needed
         if video_year:
             try:
@@ -167,12 +165,10 @@ def render_pdf_tab():
     """渲染 PDF 数据导入选项卡"""
     st.header("导入 PDF 文件")
 
-    st.info("PDF处理包括文本提取、OCR和表格识别，将在后台完成")
-
     with st.expander("附加元数据"):
         pdf_manufacturer = st.text_input("制造商", key="pdf_manufacturer")
         pdf_model = st.text_input("车型", key="pdf_model")
-        pdf_year = st.text_input("年份", value="2023", key="pdf_year")
+        pdf_year = st.text_input("年份", key="pdf_year")
         # Validate year format if needed
         if pdf_year:
             try:
@@ -256,12 +252,10 @@ def render_manual_tab():
     """渲染手动输入选项卡"""
     st.header("手动输入数据")
 
-    st.info("文本处理将在后台进行，可以在任务管理页面查看进度")
-
     with st.expander("元数据"):
         manual_manufacturer = st.text_input("制造商", key="manual_manufacturer")
         manual_model = st.text_input("车型", key="manual_model")
-        manual_year = st.text_input("年份", value="2023", key="manual_year")
+        manual_year = st.text_input("年份", key="manual_year")
         # Validate year format if needed
         if manual_year:
             try:
