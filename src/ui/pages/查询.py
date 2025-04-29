@@ -142,39 +142,11 @@ def render_query_page():
     top_k = st.slider("最多检索文档数量", min_value=1, max_value=20, value=5)
 
     # 提交按钮
-    col1, col2 = st.columns([1, 1])
-
-    with col1:
-        if st.button("异步查询（推荐）", type="primary"):
-            if not query:
-                st.warning("请输入查询内容")
-            else:
-                process_async_query(query, filter_data, top_k)
-
-    with col2:
-        if st.button("同步查询（可能超时）"):
-            if not query:
-                st.warning("请输入查询内容")
-            else:
-                # 使用传统同步查询
-                with st.spinner("正在处理您的查询..."):
-                    result = api_request(
-                        endpoint="/query/",
-                        method="POST",
-                        data={
-                            "query": query,
-                            "metadata_filter": filter_data,
-                            "top_k": top_k
-                        }
-                    )
-
-                if result:
-                    st.subheader("查询结果")
-                    st.markdown(result["answer"])
-
-                    st.subheader("数据来源")
-                    for i, doc in enumerate(result["documents"]):
-                        display_document(doc, i)
+    if st.button("提交查询", type="primary"):
+        if not query:
+            st.warning("请输入查询内容")
+        else:
+            process_async_query(query, filter_data, top_k)
 
     # 如果正在轮询，显示取消按钮
     if st.session_state.polling:

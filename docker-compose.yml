@@ -27,11 +27,19 @@ services:
     volumes:
       - ./data:/app/data
       - ./models:/app/models
+      - ./logs:/app/logs
     env_file:
       - .env
     depends_on:
       - qdrant
       - redis
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 
   # GPU Worker - prioritizes inference over other GPU tasks
   worker-gpu:
@@ -47,10 +55,20 @@ services:
       - DEVICE=cuda
       - USE_FP16=true
       - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
-      # Other environment variables
+      - WHISPER_MODEL_SIZE=small
+      - USE_YOUTUBE_CAPTIONS=false
+      - USE_WHISPER_AS_FALLBACK=false
+      - FORCE_WHISPER=true
+      - USE_PDF_OCR=true
+      - CONTAINER_RUNTIME=docker
+      - NVIDIA_VISIBLE_DEVICES=all
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - LOG_LEVEL=INFO
     volumes:
       - ./data:/app/data
       - ./models:/app/models
+      - ./logs:/app/logs
     env_file:
       - .env
     ulimits:
@@ -62,6 +80,13 @@ services:
       - redis
     deploy:
       replicas: 1  # Just one GPU worker
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "bash", "-c", "ps aux | grep dramatiq | grep -v grep"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
   # CPU Worker - handles PDF processing and text operations
   worker-cpu:
@@ -75,10 +100,20 @@ services:
       - QDRANT_PORT=6333
       - DEVICE=cpu
       - CUDA_VISIBLE_DEVICES=""  # Hide GPU
-      # Other environment variables
+      - WHISPER_MODEL_SIZE=small
+      - USE_YOUTUBE_CAPTIONS=false
+      - USE_WHISPER_AS_FALLBACK=false
+      - FORCE_WHISPER=true
+      - USE_PDF_OCR=true
+      - CONTAINER_RUNTIME=docker
+      - NVIDIA_VISIBLE_DEVICES=all
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - LOG_LEVEL=INFO
     volumes:
       - ./data:/app/data
       - ./models:/app/models
+      - ./logs:/app/logs
     env_file:
       - .env
     depends_on:
@@ -86,6 +121,31 @@ services:
       - redis
     deploy:
       replicas: 1  # Scale this for more parallel CPU processing
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "bash", "-c", "ps aux | grep dramatiq | grep -v grep"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # Job Cleanup Service - periodically purges old completed jobs
+  job-cleanup:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    command: python /app/job_cleanup_service.py --retention-days 7 --interval 3600
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - JOB_RETENTION_DAYS=7
+      - CLEANUP_INTERVAL=3600
+      - LOG_LEVEL=INFO
+    volumes:
+      - ./logs:/app/logs
+    depends_on:
+      - redis
+    restart: unless-stopped
 
   # Streamlit UI
   ui:
@@ -102,10 +162,18 @@ services:
     volumes:
       - ./data:/app/data
       - ./models:/app/models
+      - ./logs:/app/logs
     env_file:
       - .env
     depends_on:
       - api
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8501"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 
   # Qdrant Vector Database
   qdrant:
@@ -118,6 +186,12 @@ services:
     environment:
       - QDRANT_ALLOW_CORS=true
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6333/readiness"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
 
   # Redis for Background Task Queue
   redis:
@@ -126,8 +200,13 @@ services:
       - "6379:6379"
     volumes:
       - redis-data:/data
-    command: redis-server --appendonly yes
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
 volumes:
   qdrant-data:

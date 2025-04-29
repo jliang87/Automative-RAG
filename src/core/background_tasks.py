@@ -250,11 +250,32 @@ def get_vector_store(force_cpu=False):
         )
 
 
-# LLM Inference actor (HIGH PRIORITY GPU task)
-@dramatiq.actor(queue_name="inference_tasks", max_retries=2, time_limit=300000)
+# Improved GPU resource management definitions for background_tasks.py
+
+# Define GPU concurrency limiter
+gpu_limiter = ConcurrentRateLimiter(
+    backend=rate_limiter_backend,
+    key="gpu_inference_concurrency",
+    limit=1,  # Set to # of GPUs
+    ttl=60_000  # 1 minute (in ms)
+)
+
+
+# Use rate limiter for GPU tasks
+@dramatiq.actor(
+    queue_name="inference_tasks",
+    max_retries=3,  # Increase retries
+    time_limit=300000,
+    rate_limiter=gpu_limiter,
+    min_backoff=10000,  # 10 seconds minimum backoff
+    max_backoff=300000  # 5 minutes maximum backoff
+)
 def perform_llm_inference(job_id: str, query: str, documents: List[Dict], metadata_filter: Optional[Dict] = None):
-    """Perform LLM inference using GPU with high priority."""
+    """Perform LLM inference using GPU with high priority and resource management."""
     try:
+        # Try to acquire GPU resources
+        logger.info(f"Acquiring GPU resources for job {job_id}")
+
         # Update job status to processing
         job_tracker.update_job_status(job_id, JobStatus.PROCESSING)
         logger.info(f"GPU worker performing inference for query: {query}")
@@ -264,6 +285,12 @@ def perform_llm_inference(job_id: str, query: str, documents: List[Dict], metada
         from src.config.settings import settings
         from langchain_core.documents import Document
         import torch
+
+        # Try to clean up CUDA memory
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            initial_memory = torch.cuda.memory_allocated() / (1024 ** 3)
+            logger.info(f"Initial GPU memory allocated: {initial_memory:.2f} GB")
 
         # Convert document dictionaries back to Document objects
         doc_objects = []
@@ -275,7 +302,7 @@ def perform_llm_inference(job_id: str, query: str, documents: List[Dict], metada
             score = doc_dict.get("relevance_score", 0)
             doc_objects.append((doc, score))
 
-        # Initialize LLM
+        # Initialize LLM with memory efficient settings
         llm = LocalLLM(
             model_name=settings.default_llm_model,
             device="cuda",
@@ -286,36 +313,20 @@ def perform_llm_inference(job_id: str, query: str, documents: List[Dict], metada
             torch_dtype=torch.float16 if settings.use_fp16 and settings.device.startswith("cuda") else None
         )
 
+        # Log memory usage after loading model
+        if torch.cuda.is_available():
+            model_memory = torch.cuda.memory_allocated() / (1024 ** 3)
+            logger.info(f"GPU memory after loading model: {model_memory:.2f} GB")
+            logger.info(f"Model memory delta: {model_memory - initial_memory:.2f} GB")
+
         start_time = time.time()
 
-        # Try to perform inference
-        try:
-            answer = llm.answer_query(
-                query=query,
-                documents=doc_objects,
-                metadata_filter=metadata_filter
-            )
-        except RuntimeError as e:
-            if "CUDA" in str(e):
-                # If CUDA error occurs, fall back to CPU
-                logger.warning(f"CUDA error during inference, falling back to CPU: {str(e)}")
-                # Create CPU version of LLM
-                cpu_llm = LocalLLM(
-                    model_name=settings.default_llm_model,
-                    device="cpu",
-                    temperature=settings.llm_temperature,
-                    max_tokens=settings.llm_max_tokens,
-                    use_4bit=False,
-                    use_8bit=False
-                )
-                answer = cpu_llm.answer_query(
-                    query=query,
-                    documents=doc_objects,
-                    metadata_filter=metadata_filter
-                )
-            else:
-                # Not a CUDA error, re-raise
-                raise
+        # Perform inference
+        answer = llm.answer_query(
+            query=query,
+            documents=doc_objects,
+            metadata_filter=metadata_filter
+        )
 
         inference_time = time.time() - start_time
         logger.info(f"Inference completed in {inference_time:.2f}s")
@@ -343,6 +354,16 @@ def perform_llm_inference(job_id: str, query: str, documents: List[Dict], metada
             }
             formatted_documents.append(formatted_doc)
 
+        # Clean up GPU memory after inference
+        if torch.cuda.is_available():
+            # Explicitly delete model to free memory
+            del llm.model
+            del llm.pipe
+            del llm
+            torch.cuda.empty_cache()
+            final_memory = torch.cuda.memory_allocated() / (1024 ** 3)
+            logger.info(f"Final GPU memory after cleanup: {final_memory:.2f} GB")
+
         # Update job with success result
         job_tracker.update_job_status(
             job_id,
@@ -364,6 +385,7 @@ def perform_llm_inference(job_id: str, query: str, documents: List[Dict], metada
         }
 
     except TimeLimitExceeded:
+        logger.error(f"Time limit exceeded for job {job_id}")
         job_tracker.update_job_status(
             job_id,
             JobStatus.TIMEOUT,
@@ -381,6 +403,11 @@ def perform_llm_inference(job_id: str, query: str, documents: List[Dict], metada
             JobStatus.FAILED,
             error=error_detail
         )
+
+        # Clean up GPU memory on error
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            logger.info(f"Cleaned up GPU memory after error")
 
         # Re-raise for dramatiq retry mechanism
         raise

@@ -130,7 +130,7 @@ def render_video_tab():
                 elif year_value > datetime.datetime.now().year + 1:
                     st.warning(f"年份超出合理范围 (当前年份: {datetime.datetime.now().year})")
                     return
-                custom_metadata["year"] = year_value
+                custom_metadata["year"] = str(year_value)
             except ValueError:
                 st.warning("请输入有效的数字年份")
                 return
@@ -215,7 +215,7 @@ def render_pdf_tab():
                 elif year_value > datetime.datetime.now().year + 1:
                     st.warning(f"年份超出合理范围 (当前年份: {datetime.datetime.now().year})")
                     return
-                custom_metadata["year"] = year_value
+                custom_metadata["year"] = str(year_value)
             except ValueError:
                 st.warning("请输入有效的数字年份")
                 return
