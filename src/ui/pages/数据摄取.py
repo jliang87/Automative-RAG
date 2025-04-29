@@ -37,22 +37,22 @@ if st.session_state.redirect_to_jobs:
     st.success(f"已创建后台任务，任务ID: {st.session_state.job_id}")
     st.info("正在跳转到任务管理页面...")
 
-    # 使用JavaScript重定向到任务页面
-    st.markdown(
-        f"""
-        <script>
-            setTimeout(function() {{
-                window.location.href = "/{os.path.basename(os.path.dirname(__file__))}/后台任务";
-            }}, 2000);
-        </script>
-        """,
-        unsafe_allow_html=True
-    )
+    # Add a countdown timer instead of indefinite waiting
+    import time
 
+    for i in range(3, 0, -1):
+        st.text(f"将在 {i} 秒后跳转...")
+        time.sleep(1)
+        st.rerun()
+
+    # After countdown completes, redirect using relative path
+    st.switch_page("pages/后台任务.py")
+
+    # Add button for immediate redirect
     if st.button("立即跳转到任务页面"):
         st.switch_page("pages/后台任务.py")
 
-    # 停止页面的其余部分渲染
+    # Stop page execution here
     st.stop()
 
 st.info("""

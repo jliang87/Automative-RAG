@@ -126,3 +126,12 @@ class TokenResponse(BaseModel):
 class TokenRequest(BaseModel):
     username: str
     password: str
+
+
+class QueryResponse(BaseModel):
+    query: str
+    answer: str
+    documents: List[DocumentResponse]
+    metadata_filters_used: Optional[Dict[str, Union[str, List[str], int, List[int]]]] = None
+    execution_time: float
+    status: str = "completed"

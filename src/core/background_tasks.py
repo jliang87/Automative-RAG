@@ -2,8 +2,8 @@
 Background task processing system using Dramatiq and Redis.
 
 This module provides the functionality to run resource-intensive tasks like
-video transcription and PDF OCR in the background, freeing up the web servers
-to handle more requests.
+video transcription and LLM inference in the background, with dedicated
+worker types for GPU and CPU processing.
 """
 
 import os
@@ -16,6 +16,10 @@ import dramatiq
 from dramatiq.brokers.redis import RedisBroker
 from dramatiq.middleware.time_limit import TimeLimitExceeded
 from dramatiq.middleware.callbacks import Callbacks
+from dramatiq.middleware.age_limit import AgeLimit
+from dramatiq.middleware.retries import Retries
+from dramatiq.rate_limits import ConcurrentRateLimiter
+from dramatiq.rate_limits.backends import RedisBackend
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -26,11 +30,16 @@ redis_host = os.environ.get("REDIS_HOST", "localhost")
 redis_port = int(os.environ.get("REDIS_PORT", "6379"))
 redis_password = os.environ.get("REDIS_PASSWORD", None)
 
+# Get worker type
+worker_type = os.environ.get("WORKER_TYPE", "unknown")
+logger.info(f"Initializing worker of type: {worker_type}")
+
 # Initialize Redis broker
 broker_kwargs = {
     "host": redis_host,
     "port": redis_port,
     "max_connections": 20,  # Connection pool size
+    "client_name": f"dramatiq-{worker_type}-{os.getpid()}"  # Unique client name
 }
 if redis_password:
     broker_kwargs["password"] = redis_password
@@ -38,8 +47,19 @@ if redis_password:
 # Create broker with middleware
 redis_broker = RedisBroker(**broker_kwargs)
 redis_broker.add_middleware(Callbacks())
+redis_broker.add_middleware(AgeLimit())
+redis_broker.add_middleware(Retries(max_retries=3))
 dramatiq.set_broker(redis_broker)
 
+# Create queue references with priority
+inference_queue = dramatiq.QueueLink("inference_tasks")  # High priority GPU tasks
+gpu_tasks_queue = dramatiq.QueueLink("gpu_tasks")        # Normal priority GPU tasks
+cpu_tasks_queue = dramatiq.QueueLink("cpu_tasks")        # CPU tasks
+
+# Rate limiter backend
+rate_limiter_backend = RedisBackend(
+    client=redis_broker.client
+)
 
 # Define job status constants
 class JobStatus:
@@ -120,7 +140,7 @@ class JobTracker:
         if "metadata" in job_data and job_data["metadata"]:
             job_data["metadata"] = json.loads(job_data["metadata"])
         # Parse result if it's JSON
-        if "result" in job_data and job_data["result"] and job_data["result"].startswith('{'):
+        if "result" in job_data and job_data["result"] and isinstance(job_data["result"], str) and job_data["result"].startswith('{'):
             try:
                 job_data["result"] = json.loads(job_data["result"])
             except:
@@ -145,7 +165,7 @@ class JobTracker:
                 job_data["metadata"] = json.loads(job_data["metadata"])
 
             # Parse result if it's JSON
-            if "result" in job_data and job_data["result"] and job_data["result"].startswith('{'):
+            if "result" in job_data and job_data["result"] and isinstance(job_data["result"], str) and job_data["result"].startswith('{'):
                 try:
                     job_data["result"] = json.loads(job_data["result"])
                 except:
@@ -182,8 +202,13 @@ job_tracker = JobTracker()
 
 
 # Centralized function to get vector store for background tasks
-def get_vector_store():
-    """Get a vector store instance for background tasks."""
+def get_vector_store(force_cpu=False):
+    """
+    Get a vector store instance for background tasks.
+
+    Args:
+        force_cpu: Whether to force CPU usage for embeddings
+    """
     from src.core.vectorstore import QdrantStore
     from src.config.settings import settings
 
@@ -194,40 +219,216 @@ def get_vector_store():
         port=settings.qdrant_port,
     )
 
-    # Initialize vector store
-    return QdrantStore(
-        client=qdrant_client,
-        collection_name=settings.qdrant_collection,
-        embedding_function=settings.embedding_function,
-    )
+    if force_cpu or worker_type == "cpu":
+        # Create a custom embedding function that uses CPU
+        from langchain_huggingface import HuggingFaceEmbeddings
+        try:
+            # Try to load the embedding model explicitly on CPU
+            embedding_function = HuggingFaceEmbeddings(
+                model_name=settings.embedding_model_full_path,
+                model_kwargs={"device": "cpu"},  # Force CPU usage
+                encode_kwargs={"batch_size": settings.batch_size, "normalize_embeddings": True},
+                cache_folder=os.path.join(settings.models_dir, settings.embedding_model_path)
+            )
+            logger.info("Using CPU embedding model for background task worker")
+        except Exception as e:
+            logger.error(f"Error loading embedding model for background task: {str(e)}")
+            raise
+
+        # Initialize vector store with CPU embeddings
+        return QdrantStore(
+            client=qdrant_client,
+            collection_name=settings.qdrant_collection,
+            embedding_function=embedding_function,
+        )
+    else:
+        # Use regular embedding function from settings (could use GPU)
+        return QdrantStore(
+            client=qdrant_client,
+            collection_name=settings.qdrant_collection,
+            embedding_function=settings.embedding_function,
+        )
 
 
-# Video processing actor
-@dramatiq.actor(max_retries=3, time_limit=3600000)  # 1 hour timeout
-def process_video(job_id: str, url: str, custom_metadata: Optional[Dict[str, Any]] = None):
-    """Process a video in the background."""
+# LLM Inference actor (HIGH PRIORITY GPU task)
+@dramatiq.actor(queue_name="inference_tasks", max_retries=2, time_limit=300000)
+def perform_llm_inference(job_id: str, query: str, documents: List[Dict], metadata_filter: Optional[Dict] = None):
+    """Perform LLM inference using GPU with high priority."""
     try:
         # Update job status to processing
         job_tracker.update_job_status(job_id, JobStatus.PROCESSING)
+        logger.info(f"GPU worker performing inference for query: {query}")
 
         # Import here to avoid circular imports
-        from src.core.document_processor import DocumentProcessor
+        from src.core.llm import LocalLLM
+        from src.config.settings import settings
+        from langchain_core.documents import Document
+        import torch
 
-        # Get vector store
-        vector_store = get_vector_store()
+        # Convert document dictionaries back to Document objects
+        doc_objects = []
+        for doc_dict in documents:
+            doc = Document(
+                page_content=doc_dict["content"],
+                metadata=doc_dict.get("metadata", {})
+            )
+            score = doc_dict.get("relevance_score", 0)
+            doc_objects.append((doc, score))
 
-        # Initialize components with vector store
-        processor = DocumentProcessor(vector_store=vector_store)
+        # Initialize LLM
+        llm = LocalLLM(
+            model_name=settings.default_llm_model,
+            device="cuda",
+            temperature=settings.llm_temperature,
+            max_tokens=settings.llm_max_tokens,
+            use_4bit=settings.llm_use_4bit,
+            use_8bit=settings.llm_use_8bit,
+            torch_dtype=torch.float16 if settings.use_fp16 and settings.device.startswith("cuda") else None
+        )
 
-        # Process the video
-        document_ids = processor.process_video(url=url, custom_metadata=custom_metadata)
+        start_time = time.time()
+
+        # Try to perform inference
+        try:
+            answer = llm.answer_query(
+                query=query,
+                documents=doc_objects,
+                metadata_filter=metadata_filter
+            )
+        except RuntimeError as e:
+            if "CUDA" in str(e):
+                # If CUDA error occurs, fall back to CPU
+                logger.warning(f"CUDA error during inference, falling back to CPU: {str(e)}")
+                # Create CPU version of LLM
+                cpu_llm = LocalLLM(
+                    model_name=settings.default_llm_model,
+                    device="cpu",
+                    temperature=settings.llm_temperature,
+                    max_tokens=settings.llm_max_tokens,
+                    use_4bit=False,
+                    use_8bit=False
+                )
+                answer = cpu_llm.answer_query(
+                    query=query,
+                    documents=doc_objects,
+                    metadata_filter=metadata_filter
+                )
+            else:
+                # Not a CUDA error, re-raise
+                raise
+
+        inference_time = time.time() - start_time
+        logger.info(f"Inference completed in {inference_time:.2f}s")
+
+        # Extract source information
+        sources = []
+        for doc, score in doc_objects:
+            source = {
+                "id": doc.metadata.get("id", ""),
+                "title": doc.metadata.get("title", "Unknown"),
+                "source_type": doc.metadata.get("source", "unknown"),
+                "url": doc.metadata.get("url"),
+                "relevance_score": score,
+            }
+            sources.append(source)
+
+        # Prepare formatted documents for response
+        formatted_documents = []
+        for doc, score in doc_objects:
+            formatted_doc = {
+                "id": doc.metadata.get("id", ""),
+                "content": doc.page_content,
+                "metadata": doc.metadata,
+                "relevance_score": score,
+            }
+            formatted_documents.append(formatted_doc)
 
         # Update job with success result
         job_tracker.update_job_status(
             job_id,
             JobStatus.COMPLETED,
             result={
-                "message": f"Successfully processed video: {url}",
+                "query": query,
+                "answer": answer,
+                "documents": formatted_documents,
+                "metadata_filters_used": metadata_filter,
+                "execution_time": inference_time,
+                "sources": sources,
+            }
+        )
+
+        return {
+            "answer": answer,
+            "documents": formatted_documents,
+            "execution_time": inference_time
+        }
+
+    except TimeLimitExceeded:
+        job_tracker.update_job_status(
+            job_id,
+            JobStatus.TIMEOUT,
+            error="Inference timeout exceeded"
+        )
+        raise
+    except Exception as e:
+        import traceback
+        error_detail = f"Error performing LLM inference: {str(e)}\n{traceback.format_exc()}"
+        logger.error(error_detail)
+
+        # Update job with error
+        job_tracker.update_job_status(
+            job_id,
+            JobStatus.FAILED,
+            error=error_detail
+        )
+
+        # Re-raise for dramatiq retry mechanism
+        raise
+
+
+# Video processing actor - GPU version
+@dramatiq.actor(queue_name="gpu_tasks", max_retries=3, time_limit=3600000)
+def process_video_gpu(job_id: str, url: str, custom_metadata: Optional[Dict[str, Any]] = None):
+    """Process a video using GPU for transcription and embedding."""
+    try:
+        # Update job status to processing
+        job_tracker.update_job_status(job_id, JobStatus.PROCESSING)
+        logger.info(f"GPU worker processing video: {url}")
+
+        # Import here to avoid circular imports
+        from src.core.document_processor import DocumentProcessor
+        from src.core.video_transcriber import VideoTranscriber
+        import torch
+
+        # Get vector store with GPU embeddings
+        vector_store = get_vector_store(force_cpu=False)
+
+        # Create transcriber with GPU
+        transcriber = VideoTranscriber(
+            whisper_model_size=os.environ.get("WHISPER_MODEL_SIZE", "medium"),
+            device="cuda",
+            num_workers=1  # Just use 1 worker thread to avoid oversubscription
+        )
+
+        # Initialize document processor
+        processor = DocumentProcessor(
+            vector_store=vector_store,
+            video_transcriber=transcriber
+        )
+
+        # Process the video - this uses GPU for transcription and embedding
+        document_ids = processor.process_video(url=url, custom_metadata=custom_metadata)
+
+        # Clean up GPU memory
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+        # Update job with success result
+        job_tracker.update_job_status(
+            job_id,
+            JobStatus.COMPLETED,
+            result={
+                "message": f"Successfully processed video using GPU: {url}",
                 "document_count": len(document_ids),
                 "document_ids": document_ids,
             }
@@ -243,7 +444,7 @@ def process_video(job_id: str, url: str, custom_metadata: Optional[Dict[str, Any
         )
     except Exception as e:
         import traceback
-        error_detail = f"Error processing video: {str(e)}\n{traceback.format_exc()}"
+        error_detail = f"Error processing video with GPU: {str(e)}\n{traceback.format_exc()}"
         logger.error(error_detail)
 
         # Update job with error
@@ -257,22 +458,36 @@ def process_video(job_id: str, url: str, custom_metadata: Optional[Dict[str, Any
         raise
 
 
-# PDF processing actor
-@dramatiq.actor(max_retries=2, time_limit=1800000)  # 30 minutes timeout
-def process_pdf(job_id: str, file_path: str, custom_metadata: Optional[Dict[str, Any]] = None):
-    """Process a PDF file in the background."""
+# PDF processing actor - CPU version
+@dramatiq.actor(queue_name="cpu_tasks", max_retries=2, time_limit=1800000)
+def process_pdf_cpu(job_id: str, file_path: str, custom_metadata: Optional[Dict[str, Any]] = None):
+    """Process a PDF file in the background using CPU."""
     try:
         # Update job status to processing
         job_tracker.update_job_status(job_id, JobStatus.PROCESSING)
+        logger.info(f"CPU worker processing PDF: {file_path}")
 
         # Import here to avoid circular imports
         from src.core.document_processor import DocumentProcessor
+        from src.core.pdf_loader import PDFLoader
 
-        # Get vector store
-        vector_store = get_vector_store()
+        # Get vector store with CPU embeddings
+        vector_store = get_vector_store(force_cpu=True)
 
-        # Initialize components with vector store
-        processor = DocumentProcessor(vector_store=vector_store)
+        # Create PDF loader with CPU
+        pdf_loader = PDFLoader(
+            chunk_size=int(os.environ.get("CHUNK_SIZE", "1000")),
+            chunk_overlap=int(os.environ.get("CHUNK_OVERLAP", "200")),
+            device="cpu",
+            use_ocr=os.environ.get("USE_PDF_OCR", "true").lower() == "true",
+            ocr_languages=os.environ.get("OCR_LANGUAGES", "en+ch_doc")
+        )
+
+        # Initialize document processor
+        processor = DocumentProcessor(
+            vector_store=vector_store,
+            pdf_loader=pdf_loader
+        )
 
         # Process the PDF
         document_ids = processor.process_pdf(file_path=file_path, custom_metadata=custom_metadata)
@@ -312,23 +527,26 @@ def process_pdf(job_id: str, file_path: str, custom_metadata: Optional[Dict[str,
         raise
 
 
-# Text processing actor
-@dramatiq.actor(max_retries=2, time_limit=300000)  # 5 minutes timeout
+# Text processing actor - CPU version
+@dramatiq.actor(queue_name="cpu_tasks", max_retries=2, time_limit=300000)
 def process_text(job_id: str, content: str, metadata: Dict[str, Any]):
-    """Process manual text input in the background."""
+    """Process manual text input in the background using CPU."""
     try:
         # Update job status to processing
         job_tracker.update_job_status(job_id, JobStatus.PROCESSING)
+        logger.info(f"CPU worker processing text input")
 
         # Import here to avoid circular imports
         from src.core.document_processor import DocumentProcessor
         from src.models.schema import ManualIngestRequest, DocumentMetadata
 
-        # Get vector store
-        vector_store = get_vector_store()
+        # Get vector store with CPU embeddings
+        vector_store = get_vector_store(force_cpu=True)
 
-        # Initialize components with vector store
-        processor = DocumentProcessor(vector_store=vector_store)
+        # Initialize document processor
+        processor = DocumentProcessor(
+            vector_store=vector_store
+        )
 
         # Create a proper request object
         request = ManualIngestRequest(
@@ -374,55 +592,100 @@ def process_text(job_id: str, content: str, metadata: Dict[str, Any]):
         raise
 
 
-# Batch videos processing actor
-@dramatiq.actor(max_retries=3, time_limit=7200000)  # 2 hour timeout
+# Router function for video processing
+@dramatiq.actor(max_retries=1, time_limit=60000)
+def process_video(job_id: str, url: str, custom_metadata: Optional[Dict[str, Any]] = None):
+    """Route video processing to the GPU worker."""
+    logger.info(f"Routing video processing to GPU worker: {url}")
+
+    # Send to GPU tasks queue
+    process_video_gpu.send(job_id, url, custom_metadata)
+
+    # Update job status to pending in the new queue
+    job_tracker.update_job_status(
+        job_id,
+        JobStatus.PENDING,
+        result=None,
+        error=None
+    )
+
+
+# Router function for PDF processing
+@dramatiq.actor(max_retries=1, time_limit=60000)
+def process_pdf(job_id: str, file_path: str, custom_metadata: Optional[Dict[str, Any]] = None):
+    """Route PDF processing to the CPU worker."""
+    logger.info(f"Routing PDF processing to CPU worker: {file_path}")
+
+    # Send to CPU tasks queue
+    process_pdf_cpu.send(job_id, file_path, custom_metadata)
+
+    # Update job status to pending in the new queue
+    job_tracker.update_job_status(
+        job_id,
+        JobStatus.PENDING,
+        result=None,
+        error=None
+    )
+
+
+# Batch videos processing router
+@dramatiq.actor(max_retries=1, time_limit=60000)
 def batch_process_videos(job_id: str, urls: List[str], custom_metadata: Optional[List[Dict[str, Any]]] = None):
-    """Process multiple videos in batch."""
+    """Process multiple videos, routing each to GPU worker."""
     try:
         # Update job status to processing
         job_tracker.update_job_status(job_id, JobStatus.PROCESSING)
 
-        # Import here to avoid circular imports
-        from src.core.document_processor import DocumentProcessor
+        # Track jobs for each URL
+        sub_job_ids = []
 
-        # Get vector store
-        vector_store = get_vector_store()
+        # Create a job for each URL
+        for i, url in enumerate(urls):
+            # Get metadata for this URL if provided
+            url_metadata = None
+            if custom_metadata and i < len(custom_metadata):
+                url_metadata = custom_metadata[i]
 
-        # Initialize components with vector store
-        processor = DocumentProcessor(vector_store=vector_store)
+            # Create a sub job ID
+            sub_job_id = f"{job_id}-{i}"
+            sub_job_ids.append(sub_job_id)
 
-        # Process the videos
-        results = processor.batch_process_videos(urls=urls, custom_metadata=custom_metadata)
+            # Create job record
+            job_tracker.create_job(
+                job_id=sub_job_id,
+                job_type="video_processing",
+                metadata={
+                    "url": url,
+                    "parent_job_id": job_id,
+                    "custom_metadata": url_metadata
+                }
+            )
 
-        # Update job with success result
+            # Send to GPU worker
+            process_video_gpu.send(sub_job_id, url, url_metadata)
+
+        # Update job with sub job IDs
         job_tracker.update_job_status(
             job_id,
-            JobStatus.COMPLETED,
+            JobStatus.PROCESSING,
             result={
-                "message": f"Successfully processed {len(urls)} videos",
-                "results": results,
+                "message": f"Started processing {len(urls)} videos",
+                "sub_job_ids": sub_job_ids
             }
         )
 
-        return results
+        # Return sub job IDs
+        return sub_job_ids
 
-    except TimeLimitExceeded:
-        job_tracker.update_job_status(
-            job_id,
-            JobStatus.TIMEOUT,
-            error="Processing timeout exceeded"
-        )
     except Exception as e:
         import traceback
-        error_detail = f"Error processing batch videos: {str(e)}\n{traceback.format_exc()}"
+        error_detail = f"Error batch processing videos: {str(e)}\n{traceback.format_exc()}"
         logger.error(error_detail)
 
-        # Update job with error
         job_tracker.update_job_status(
             job_id,
             JobStatus.FAILED,
             error=error_detail
         )
 
-        # Re-raise for dramatiq retry mechanism
         raise

@@ -8,6 +8,7 @@ services:
       - "8000:8000"
     runtime: nvidia
     environment:
+      - WORKER_TYPE=api
       - QDRANT_HOST=qdrant
       - QDRANT_PORT=6333
       - DEVICE=cuda
@@ -28,37 +29,25 @@ services:
       - ./models:/app/models
     env_file:
       - .env
-    ulimits:
-      memlock: -1
-      stack: 67108864
-    shm_size: 8gb
     depends_on:
       - qdrant
       - redis
 
-  # Dramatiq Workers
-  worker:
+  # GPU Worker - prioritizes inference over other GPU tasks
+  worker-gpu:
     build:
       context: .
       dockerfile: Dockerfile.api
     runtime: nvidia
-    command: python -m dramatiq src.core.background_tasks --processes 1 --threads 1
+    command: python -m dramatiq src.core.background_tasks --processes 1 --threads 1 --queues inference_tasks,gpu_tasks
     environment:
+      - WORKER_TYPE=gpu
       - QDRANT_HOST=qdrant
       - QDRANT_PORT=6333
       - DEVICE=cuda
       - USE_FP16=true
       - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
-      - WHISPER_MODEL_SIZE=small
-      - USE_YOUTUBE_CAPTIONS=false
-      - USE_WHISPER_AS_FALLBACK=false
-      - FORCE_WHISPER=true
-      - USE_PDF_OCR=true
-      - LOG_LEVEL=INFO
-      - CONTAINER_RUNTIME=docker
-      - NVIDIA_VISIBLE_DEVICES=all
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
+      # Other environment variables
     volumes:
       - ./data:/app/data
       - ./models:/app/models
@@ -72,8 +61,31 @@ services:
       - qdrant
       - redis
     deploy:
-      replicas: 2  # Number of worker instances to run
-    restart: unless-stopped
+      replicas: 1  # Just one GPU worker
+
+  # CPU Worker - handles PDF processing and text operations
+  worker-cpu:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    command: python -m dramatiq src.core.background_tasks --processes 4 --threads 1 --queues cpu_tasks
+    environment:
+      - WORKER_TYPE=cpu
+      - QDRANT_HOST=qdrant
+      - QDRANT_PORT=6333
+      - DEVICE=cpu
+      - CUDA_VISIBLE_DEVICES=""  # Hide GPU
+      # Other environment variables
+    volumes:
+      - ./data:/app/data
+      - ./models:/app/models
+    env_file:
+      - .env
+    depends_on:
+      - qdrant
+      - redis
+    deploy:
+      replicas: 1  # Scale this for more parallel CPU processing
 
   # Streamlit UI
   ui:
