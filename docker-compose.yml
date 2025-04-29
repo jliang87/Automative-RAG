@@ -93,7 +93,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.api
-    command: python -m dramatiq src.core.background_tasks --processes 4 --threads 1 --queues cpu_tasks
+    command: python -m dramatiq src.core.background_tasks --processes 1 --threads 1 --queues cpu_tasks
     environment:
       - WORKER_TYPE=cpu
       - QDRANT_HOST=qdrant
@@ -120,7 +120,7 @@ services:
       - qdrant
       - redis
     deploy:
-      replicas: 1  # Scale this for more parallel CPU processing
+      replicas: 2  # Scale this for more parallel CPU processing
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "bash", "-c", "ps aux | grep dramatiq | grep -v grep"]

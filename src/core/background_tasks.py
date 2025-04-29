@@ -20,7 +20,6 @@ from dramatiq.middleware.age_limit import AgeLimit
 from dramatiq.middleware.retries import Retries
 from dramatiq.rate_limits import ConcurrentRateLimiter
 from dramatiq.rate_limits.backends import RedisBackend
-from dramatiq.rate_limits import RateLimiter
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -48,14 +47,18 @@ if redis_password:
 # Create broker with middleware
 redis_broker = RedisBroker(**broker_kwargs)
 dramatiq.set_broker(redis_broker)
+
 # Rate limiter backend
 rate_limiter_backend = RedisBackend(
     client=redis_broker.client
 )
+
+# Add middleware
 redis_broker.add_middleware(Callbacks())
 redis_broker.add_middleware(AgeLimit())
 redis_broker.add_middleware(Retries(max_retries=3))
-# Limit to 1 concurrent GPU task at a time
+
+# Create GPU rate limiter - limits to 1 concurrent GPU task
 gpu_limiter = ConcurrentRateLimiter(
     backend=rate_limiter_backend,
     key="gpu_task_limiter",
@@ -252,9 +255,8 @@ def get_vector_store(force_cpu=False):
         )
 
 
-# Improved GPU resource management definitions for background_tasks.py
+# Improved GPU resource management using rate limiters
 
-# Use rate limiter for GPU tasks
 @dramatiq.actor(
     queue_name="inference_tasks",
     max_retries=3,  # Increase retries
@@ -265,116 +267,118 @@ def get_vector_store(force_cpu=False):
 def perform_llm_inference(job_id: str, query: str, documents: List[Dict], metadata_filter: Optional[Dict] = None):
     """Perform LLM inference using GPU with high priority and resource management."""
     try:
-        # Try to acquire GPU resources
-        logger.info(f"Acquiring GPU resources for job {job_id}")
+        # Use the GPU rate limiter to ensure only one GPU task runs at a time
+        with gpu_limiter.acquire():
+            # Try to acquire GPU resources
+            logger.info(f"Acquiring GPU resources for job {job_id}")
 
-        # Update job status to processing
-        job_tracker.update_job_status(job_id, JobStatus.PROCESSING)
-        logger.info(f"GPU worker performing inference for query: {query}")
+            # Update job status to processing
+            job_tracker.update_job_status(job_id, JobStatus.PROCESSING)
+            logger.info(f"GPU worker performing inference for query: {query}")
 
-        # Import here to avoid circular imports
-        from src.core.llm import LocalLLM
-        from src.config.settings import settings
-        from langchain_core.documents import Document
-        import torch
+            # Import here to avoid circular imports
+            from src.core.llm import LocalLLM
+            from src.config.settings import settings
+            from langchain_core.documents import Document
+            import torch
 
-        # Try to clean up CUDA memory
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-            initial_memory = torch.cuda.memory_allocated() / (1024 ** 3)
-            logger.info(f"Initial GPU memory allocated: {initial_memory:.2f} GB")
+            # Try to clean up CUDA memory
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                initial_memory = torch.cuda.memory_allocated() / (1024 ** 3)
+                logger.info(f"Initial GPU memory allocated: {initial_memory:.2f} GB")
 
-        # Convert document dictionaries back to Document objects
-        doc_objects = []
-        for doc_dict in documents:
-            doc = Document(
-                page_content=doc_dict["content"],
-                metadata=doc_dict.get("metadata", {})
+            # Convert document dictionaries back to Document objects
+            doc_objects = []
+            for doc_dict in documents:
+                doc = Document(
+                    page_content=doc_dict["content"],
+                    metadata=doc_dict.get("metadata", {})
+                )
+                score = doc_dict.get("relevance_score", 0)
+                doc_objects.append((doc, score))
+
+            # Initialize LLM with memory efficient settings
+            llm = LocalLLM(
+                model_name=settings.default_llm_model,
+                device="cuda",
+                temperature=settings.llm_temperature,
+                max_tokens=settings.llm_max_tokens,
+                use_4bit=settings.llm_use_4bit,
+                use_8bit=settings.llm_use_8bit,
+                torch_dtype=torch.float16 if settings.use_fp16 and settings.device.startswith("cuda") else None
             )
-            score = doc_dict.get("relevance_score", 0)
-            doc_objects.append((doc, score))
 
-        # Initialize LLM with memory efficient settings
-        llm = LocalLLM(
-            model_name=settings.default_llm_model,
-            device="cuda",
-            temperature=settings.llm_temperature,
-            max_tokens=settings.llm_max_tokens,
-            use_4bit=settings.llm_use_4bit,
-            use_8bit=settings.llm_use_8bit,
-            torch_dtype=torch.float16 if settings.use_fp16 and settings.device.startswith("cuda") else None
-        )
+            # Log memory usage after loading model
+            if torch.cuda.is_available():
+                model_memory = torch.cuda.memory_allocated() / (1024 ** 3)
+                logger.info(f"GPU memory after loading model: {model_memory:.2f} GB")
+                logger.info(f"Model memory delta: {model_memory - initial_memory:.2f} GB")
 
-        # Log memory usage after loading model
-        if torch.cuda.is_available():
-            model_memory = torch.cuda.memory_allocated() / (1024 ** 3)
-            logger.info(f"GPU memory after loading model: {model_memory:.2f} GB")
-            logger.info(f"Model memory delta: {model_memory - initial_memory:.2f} GB")
+            start_time = time.time()
 
-        start_time = time.time()
+            # Perform inference
+            answer = llm.answer_query(
+                query=query,
+                documents=doc_objects,
+                metadata_filter=metadata_filter
+            )
 
-        # Perform inference
-        answer = llm.answer_query(
-            query=query,
-            documents=doc_objects,
-            metadata_filter=metadata_filter
-        )
+            inference_time = time.time() - start_time
+            logger.info(f"Inference completed in {inference_time:.2f}s")
 
-        inference_time = time.time() - start_time
-        logger.info(f"Inference completed in {inference_time:.2f}s")
+            # Extract source information
+            sources = []
+            for doc, score in doc_objects:
+                source = {
+                    "id": doc.metadata.get("id", ""),
+                    "title": doc.metadata.get("title", "Unknown"),
+                    "source_type": doc.metadata.get("source", "unknown"),
+                    "url": doc.metadata.get("url"),
+                    "relevance_score": score,
+                }
+                sources.append(source)
 
-        # Extract source information
-        sources = []
-        for doc, score in doc_objects:
-            source = {
-                "id": doc.metadata.get("id", ""),
-                "title": doc.metadata.get("title", "Unknown"),
-                "source_type": doc.metadata.get("source", "unknown"),
-                "url": doc.metadata.get("url"),
-                "relevance_score": score,
-            }
-            sources.append(source)
+            # Prepare formatted documents for response
+            formatted_documents = []
+            for doc, score in doc_objects:
+                formatted_doc = {
+                    "id": doc.metadata.get("id", ""),
+                    "content": doc.page_content,
+                    "metadata": doc.metadata,
+                    "relevance_score": score,
+                }
+                formatted_documents.append(formatted_doc)
 
-        # Prepare formatted documents for response
-        formatted_documents = []
-        for doc, score in doc_objects:
-            formatted_doc = {
-                "id": doc.metadata.get("id", ""),
-                "content": doc.page_content,
-                "metadata": doc.metadata,
-                "relevance_score": score,
-            }
-            formatted_documents.append(formatted_doc)
+            # Clean up GPU memory after inference
+            if torch.cuda.is_available():
+                # Explicitly delete model to free memory
+                del llm.model
+                del llm.pipe
+                del llm
+                torch.cuda.empty_cache()
+                final_memory = torch.cuda.memory_allocated() / (1024 ** 3)
+                logger.info(f"Final GPU memory after cleanup: {final_memory:.2f} GB")
 
-        # Clean up GPU memory after inference
-        if torch.cuda.is_available():
-            # Explicitly delete model to free memory
-            del llm.model
-            del llm.pipe
-            del llm
-            torch.cuda.empty_cache()
-            final_memory = torch.cuda.memory_allocated() / (1024 ** 3)
-            logger.info(f"Final GPU memory after cleanup: {final_memory:.2f} GB")
+            # Update job with success result
+            job_tracker.update_job_status(
+                job_id,
+                JobStatus.COMPLETED,
+                result={
+                    "query": query,
+                    "answer": answer,
+                    "documents": formatted_documents,
+                    "metadata_filters_used": metadata_filter,
+                    "execution_time": inference_time,
+                    "sources": sources,
+                }
+            )
 
-        # Update job with success result
-        job_tracker.update_job_status(
-            job_id,
-            JobStatus.COMPLETED,
-            result={
-                "query": query,
+            return {
                 "answer": answer,
                 "documents": formatted_documents,
-                "metadata_filters_used": metadata_filter,
-                "execution_time": inference_time,
-                "sources": sources,
+                "execution_time": inference_time
             }
-        )
-
-        return {
-            "answer": answer,
-            "documents": formatted_documents,
-            "execution_time": inference_time
-        }
 
     except TimeLimitExceeded:
         logger.error(f"Time limit exceeded for job {job_id}")
@@ -410,50 +414,52 @@ def perform_llm_inference(job_id: str, query: str, documents: List[Dict], metada
 def process_video_gpu(job_id: str, url: str, custom_metadata: Optional[Dict[str, Any]] = None):
     """Process a video using GPU for transcription and embedding."""
     try:
-        # Update job status to processing
-        job_tracker.update_job_status(job_id, JobStatus.PROCESSING)
-        logger.info(f"GPU worker processing video: {url}")
+        # Use the GPU rate limiter to ensure only one GPU task runs at a time
+        with gpu_limiter.acquire():
+            # Update job status to processing
+            job_tracker.update_job_status(job_id, JobStatus.PROCESSING)
+            logger.info(f"GPU worker processing video: {url}")
 
-        # Import here to avoid circular imports
-        from src.core.document_processor import DocumentProcessor
-        from src.core.video_transcriber import VideoTranscriber
-        import torch
+            # Import here to avoid circular imports
+            from src.core.document_processor import DocumentProcessor
+            from src.core.video_transcriber import VideoTranscriber
+            import torch
 
-        # Get vector store with GPU embeddings
-        vector_store = get_vector_store(force_cpu=False)
+            # Get vector store with GPU embeddings
+            vector_store = get_vector_store(force_cpu=False)
 
-        # Create transcriber with GPU
-        transcriber = VideoTranscriber(
-            whisper_model_size=os.environ.get("WHISPER_MODEL_SIZE", "medium"),
-            device="cuda",
-            num_workers=1  # Just use 1 worker thread to avoid oversubscription
-        )
+            # Create transcriber with GPU
+            transcriber = VideoTranscriber(
+                whisper_model_size=os.environ.get("WHISPER_MODEL_SIZE", "medium"),
+                device="cuda",
+                num_workers=1  # Just use 1 worker thread to avoid oversubscription
+            )
 
-        # Initialize document processor
-        processor = DocumentProcessor(
-            vector_store=vector_store,
-            video_transcriber=transcriber
-        )
+            # Initialize document processor
+            processor = DocumentProcessor(
+                vector_store=vector_store,
+                video_transcriber=transcriber
+            )
 
-        # Process the video - this uses GPU for transcription and embedding
-        document_ids = processor.process_video(url=url, custom_metadata=custom_metadata)
+            # Process the video - this uses GPU for transcription and embedding
+            document_ids = processor.process_video(url=url, custom_metadata=custom_metadata)
 
-        # Clean up GPU memory
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
+            # Clean up GPU memory
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
-        # Update job with success result
-        job_tracker.update_job_status(
-            job_id,
-            JobStatus.COMPLETED,
-            result={
-                "message": f"Successfully processed video using GPU: {url}",
-                "document_count": len(document_ids),
-                "document_ids": document_ids,
-            }
-        )
+            # Update job with success result
+            job_tracker.update_job_status(
+                job_id,
+                JobStatus.COMPLETED,
+                result={
+                    "message": f"Successfully processed video using GPU: {url}",
+                    "document_count": len(document_ids),
+                    "document_ids": document_ids,
+                }
+            )
 
-        return document_ids
+            return document_ids
 
     except TimeLimitExceeded:
         job_tracker.update_job_status(
