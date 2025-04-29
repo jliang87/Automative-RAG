@@ -20,6 +20,7 @@ from dramatiq.middleware.age_limit import AgeLimit
 from dramatiq.middleware.retries import Retries
 from dramatiq.rate_limits import ConcurrentRateLimiter
 from dramatiq.rate_limits.backends import RedisBackend
+from dramatiq.rate_limits import RateLimiter
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -46,19 +47,20 @@ if redis_password:
 
 # Create broker with middleware
 redis_broker = RedisBroker(**broker_kwargs)
-redis_broker.add_middleware(Callbacks())
-redis_broker.add_middleware(AgeLimit())
-redis_broker.add_middleware(Retries(max_retries=3))
 dramatiq.set_broker(redis_broker)
-
-# Create queue references with priority
-inference_queue = dramatiq.QueueLink("inference_tasks")  # High priority GPU tasks
-gpu_tasks_queue = dramatiq.QueueLink("gpu_tasks")        # Normal priority GPU tasks
-cpu_tasks_queue = dramatiq.QueueLink("cpu_tasks")        # CPU tasks
-
 # Rate limiter backend
 rate_limiter_backend = RedisBackend(
     client=redis_broker.client
+)
+redis_broker.add_middleware(Callbacks())
+redis_broker.add_middleware(AgeLimit())
+redis_broker.add_middleware(Retries(max_retries=3))
+# Limit to 1 concurrent GPU task at a time
+gpu_limiter = ConcurrentRateLimiter(
+    backend=rate_limiter_backend,
+    key="gpu_task_limiter",
+    limit=1,
+    ttl=60000  # 1 minute
 )
 
 # Define job status constants
@@ -252,21 +254,11 @@ def get_vector_store(force_cpu=False):
 
 # Improved GPU resource management definitions for background_tasks.py
 
-# Define GPU concurrency limiter
-gpu_limiter = ConcurrentRateLimiter(
-    backend=rate_limiter_backend,
-    key="gpu_inference_concurrency",
-    limit=1,  # Set to # of GPUs
-    ttl=60_000  # 1 minute (in ms)
-)
-
-
 # Use rate limiter for GPU tasks
 @dramatiq.actor(
     queue_name="inference_tasks",
     max_retries=3,  # Increase retries
     time_limit=300000,
-    rate_limiter=gpu_limiter,
     min_backoff=10000,  # 10 seconds minimum backoff
     max_backoff=300000  # 5 minutes maximum backoff
 )
