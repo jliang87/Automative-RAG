@@ -623,16 +623,16 @@ def process_video(job_id: str, url: str, custom_metadata: Optional[Dict[str, Any
     """Route video processing to the GPU worker."""
     logger.info(f"Routing video processing to GPU worker: {url}")
 
-    # Send to GPU tasks queue
-    process_video_gpu.send(job_id, url, custom_metadata)
-
-    # Update job status to pending in the new queue
+    # Update job status to processing before sending to GPU queue
     job_tracker.update_job_status(
         job_id,
-        JobStatus.PENDING,
+        JobStatus.PROCESSING,
         result=None,
         error=None
     )
+
+    # Then send to GPU tasks queue
+    process_video_gpu.send(job_id, url, custom_metadata)
 
 
 # Router function for PDF processing

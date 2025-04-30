@@ -360,9 +360,18 @@ class QdrantStore:
             # Add some additional useful info
             stats["name"] = self.collection_name
 
-            # Check index status
-            index_info = self.client.get_collection_indices(self.collection_name)
-            stats["indices"] = [idx.dict() for idx in index_info]
+            # Check index status - use correct API method
+            # The proper method is get_collection_info instead of get_collection_indices
+            try:
+                # In newer versions of Qdrant client, the index information is
+                # already included in the collection_info
+                if hasattr(collection_info, "payload_schema"):
+                    stats["payload_indices"] = collection_info.payload_schema
+                else:
+                    # Fallback for older versions or if not available
+                    stats["payload_indices"] = "Information not available"
+            except Exception as e:
+                stats["indices_error"] = str(e)
 
             logger.info(f"Retrieved stats for collection '{self.collection_name}'")
             return stats
