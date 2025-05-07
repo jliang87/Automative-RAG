@@ -18,7 +18,7 @@ from src.core.document_processor import DocumentProcessor
 from src.core.vectorstore import QdrantStore
 from src.core.pdf_loader import PDFLoader
 from src.models.schema import IngestResponse, ManualIngestRequest, BackgroundJobResponse
-from src.core.background_tasks import job_tracker, process_video, process_pdf, batch_process_videos
+from src.core.background_tasks import job_tracker, batch_process_videos, process_video_gpu, process_pdf_cpu
 
 router = APIRouter()
 
@@ -76,7 +76,7 @@ async def ingest_video(
         )
 
         # Start the background job
-        process_video.send(job_id, url_str, video_request.metadata)
+        process_video_gpu.send(job_id, url_str, video_request.metadata)
 
         # Return the job ID immediately
         return BackgroundJobResponse(
@@ -100,18 +100,10 @@ async def ingest_video(
 @router.post("/batch-videos", response_model=BackgroundJobResponse)
 async def ingest_batch_videos(
         batch_request: BatchVideoIngestRequest,
-        processor: DocumentProcessor = Depends(get_document_processor),
 ) -> BackgroundJobResponse:
     """
     Ingest multiple videos in batch with GPU acceleration.
     All processing happens asynchronously in the background.
-
-    Args:
-        batch_request: Batch video request with URLs and optional metadata
-        processor: Document processor dependency
-
-    Returns:
-        Background job response with job ID
     """
     try:
         # Convert URLs to strings
@@ -130,15 +122,19 @@ async def ingest_batch_videos(
             }
         )
 
-        # Start the background job
-        batch_process_videos.send(job_id, urls, batch_request.metadata)
+        # Call the batch processing function directly
+        # Import the regular function (not an actor)
+        from src.core.background_tasks import batch_process_videos
+
+        # Call it directly - this will internally queue each video to the GPU worker
+        batch_process_videos(job_id, urls, batch_request.metadata)
 
         # Return the job ID immediately
         return BackgroundJobResponse(
             message=f"Processing {len(urls)} videos in the background",
             job_id=job_id,
             job_type="batch_video_processing",
-            status="pending",
+            status="processing",
         )
     except Exception as e:
         # Log the full traceback
@@ -197,7 +193,7 @@ async def ingest_pdf(
         )
 
         # Start the background job
-        process_pdf.send(job_id, file_path, custom_metadata)
+        process_pdf_cpu().send(job_id, file_path, custom_metadata)
 
         # Return the job ID immediately
         return BackgroundJobResponse(

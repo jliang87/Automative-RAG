@@ -652,47 +652,6 @@ def process_text(job_id: str, content: str, metadata: Dict[str, Any]):
         raise
 
 
-# Router function for video processing
-@dramatiq.actor(max_retries=1, time_limit=60000)
-def process_video(job_id: str, url: str, custom_metadata: Optional[Dict[str, Any]] = None):
-    """Route video processing to the GPU worker."""
-    logger.info(f"Routing video processing to GPU worker: {url}")
-
-    # Send to GPU tasks queue
-    process_video_gpu.send_with_options(
-        args=(job_id, url, custom_metadata),
-        options={"queue_name": "gpu_tasks"}
-    )
-
-    # Update job status to pending in the new queue
-    job_tracker.update_job_status(
-        job_id,
-        JobStatus.PENDING,
-        result=None,
-        error=None
-    )
-
-
-# Router function for PDF processing
-@dramatiq.actor(max_retries=1, time_limit=60000)
-def process_pdf(job_id: str, file_path: str, custom_metadata: Optional[Dict[str, Any]] = None):
-    """Route PDF processing to the CPU worker."""
-    logger.info(f"Routing PDF processing to CPU worker: {file_path}")
-
-    # Send to CPU tasks queue
-    process_pdf_cpu.send(job_id, file_path, custom_metadata)
-
-    # Update job status to pending in the new queue
-    job_tracker.update_job_status(
-        job_id,
-        JobStatus.PENDING,
-        result=None,
-        error=None
-    )
-
-
-# Batch videos processing router
-@dramatiq.actor(max_retries=1, time_limit=60000)
 def batch_process_videos(job_id: str, urls: List[str], custom_metadata: Optional[List[Dict[str, Any]]] = None):
     """Process multiple videos, routing each to GPU worker."""
     try:
@@ -701,8 +660,20 @@ def batch_process_videos(job_id: str, urls: List[str], custom_metadata: Optional
 
         # Track jobs for each URL
         sub_job_ids = []
+        total_urls = len(urls)
 
-        # Create a job for each URL
+        # Update parent job with initial status
+        job_tracker.update_job_status(
+            job_id,
+            JobStatus.PROCESSING,
+            result={
+                "message": f"Started processing {total_urls} videos",
+                "sub_job_ids": [],
+                "progress": {"completed": 0, "total": total_urls}
+            }
+        )
+
+        # Process each URL
         for i, url in enumerate(urls):
             # Get metadata for this URL if provided
             url_metadata = None
@@ -720,27 +691,37 @@ def batch_process_videos(job_id: str, urls: List[str], custom_metadata: Optional
                 metadata={
                     "url": url,
                     "parent_job_id": job_id,
-                    "custom_metadata": url_metadata
+                    "custom_metadata": url_metadata,
+                    "index": i,
+                    "total": total_urls
                 }
             )
 
-            # Send to GPU worker
-            process_video_gpu.send_with_options(
-                args=(job_id, url, custom_metadata),
-                options={"queue_name": "gpu_tasks"}
+            # Send directly to GPU worker
+            process_video_gpu.send(sub_job_id, url, url_metadata)
+            logger.info(f"Queued video {i + 1}/{total_urls} for processing: {url}")
+
+            # Update progress in parent job
+            job_tracker.update_job_status(
+                job_id,
+                JobStatus.PROCESSING,
+                result={
+                    "message": f"Queued {i + 1}/{len(urls)} videos for processing",
+                    "sub_job_ids": sub_job_ids,
+                    "progress": {"queued": i + 1, "total": total_urls}
+                }
             )
 
-        # Update job with sub job IDs
+        # Final update
         job_tracker.update_job_status(
             job_id,
-            JobStatus.PROCESSING,
+            JobStatus.COMPLETED,
             result={
-                "message": f"Started processing {len(urls)} videos",
+                "message": f"Successfully queued {total_urls} videos for processing",
                 "sub_job_ids": sub_job_ids
             }
         )
 
-        # Return sub job IDs
         return sub_job_ids
 
     except Exception as e:
