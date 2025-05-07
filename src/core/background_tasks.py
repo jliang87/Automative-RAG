@@ -63,7 +63,7 @@ gpu_limiter = ConcurrentRateLimiter(
     backend=rate_limiter_backend,
     key="gpu_task_limiter",
     limit=1,
-    ttl=60000  # 1 minute
+    ttl=600000  # 10 minute
 )
 
 # Define job status constants
@@ -410,63 +410,93 @@ def perform_llm_inference(job_id: str, query: str, documents: List[Dict], metada
 
 
 # Video processing actor - GPU version
-@dramatiq.actor(queue_name="gpu_tasks", max_retries=3, time_limit=3600000)
+@dramatiq.actor(queue_name="gpu_tasks", max_retries=5, time_limit=3600000, min_backoff=60000, max_backoff=300000)
 def process_video_gpu(job_id: str, url: str, custom_metadata: Optional[Dict[str, Any]] = None):
-    """Process a video using GPU for transcription and embedding."""
+    """Process a video using GPU for transcription and embedding with better error handling."""
     try:
-        # Use the GPU rate limiter to ensure only one GPU task runs at a time
-        with gpu_limiter.acquire():
-            # Update job status to processing
-            job_tracker.update_job_status(job_id, JobStatus.PROCESSING)
-            logger.info(f"GPU worker processing video: {url}")
+        # Try to acquire the rate limiter
+        # Use a non-blocking check first to avoid deadlocks
+        logger.info(f"Attempting to acquire GPU limiter for job {job_id}")
 
-            # Import here to avoid circular imports
-            from src.core.document_processor import DocumentProcessor
-            from src.core.video_transcriber import VideoTranscriber
-            import torch
-
-            # Get vector store with GPU embeddings
-            vector_store = get_vector_store(force_cpu=False)
-
-            # Create transcriber with GPU
-            transcriber = VideoTranscriber(
-                whisper_model_size=os.environ.get("WHISPER_MODEL_SIZE", "medium"),
-                device="cuda",
-                num_workers=1  # Just use 1 worker thread to avoid oversubscription
-            )
-
-            # Initialize document processor
-            processor = DocumentProcessor(
-                vector_store=vector_store,
-                video_transcriber=transcriber
-            )
-
-            # Process the video - this uses GPU for transcription and embedding
-            document_ids = processor.process_video(url=url, custom_metadata=custom_metadata)
-
-            # Clean up GPU memory
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-
-            # Update job with success result
+        try:
+            # Update job status to reflect waiting for GPU
             job_tracker.update_job_status(
                 job_id,
-                JobStatus.COMPLETED,
-                result={
-                    "message": f"Successfully processed video using GPU: {url}",
-                    "document_count": len(document_ids),
-                    "document_ids": document_ids,
-                }
+                JobStatus.PROCESSING,
+                result={"message": "Waiting for GPU resources to become available"}
             )
 
-            return document_ids
+            # Attempt to acquire the limiter
+            with gpu_limiter.acquire():
+                # Update job status to processing
+                job_tracker.update_job_status(
+                    job_id,
+                    JobStatus.PROCESSING,
+                    result={"message": f"Processing video with GPU: {url}"}
+                )
+                logger.info(f"GPU resources acquired for job {job_id}")
+
+                # Import here to avoid circular imports
+                from src.core.document_processor import DocumentProcessor
+                from src.core.video_transcriber import VideoTranscriber
+                import torch
+
+                # Get vector store with GPU embeddings
+                vector_store = get_vector_store(force_cpu=False)
+
+                # Create transcriber with GPU
+                transcriber = VideoTranscriber(
+                    whisper_model_size=os.environ.get("WHISPER_MODEL_SIZE", "medium"),
+                    device="cuda",
+                    num_workers=1  # Just use 1 worker thread to avoid oversubscription
+                )
+
+                # Initialize document processor
+                processor = DocumentProcessor(
+                    vector_store=vector_store,
+                    video_transcriber=transcriber
+                )
+
+                # Process the video - this uses GPU for transcription and embedding
+                document_ids = processor.process_video(url=url, custom_metadata=custom_metadata)
+
+                # Clean up GPU memory
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+
+                # Update job with success result
+                job_tracker.update_job_status(
+                    job_id,
+                    JobStatus.COMPLETED,
+                    result={
+                        "message": f"Successfully processed video using GPU: {url}",
+                        "document_count": len(document_ids),
+                        "document_ids": document_ids,
+                    }
+                )
+
+                logger.info(f"Released GPU resources for job {job_id}")
+                return document_ids
+
+        except dramatiq.errors.RateLimitExceeded:
+            # This will trigger a retry with backoff thanks to the actor decorator settings
+            logger.warning(f"Rate limit exceeded for job {job_id}, will retry with backoff")
+            # Update job status to indicate it's pending retry
+            job_tracker.update_job_status(
+                job_id,
+                JobStatus.PENDING,
+                result={"message": "Waiting in queue for GPU resources, will retry automatically"}
+            )
+            raise  # Raise to trigger dramatiq's built-in retry
 
     except TimeLimitExceeded:
+        logger.error(f"Time limit exceeded for job {job_id}")
         job_tracker.update_job_status(
             job_id,
             JobStatus.TIMEOUT,
             error="Processing timeout exceeded"
         )
+        raise
     except Exception as e:
         import traceback
         error_detail = f"Error processing video with GPU: {str(e)}\n{traceback.format_exc()}"
@@ -478,6 +508,11 @@ def process_video_gpu(job_id: str, url: str, custom_metadata: Optional[Dict[str,
             JobStatus.FAILED,
             error=error_detail
         )
+
+        # Clean up GPU memory on error
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            logger.info(f"Cleaned up GPU memory after error")
 
         # Re-raise for dramatiq retry mechanism
         raise
@@ -623,16 +658,19 @@ def process_video(job_id: str, url: str, custom_metadata: Optional[Dict[str, Any
     """Route video processing to the GPU worker."""
     logger.info(f"Routing video processing to GPU worker: {url}")
 
-    # Update job status to processing before sending to GPU queue
+    # Send to GPU tasks queue
+    process_video_gpu.send_with_options(
+        args=(job_id, url, custom_metadata),
+        options={"queue_name": "gpu_tasks"}
+    )
+
+    # Update job status to pending in the new queue
     job_tracker.update_job_status(
         job_id,
-        JobStatus.PROCESSING,
+        JobStatus.PENDING,
         result=None,
         error=None
     )
-
-    # Then send to GPU tasks queue
-    process_video_gpu.send(job_id, url, custom_metadata)
 
 
 # Router function for PDF processing
@@ -687,7 +725,10 @@ def batch_process_videos(job_id: str, urls: List[str], custom_metadata: Optional
             )
 
             # Send to GPU worker
-            process_video_gpu.send(sub_job_id, url, url_metadata)
+            process_video_gpu.send_with_options(
+                args=(job_id, url, custom_metadata),
+                options={"queue_name": "gpu_tasks"}
+            )
 
         # Update job with sub job IDs
         job_tracker.update_job_status(
