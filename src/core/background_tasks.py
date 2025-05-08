@@ -1,16 +1,12 @@
-"""
-Background task processing system using Dramatiq and Redis.
-
-This module provides the functionality to run resource-intensive tasks like
-video transcription and LLM inference in the background, with dedicated
-worker types for GPU and CPU processing.
-"""
-
 import os
 import json
 import logging
 import time
 from typing import Dict, List, Optional, Union, Any
+import torch
+from sentence_transformers import SentenceTransformer
+from src.config.settings import settings
+from langchain_huggingface import HuggingFaceEmbeddings
 
 import dramatiq
 from dramatiq.brokers.redis import RedisBroker
@@ -20,6 +16,33 @@ from dramatiq.middleware.age_limit import AgeLimit
 from dramatiq.middleware.retries import Retries
 from dramatiq.rate_limits import ConcurrentRateLimiter
 from dramatiq.rate_limits.backends import RedisBackend
+# Add these imports for Results middleware
+from dramatiq.results import Results
+from dramatiq.results.backends.redis import RedisBackend as ResultsRedisBackend
+
+
+# Create a worker middleware to run the preload function
+class WorkerSetupMiddleware:
+    """Middleware to run setup code when worker processes boot."""
+
+    def before_worker_boot(self, broker, worker):
+        """Run setup code before the worker boots."""
+        logger.info(f"Initializing worker {worker.worker_id} of type {worker_type}")
+
+        if worker_type == "gpu":
+            # Only preload models on GPU workers
+            logger.info("Preloading models for GPU worker")
+            preload_embedding_model()
+
+            # Log GPU memory statistics after preloading
+            if torch.cuda.is_available():
+                for i in range(torch.cuda.device_count()):
+                    device_name = torch.cuda.get_device_name(i)
+                    allocated = torch.cuda.memory_allocated(i) / (1024 ** 3)
+                    reserved = torch.cuda.memory_reserved(i) / (1024 ** 3)
+                    logger.info(
+                        f"GPU {i} ({device_name}) after worker init: Allocated: {allocated:.2f} GB, Reserved: {reserved:.2f} GB")
+
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -46,17 +69,31 @@ if redis_password:
 
 # Create broker with middleware
 redis_broker = RedisBroker(**broker_kwargs)
-dramatiq.set_broker(redis_broker)
 
 # Rate limiter backend
 rate_limiter_backend = RedisBackend(
     client=redis_broker.client
 )
 
+# Create Results backend using the same Redis client
+results_backend = ResultsRedisBackend(
+    client=redis_broker.client,
+    prefix="dramatiq:results",
+    # Set a reasonable ttl for results (1 hour)
+    ttl=3600000
+)
+
 # Add middleware
 redis_broker.add_middleware(Callbacks())
 redis_broker.add_middleware(AgeLimit())
 redis_broker.add_middleware(Retries(max_retries=3))
+# Add Results middleware
+redis_broker.add_middleware(Results(backend=results_backend))
+# Add the middleware to the broker
+worker_setup = WorkerSetupMiddleware()
+redis_broker.add_middleware(worker_setup)
+
+dramatiq.set_broker(redis_broker)
 
 # Create GPU rate limiter - limits to 1 concurrent GPU task
 gpu_limiter = ConcurrentRateLimiter(
@@ -134,6 +171,16 @@ class JobTracker:
         self.redis.hset(self.job_key, job_id, json.dumps(job_data))
         logger.info(f"Updated job {job_id} status to {status}")
 
+    # Add a method to check if a job is already completed
+    def is_job_completed(self, job_id: str) -> bool:
+        """Check if a job has already been completed."""
+        job_data_json = self.redis.hget(self.job_key, job_id)
+        if not job_data_json:
+            return False
+
+        job_data = json.loads(job_data_json)
+        return job_data.get("status") == JobStatus.COMPLETED
+
     def get_job(self, job_id: str) -> Optional[Dict[str, Any]]:
         """Get job information by ID."""
         job_data_json = self.redis.hget(self.job_key, job_id)
@@ -206,56 +253,121 @@ class JobTracker:
 job_tracker = JobTracker()
 
 
-# Centralized function to get vector store for background tasks
-def get_vector_store(force_cpu=False):
+def check_gpu_health():
     """
-    Get a vector store instance for background tasks.
-
-    Args:
-        force_cpu: Whether to force CPU usage for embeddings
+    Perform proactive GPU health check with adaptive memory threshold.
+    Returns tuple of (is_healthy, status_message)
     """
-    from src.core.vectorstore import QdrantStore
-    from src.config.settings import settings
+    try:
+        import torch
 
-    # Initialize qdrant client
-    from qdrant_client import QdrantClient
-    qdrant_client = QdrantClient(
-        host=settings.qdrant_host,
-        port=settings.qdrant_port,
-    )
+        if not torch.cuda.is_available():
+            return False, "CUDA not available"
 
-    if force_cpu or worker_type == "cpu":
-        # Create a custom embedding function that uses CPU
-        from langchain_huggingface import HuggingFaceEmbeddings
+        # Check if we can create and manipulate a simple tensor
         try:
-            # Try to load the embedding model explicitly on CPU
-            embedding_function = HuggingFaceEmbeddings(
-                model_name=settings.embedding_model_full_path,
-                model_kwargs={"device": "cpu"},  # Force CPU usage
-                encode_kwargs={"batch_size": settings.batch_size, "normalize_embeddings": True},
-                cache_folder=os.path.join(settings.models_dir, settings.embedding_model_path)
+            # Try to allocate a significant but not huge tensor (100MB)
+            # This tests if we can still allocate new memory, even if most is used
+            test_size = 25 * 1024 * 1024  # ~100MB in float32
+            test_tensor = torch.ones(test_size, dtype=torch.float32, device="cuda")
+            test_result = test_tensor.sum().item()
+            del test_tensor
+            torch.cuda.empty_cache()
+
+            # If we get here, we can still allocate memory
+        except RuntimeError as e:
+            if "out of memory" in str(e):
+                return False, "GPU out of memory - cannot allocate test tensor"
+            else:
+                return False, f"CUDA runtime error during basic tensor operations: {str(e)}"
+
+        # Check memory status for logging/monitoring purposes
+        try:
+            # Get memory information
+            total_memory = torch.cuda.get_device_properties(0).total_memory
+            allocated_memory = torch.cuda.memory_allocated(0)
+            reserved_memory = torch.cuda.memory_reserved(0)
+
+            # Calculate actual free memory (at CUDA driver level)
+            free_memory = total_memory - reserved_memory
+
+            # Calculate what percentage of total memory is free
+            free_percent = (free_memory / total_memory) * 100
+
+            # Log the memory status but don't fail just based on percentage
+            memory_status = (
+                f"Memory status: {allocated_memory / (1024 ** 3):.2f}GB allocated, "
+                f"{reserved_memory / (1024 ** 3):.2f}GB reserved, "
+                f"{free_memory / (1024 ** 3):.2f}GB free ({free_percent:.1f}%)"
             )
-            logger.info("Using CPU embedding model for background task worker")
+
+            # If we can't allocate a small tensor for LLM processing, that's a problem
+            # This is handled by the actual tensor allocation test above, not by percentage
         except Exception as e:
-            logger.error(f"Error loading embedding model for background task: {str(e)}")
-            raise
+            return False, f"Error checking GPU memory: {str(e)}"
 
-        # Initialize vector store with CPU embeddings
-        return QdrantStore(
-            client=qdrant_client,
-            collection_name=settings.qdrant_collection,
-            embedding_function=embedding_function,
+        return True, f"GPU health check passed. {memory_status}"
+    except Exception as e:
+        return False, f"Unexpected error in GPU health check: {str(e)}"
+
+
+# Global variable to hold the preloaded embedding model
+_PRELOADED_EMBEDDING_MODEL = None
+
+
+def preload_embedding_model():
+    """
+    Preload the embedding model at worker startup to avoid loading it for each job.
+    This function should be called during worker initialization.
+    """
+    global _PRELOADED_EMBEDDING_MODEL
+
+    # Skip if already loaded or if we're on a CPU worker
+    if _PRELOADED_EMBEDDING_MODEL is not None or worker_type == "cpu":
+        return
+
+    logger.info(f"Preloading embedding model {settings.default_embedding_model} on {settings.device}")
+
+    try:
+        # Clear CUDA cache before loading
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            for i in range(torch.cuda.device_count()):
+                torch.cuda.synchronize(i)
+
+            # Log GPU memory status before loading
+            for i in range(torch.cuda.device_count()):
+                device_name = torch.cuda.get_device_name(i)
+                allocated = torch.cuda.memory_allocated(i) / (1024 ** 3)
+                reserved = torch.cuda.memory_reserved(i) / (1024 ** 3)
+                logger.info(
+                    f"GPU {i} ({device_name}) before model loading: Allocated: {allocated:.2f} GB, Reserved: {reserved:.2f} GB")
+
+        # Load the model
+        _PRELOADED_EMBEDDING_MODEL = HuggingFaceEmbeddings(
+            model_name=settings.embedding_model_full_path,
+            model_kwargs={"device": settings.device},
+            encode_kwargs={"batch_size": settings.batch_size, "normalize_embeddings": True},
+            cache_folder=os.path.join(settings.models_dir, settings.embedding_model_path)
         )
-    else:
-        # Use regular embedding function from settings (could use GPU)
-        return QdrantStore(
-            client=qdrant_client,
-            collection_name=settings.qdrant_collection,
-            embedding_function=settings.embedding_function,
-        )
 
+        # Test the model with a simple embedding to ensure it works
+        test_embedding = _PRELOADED_EMBEDDING_MODEL.embed_query("Test sentence for embedding model")
+        embedding_dim = len(test_embedding)
 
-# Improved GPU resource management using rate limiters
+        # Log GPU memory status after loading
+        if torch.cuda.is_available():
+            for i in range(torch.cuda.device_count()):
+                allocated = torch.cuda.memory_allocated(i) / (1024 ** 3)
+                reserved = torch.cuda.memory_reserved(i) / (1024 ** 3)
+                logger.info(f"GPU {i} after model loading: Allocated: {allocated:.2f} GB, Reserved: {reserved:.2f} GB")
+
+        logger.info(f"Successfully preloaded embedding model with dimension {embedding_dim}")
+    except Exception as e:
+        logger.error(f"Failed to preload embedding model: {str(e)}")
+        # We don't raise the exception here - the worker should still start
+        # Individual jobs will attempt to load the model as needed
+
 
 @dramatiq.actor(
     queue_name="inference_tasks",
@@ -409,14 +521,190 @@ def perform_llm_inference(job_id: str, query: str, documents: List[Dict], metada
         raise
 
 
-# Video processing actor - GPU version
-@dramatiq.actor(queue_name="gpu_tasks", max_retries=5, time_limit=3600000, min_backoff=60000, max_backoff=300000)
+# Now modify the get_vector_store function to use the preloaded model when available
+def get_vector_store(force_cpu=False):
+    """
+    Get a vector store instance for background tasks with support for preloaded models.
+
+    Args:
+        force_cpu: Whether to force CPU usage for embeddings
+    """
+    global _PRELOADED_EMBEDDING_MODEL
+
+    from src.core.vectorstore import QdrantStore
+    from src.config.settings import settings
+    import torch
+
+    # Initialize qdrant client
+    from qdrant_client import QdrantClient
+    qdrant_client = QdrantClient(
+        host=settings.qdrant_host,
+        port=settings.qdrant_port,
+    )
+
+    # If we have a preloaded model and we're not forcing CPU, use the preloaded model
+    if _PRELOADED_EMBEDDING_MODEL is not None and not force_cpu and worker_type != "cpu":
+        logger.info("Using preloaded embedding model")
+        return QdrantStore(
+            client=qdrant_client,
+            collection_name=settings.qdrant_collection,
+            embedding_function=_PRELOADED_EMBEDDING_MODEL,
+        )
+
+    # If forcing CPU or on a CPU worker, use CPU model
+    if force_cpu or worker_type == "cpu":
+        logger.info("Using CPU embedding model")
+        from langchain_huggingface import HuggingFaceEmbeddings
+        embedding_function = HuggingFaceEmbeddings(
+            model_name=settings.embedding_model_full_path,
+            model_kwargs={"device": "cpu"},
+            encode_kwargs={"batch_size": settings.batch_size, "normalize_embeddings": True},
+            cache_folder=os.path.join(settings.models_dir, settings.embedding_model_path)
+        )
+        return QdrantStore(
+            client=qdrant_client,
+            collection_name=settings.qdrant_collection,
+            embedding_function=embedding_function,
+        )
+
+    # If we reach here, we need to create a new GPU model instance
+    # This should only happen if preloading failed or was skipped
+    logger.info("Creating new GPU embedding model instance")
+    # For GPU workers, implement robust GPU handling
+    if torch.cuda.is_available():
+        # Maximum number of GPU attempts - but fail faster on model loading
+        max_gpu_attempts = 2  # Reduced from 3 to fail faster
+        gpu_attempts = 0
+
+        while gpu_attempts < max_gpu_attempts:
+            try:
+                # Aggressive GPU memory cleanup
+                torch.cuda.empty_cache()
+                for i in range(torch.cuda.device_count()):
+                    torch.cuda.synchronize(i)
+
+                # Add a cooling-off period to allow GPU to stabilize, but shorter
+                time.sleep(1)  # Reduced from 2s to make failure faster
+
+                # Check GPU memory status and log it for debugging
+                allocated = torch.cuda.memory_allocated() / (1024 ** 3)
+                reserved = torch.cuda.memory_reserved() / (1024 ** 3)
+                logger.info(
+                    f"GPU memory before embedding model: Allocated: {allocated:.2f} GB, Reserved: {reserved:.2f} GB")
+
+                # Try to get embedding function on GPU - with timeout to fail faster
+                from langchain_huggingface import HuggingFaceEmbeddings
+                try:
+                    # Try to import the model with a timeout to fail faster
+                    import signal
+                    import functools
+
+                    # Define a timeout handler
+                    class TimeoutError(Exception):
+                        pass
+
+                    def timeout_handler(signum, frame):
+                        raise TimeoutError("Model loading timed out")
+
+                    # Set timeout - 30 seconds should be enough for model loading
+                    # If it takes longer, something is likely wrong
+                    signal.signal(signal.SIGALRM, timeout_handler)
+                    signal.alarm(30)
+
+                    # Try to load the model
+                    embedding_function = HuggingFaceEmbeddings(
+                        model_name=settings.embedding_model_full_path,
+                        model_kwargs={"device": settings.device},
+                        encode_kwargs={"batch_size": settings.batch_size, "normalize_embeddings": True},
+                        cache_folder=os.path.join(settings.models_dir, settings.embedding_model_path)
+                    )
+
+                    # Cancel the alarm if successful
+                    signal.alarm(0)
+                except TimeoutError:
+                    logger.error("Embedding model loading timed out - failing fast")
+                    raise RuntimeError("Embedding model loading timed out")
+
+                logger.info("Successfully initialized GPU embedding model")
+
+                # Initialize vector store with GPU embeddings
+                return QdrantStore(
+                    client=qdrant_client,
+                    collection_name=settings.qdrant_collection,
+                    embedding_function=embedding_function,
+                )
+            except Exception as e:
+                gpu_attempts += 1
+                logger.warning(f"GPU embedding attempt {gpu_attempts}/{max_gpu_attempts} failed: {str(e)}")
+
+                # Fail fast on certain error types that suggest hardware issues
+                if "CUDA out of memory" in str(e) or "CUDA error" in str(e) or "invalid argument" in str(e):
+                    logger.error(f"Critical CUDA error detected, failing fast: {str(e)}")
+                    # Don't retry on these fundamental errors
+                    break
+
+                # Try more aggressive CUDA reset approach for next attempt
+                if gpu_attempts < max_gpu_attempts:
+                    try:
+                        # Force CUDA reset by creating and destroying a dummy tensor
+                        dummy = torch.ones(1).cuda()
+                        del dummy
+                        torch.cuda.empty_cache()
+
+                        # Wait between attempts, but not too long to fail fast
+                        wait_time = 3 * gpu_attempts  # Reduced wait time
+                        logger.info(f"Waiting {wait_time} seconds before next GPU attempt")
+                        time.sleep(wait_time)
+                    except Exception as reset_error:
+                        logger.warning(f"Error during GPU reset: {str(reset_error)}")
+
+        # If we've exhausted all GPU attempts, this is a critical error
+        # Don't fall back to CPU for embedding - that would be too slow
+        error_msg = f"Critical error: Failed to initialize GPU embedding model after {gpu_attempts} attempts"
+        logger.error(error_msg)
+        raise RuntimeError(error_msg)
+    else:
+        # No GPU available but we're on a GPU worker - this is unexpected
+        error_msg = "Critical error: GPU worker but no CUDA available"
+        logger.error(error_msg)
+        raise RuntimeError(error_msg)
+
+
+@dramatiq.actor(
+    queue_name="gpu_tasks",
+    max_retries=5,
+    time_limit=3600000,
+    min_backoff=60000,
+    max_backoff=300000,
+    store_results=True  # Enable result storage with Results middleware
+)
 def process_video_gpu(job_id: str, url: str, custom_metadata: Optional[Dict[str, Any]] = None):
-    """Process a video using GPU for transcription and embedding with better error handling."""
+    """Process a video using GPU for transcription and embedding with improved error handling."""
     try:
-        # Try to acquire the rate limiter
-        # Use a non-blocking check first to avoid deadlocks
-        logger.info(f"Attempting to acquire GPU limiter for job {job_id}")
+        # First, check if this job has already been completed
+        if job_tracker.is_job_completed(job_id):
+            logger.info(f"Job {job_id} has already been completed. Skipping processing.")
+            return {"message": "Job already completed", "job_id": job_id, "status": "already_completed"}
+
+        # Perform proactive GPU health check BEFORE trying to acquire the limiter
+        is_healthy, health_message = check_gpu_health()
+        if not is_healthy:
+            # Don't even try to acquire the GPU limiter if the GPU is in a bad state
+            error_msg = f"GPU health check failed: {health_message}"
+            logger.error(error_msg)
+
+            # Update job status to reflect GPU health issues
+            job_tracker.update_job_status(
+                job_id,
+                JobStatus.FAILED,
+                error=error_msg
+            )
+
+            # Raise an exception to trigger retry with backoff
+            raise RuntimeError(error_msg)
+
+        # GPU health check passed, now try to acquire the rate limiter
+        logger.info(f"GPU health check passed. Attempting to acquire GPU limiter for job {job_id}")
 
         try:
             # Update job status to reflect waiting for GPU
@@ -428,6 +716,23 @@ def process_video_gpu(job_id: str, url: str, custom_metadata: Optional[Dict[str,
 
             # Attempt to acquire the limiter
             with gpu_limiter.acquire():
+                # Once we have the limiter, check GPU health again - it might have changed
+                is_still_healthy, health_message = check_gpu_health()
+                if not is_still_healthy:
+                    # GPU was healthy before, but is unhealthy now that we have the lock
+                    error_msg = f"GPU health deteriorated while waiting for lock: {health_message}"
+                    logger.error(error_msg)
+
+                    # Update job status
+                    job_tracker.update_job_status(
+                        job_id,
+                        JobStatus.FAILED,
+                        error=error_msg
+                    )
+
+                    # Raise an exception to release the lock and trigger retry
+                    raise RuntimeError(error_msg)
+
                 # Update job status to processing
                 job_tracker.update_job_status(
                     job_id,
@@ -441,14 +746,30 @@ def process_video_gpu(job_id: str, url: str, custom_metadata: Optional[Dict[str,
                 from src.core.video_transcriber import VideoTranscriber
                 import torch
 
-                # Get vector store with GPU embeddings
+                # Advanced GPU preparation
+                if torch.cuda.is_available():
+                    # Log GPU state before processing
+                    for i in range(torch.cuda.device_count()):
+                        device_name = torch.cuda.get_device_name(i)
+                        allocated = torch.cuda.memory_allocated(i) / (1024 ** 3)
+                        reserved = torch.cuda.memory_reserved(i) / (1024 ** 3)
+                        logger.info(
+                            f"GPU {i} ({device_name}) before processing: Allocated: {allocated:.2f} GB, Reserved: {reserved:.2f} GB")
+
+                    # Reset CUDA context
+                    torch.cuda.empty_cache()
+                    for i in range(torch.cuda.device_count()):
+                        torch.cuda.synchronize(i)
+                    time.sleep(1)  # Short pause
+
+                # Get vector store with improved GPU handling
                 vector_store = get_vector_store(force_cpu=False)
 
                 # Create transcriber with GPU
                 transcriber = VideoTranscriber(
                     whisper_model_size=os.environ.get("WHISPER_MODEL_SIZE", "medium"),
                     device="cuda",
-                    num_workers=1  # Just use 1 worker thread to avoid oversubscription
+                    num_workers=1  # Use single worker thread to avoid oversubscription
                 )
 
                 # Initialize document processor
@@ -462,7 +783,17 @@ def process_video_gpu(job_id: str, url: str, custom_metadata: Optional[Dict[str,
 
                 # Clean up GPU memory
                 if torch.cuda.is_available():
+                    # Log GPU state after processing
+                    for i in range(torch.cuda.device_count()):
+                        allocated = torch.cuda.memory_allocated(i) / (1024 ** 3)
+                        reserved = torch.cuda.memory_reserved(i) / (1024 ** 3)
+                        logger.info(
+                            f"GPU {i} after processing: Allocated: {allocated:.2f} GB, Reserved: {reserved:.2f} GB")
+
+                    # Thorough cleanup
                     torch.cuda.empty_cache()
+                    for i in range(torch.cuda.device_count()):
+                        torch.cuda.synchronize(i)
 
                 # Update job with success result
                 job_tracker.update_job_status(
@@ -476,7 +807,13 @@ def process_video_gpu(job_id: str, url: str, custom_metadata: Optional[Dict[str,
                 )
 
                 logger.info(f"Released GPU resources for job {job_id}")
-                return document_ids
+                return {
+                    "message": "Successfully processed video",
+                    "document_count": len(document_ids),
+                    "document_ids": document_ids,
+                    "job_id": job_id,
+                    "status": "completed"
+                }
 
         except dramatiq.errors.RateLimitExceeded:
             # This will trigger a retry with backoff thanks to the actor decorator settings
@@ -512,227 +849,9 @@ def process_video_gpu(job_id: str, url: str, custom_metadata: Optional[Dict[str,
         # Clean up GPU memory on error
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+            for i in range(torch.cuda.device_count()):
+                torch.cuda.synchronize(i)
             logger.info(f"Cleaned up GPU memory after error")
 
         # Re-raise for dramatiq retry mechanism
-        raise
-
-
-# PDF processing actor - CPU version
-@dramatiq.actor(queue_name="cpu_tasks", max_retries=2, time_limit=1800000)
-def process_pdf_cpu(job_id: str, file_path: str, custom_metadata: Optional[Dict[str, Any]] = None):
-    """Process a PDF file in the background using CPU."""
-    try:
-        # Update job status to processing
-        job_tracker.update_job_status(job_id, JobStatus.PROCESSING)
-        logger.info(f"CPU worker processing PDF: {file_path}")
-
-        # Import here to avoid circular imports
-        from src.core.document_processor import DocumentProcessor
-        from src.core.pdf_loader import PDFLoader
-
-        # Get vector store with CPU embeddings
-        vector_store = get_vector_store(force_cpu=True)
-
-        # Create PDF loader with CPU
-        pdf_loader = PDFLoader(
-            chunk_size=int(os.environ.get("CHUNK_SIZE", "1000")),
-            chunk_overlap=int(os.environ.get("CHUNK_OVERLAP", "200")),
-            device="cpu",
-            use_ocr=os.environ.get("USE_PDF_OCR", "true").lower() == "true",
-            ocr_languages=os.environ.get("OCR_LANGUAGES", "en+ch_doc")
-        )
-
-        # Initialize document processor
-        processor = DocumentProcessor(
-            vector_store=vector_store,
-            pdf_loader=pdf_loader
-        )
-
-        # Process the PDF
-        document_ids = processor.process_pdf(file_path=file_path, custom_metadata=custom_metadata)
-
-        # Update job with success result
-        job_tracker.update_job_status(
-            job_id,
-            JobStatus.COMPLETED,
-            result={
-                "message": f"Successfully processed PDF: {os.path.basename(file_path)}",
-                "document_count": len(document_ids),
-                "document_ids": document_ids,
-            }
-        )
-
-        return document_ids
-
-    except TimeLimitExceeded:
-        job_tracker.update_job_status(
-            job_id,
-            JobStatus.TIMEOUT,
-            error="Processing timeout exceeded"
-        )
-    except Exception as e:
-        import traceback
-        error_detail = f"Error processing PDF: {str(e)}\n{traceback.format_exc()}"
-        logger.error(error_detail)
-
-        # Update job with error
-        job_tracker.update_job_status(
-            job_id,
-            JobStatus.FAILED,
-            error=error_detail
-        )
-
-        # Re-raise for dramatiq retry mechanism
-        raise
-
-
-# Text processing actor - CPU version
-@dramatiq.actor(queue_name="cpu_tasks", max_retries=2, time_limit=300000)
-def process_text(job_id: str, content: str, metadata: Dict[str, Any]):
-    """Process manual text input in the background using CPU."""
-    try:
-        # Update job status to processing
-        job_tracker.update_job_status(job_id, JobStatus.PROCESSING)
-        logger.info(f"CPU worker processing text input")
-
-        # Import here to avoid circular imports
-        from src.core.document_processor import DocumentProcessor
-        from src.models.schema import ManualIngestRequest, DocumentMetadata
-
-        # Get vector store with CPU embeddings
-        vector_store = get_vector_store(force_cpu=True)
-
-        # Initialize document processor
-        processor = DocumentProcessor(
-            vector_store=vector_store
-        )
-
-        # Create a proper request object
-        request = ManualIngestRequest(
-            content=content,
-            metadata=DocumentMetadata(**metadata)
-        )
-
-        # Process the text
-        document_ids = processor.process_text(request)
-
-        # Update job with success result
-        job_tracker.update_job_status(
-            job_id,
-            JobStatus.COMPLETED,
-            result={
-                "message": "Successfully processed manual text input",
-                "document_count": len(document_ids),
-                "document_ids": document_ids,
-            }
-        )
-
-        return document_ids
-
-    except TimeLimitExceeded:
-        job_tracker.update_job_status(
-            job_id,
-            JobStatus.TIMEOUT,
-            error="Processing timeout exceeded"
-        )
-    except Exception as e:
-        import traceback
-        error_detail = f"Error processing text: {str(e)}\n{traceback.format_exc()}"
-        logger.error(error_detail)
-
-        # Update job with error
-        job_tracker.update_job_status(
-            job_id,
-            JobStatus.FAILED,
-            error=error_detail
-        )
-
-        # Re-raise for dramatiq retry mechanism
-        raise
-
-
-def batch_process_videos(job_id: str, urls: List[str], custom_metadata: Optional[List[Dict[str, Any]]] = None):
-    """Process multiple videos, routing each to GPU worker."""
-    try:
-        # Update job status to processing
-        job_tracker.update_job_status(job_id, JobStatus.PROCESSING)
-
-        # Track jobs for each URL
-        sub_job_ids = []
-        total_urls = len(urls)
-
-        # Update parent job with initial status
-        job_tracker.update_job_status(
-            job_id,
-            JobStatus.PROCESSING,
-            result={
-                "message": f"Started processing {total_urls} videos",
-                "sub_job_ids": [],
-                "progress": {"completed": 0, "total": total_urls}
-            }
-        )
-
-        # Process each URL
-        for i, url in enumerate(urls):
-            # Get metadata for this URL if provided
-            url_metadata = None
-            if custom_metadata and i < len(custom_metadata):
-                url_metadata = custom_metadata[i]
-
-            # Create a sub job ID
-            sub_job_id = f"{job_id}-{i}"
-            sub_job_ids.append(sub_job_id)
-
-            # Create job record
-            job_tracker.create_job(
-                job_id=sub_job_id,
-                job_type="video_processing",
-                metadata={
-                    "url": url,
-                    "parent_job_id": job_id,
-                    "custom_metadata": url_metadata,
-                    "index": i,
-                    "total": total_urls
-                }
-            )
-
-            # Send directly to GPU worker
-            process_video_gpu.send(sub_job_id, url, url_metadata)
-            logger.info(f"Queued video {i + 1}/{total_urls} for processing: {url}")
-
-            # Update progress in parent job
-            job_tracker.update_job_status(
-                job_id,
-                JobStatus.PROCESSING,
-                result={
-                    "message": f"Queued {i + 1}/{len(urls)} videos for processing",
-                    "sub_job_ids": sub_job_ids,
-                    "progress": {"queued": i + 1, "total": total_urls}
-                }
-            )
-
-        # Final update
-        job_tracker.update_job_status(
-            job_id,
-            JobStatus.COMPLETED,
-            result={
-                "message": f"Successfully queued {total_urls} videos for processing",
-                "sub_job_ids": sub_job_ids
-            }
-        )
-
-        return sub_job_ids
-
-    except Exception as e:
-        import traceback
-        error_detail = f"Error batch processing videos: {str(e)}\n{traceback.format_exc()}"
-        logger.error(error_detail)
-
-        job_tracker.update_job_status(
-            job_id,
-            JobStatus.FAILED,
-            error=error_detail
-        )
-
         raise
