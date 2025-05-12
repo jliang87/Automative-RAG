@@ -20,7 +20,7 @@ from typing import Annotated, Any, Dict, List, Optional, Tuple
 from fastapi import Depends, HTTPException, Header, status
 
 # Import the JobTracker
-from src.core.background_tasks import JobTracker
+from src.core.background import job_tracker
 
 # Redis client configuration
 redis_host = os.environ.get("REDIS_HOST", "localhost")

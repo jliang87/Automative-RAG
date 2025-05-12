@@ -37,7 +37,7 @@ async def query(
     job_id = str(uuid.uuid4())
 
     # Create a job record
-    from src.core.background_tasks import job_tracker
+    from src.core.background import job_tracker
     job_tracker.create_job(
         job_id=job_id,
         job_type="llm_inference",
@@ -57,7 +57,7 @@ async def query(
         })
 
     # Send to background task for reranking and inference
-    from src.core.background_tasks import perform_llm_inference
+    from src.core.background import perform_llm_inference
     perform_llm_inference.send(job_id, request.query, serializable_docs, request.metadata_filter)
 
     # Create response indicating task is in progress
@@ -75,6 +75,7 @@ async def query(
     return response
 
 
+from src.core.background import perform_llm_inference, job_tracker
 @router.post("/async", response_model=BackgroundJobResponse)
 async def query_async(
         request: QueryRequest,
@@ -82,12 +83,6 @@ async def query_async(
 ) -> BackgroundJobResponse:
     """
     Asynchronous query that returns a job ID for later polling.
-
-    Args:
-        request: Query request with query text and optional metadata filters
-
-    Returns:
-        Background job response with job ID
     """
     # Generate a unique job ID
     job_id = str(uuid.uuid4())
@@ -109,7 +104,6 @@ async def query_async(
         })
 
     # Create a job record
-    from src.core.background_tasks import job_tracker
     job_tracker.create_job(
         job_id=job_id,
         job_type="llm_inference",
@@ -120,7 +114,6 @@ async def query_async(
     )
 
     # Start the background job without waiting for completion
-    from src.core.background_tasks import perform_llm_inference
     perform_llm_inference.send(job_id, request.query, serializable_docs, request.metadata_filter)
 
     # Return job ID immediately
@@ -143,7 +136,7 @@ async def get_query_result(job_id: str) -> Optional[QueryResponse]:
     Returns:
         Query response if completed, or status update
     """
-    from src.core.background_tasks import job_tracker
+    from src.core.background import job_tracker
 
     job_data = job_tracker.get_job(job_id)
 
@@ -281,7 +274,7 @@ async def get_llm_info(
 async def get_priority_queue_status():
     """Get status of the priority queue system."""
     # Import the actor to get queue status
-    from src.core.background_tasks import get_priority_queue_status
+    from src.core.background import get_priority_queue_status
 
     # Call the actor and get the result
     result = get_priority_queue_status.send()

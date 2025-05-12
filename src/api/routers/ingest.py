@@ -18,7 +18,7 @@ from src.core.document_processor import DocumentProcessor
 from src.core.vectorstore import QdrantStore
 from src.core.pdf_loader import PDFLoader
 from src.models.schema import IngestResponse, ManualIngestRequest, BackgroundJobResponse
-from src.core.background_tasks import job_tracker, batch_process_videos, process_video_gpu, process_pdf_cpu
+from src.core.background import job_tracker, batch_process_videos, process_video_gpu, process_pdf_cpu
 
 router = APIRouter()
 
@@ -35,21 +35,20 @@ class BatchVideoIngestRequest(BaseModel):
     metadata: Optional[List[Dict[str, str]]] = None
 
 
+from src.core.background import (
+    process_video_gpu,
+    process_pdf_cpu,
+    process_text,
+    batch_process_videos,
+    job_tracker
+)
 @router.post("/video", response_model=BackgroundJobResponse)
 async def ingest_video(
         video_request: VideoIngestRequest,
-        processor: DocumentProcessor = Depends(get_document_processor),
 ) -> BackgroundJobResponse:
     """
-    Ingest a video from any supported platform (YouTube, Bilibili, etc.) with GPU-accelerated Whisper transcription.
+    Ingest a video from any supported platform with GPU-accelerated Whisper transcription.
     All processing happens asynchronously in the background.
-
-    Args:
-        video_request: Video ingest request with URL and optional metadata
-        processor: Document processor dependency
-
-    Returns:
-        Background job response with job ID
     """
     try:
         url_str = str(video_request.url)
@@ -86,14 +85,10 @@ async def ingest_video(
             status="pending",
         )
     except Exception as e:
-        # Log the full traceback
-        error_detail = f"Error ingesting video: {str(e)}\n{traceback.format_exc()}"
-        logger.error(error_detail)
-
         # Return detailed error information
         raise HTTPException(
             status_code=500,
-            detail=error_detail,
+            detail=f"Error ingesting video: {str(e)}",
         )
 
 
@@ -124,7 +119,7 @@ async def ingest_batch_videos(
 
         # Call the batch processing function directly
         # Import the regular function (not an actor)
-        from src.core.background_tasks import batch_process_videos
+        from src.core.background import batch_process_videos
 
         # Call it directly - this will internally queue each video to the GPU worker
         batch_process_videos(job_id, urls, batch_request.metadata)
@@ -238,7 +233,7 @@ async def ingest_text(
         )
 
         # Start the background job
-        from src.core.background_tasks import process_text
+        from src.core.background import process_text
         process_text.send(job_id, manual_request.content, manual_request.metadata.dict())
 
         # Return the job ID immediately
