@@ -1541,3 +1541,364 @@ def get_priority_queue_status():
         stats["tasks_by_queue"][queue_name] += 1
 
     return stats
+
+
+@dramatiq.actor(queue_name="system_tasks")
+def cleanup_old_jobs(retention_days=7):
+    """Clean up old completed jobs that are beyond the retention period."""
+    job_key = "rag_system:jobs"
+    all_jobs = redis_client.hgetall(job_key)
+
+    # Get current time minus retention period
+    cutoff_time = time.time() - (retention_days * 24 * 60 * 60)
+    deleted_count = 0
+
+    # Check each job
+    for job_id, job_data_json in all_jobs.items():
+        try:
+            job_data = json.loads(job_data_json)
+            job_status = job_data.get("status", "")
+            created_at = job_data.get("created_at", 0)
+
+            # Delete if it's old and completed/failed
+            if created_at < cutoff_time and job_status in ["completed", "failed", "timeout"]:
+                redis_client.hdel(job_key, job_id)
+                deleted_count += 1
+
+                # Log every 50 deletions to avoid excessive logging
+                if deleted_count % 50 == 0:
+                    logger.info(f"Deleted {deleted_count} old jobs so far")
+        except Exception as e:
+            logger.warning(f"Error processing job {job_id}: {str(e)}")
+
+    logger.info(f"Old job cleanup completed: deleted {deleted_count} jobs")
+    return deleted_count
+
+
+@dramatiq.actor(queue_name="system_tasks")
+def check_priority_queue_health():
+    """Perform a health check on the priority queue system."""
+    redis_client = redis_broker.client
+
+    # Check for inconsistencies in the priority queue
+    active_task_json = redis_client.get("active_gpu_task")
+    active_task = json.loads(active_task_json) if active_task_json else None
+
+    # Get the priority queue
+    queue_tasks = redis_client.zrange("priority_task_queue", 0, -1, withscores=True)
+
+    # Check if there's an active task but no GPU worker is running
+    if active_task:
+        # Check how long the task has been active
+        task_age = time.time() - active_task.get("registered_at", time.time())
+
+        # If task has been active too long, check if the worker is still running
+        if task_age > 900:  # 15 minutes
+            task_id = active_task.get("task_id")
+            job_id = active_task.get("job_id")
+
+            # Check if GPU is healthy
+            is_healthy, _ = check_gpu_health()
+
+            if not is_healthy:
+                # GPU is unhealthy but there's an active task - reset it
+                logger.warning(f"GPU unhealthy but task {task_id} is marked active. Resetting priority system.")
+                redis_client.delete("active_gpu_task")
+
+                # Mark the job as failed
+                if job_id:
+                    job_tracker.update_job_status(
+                        job_id,
+                        JobStatus.FAILED,
+                        error="Task reset due to GPU health issues"
+                    )
+
+    # Check if there are tasks in queue but no active task
+    if not active_task and queue_tasks:
+        logger.info("Priority queue has tasks but no active task - system may need attention")
+
+
+@dramatiq.actor(queue_name="system_tasks")
+def monitor_gpu_memory():
+    """Monitor GPU memory usage and optimize when needed."""
+    if not torch.cuda.is_available():
+        return
+
+    # Get memory usage for each GPU
+    for i in range(torch.cuda.device_count()):
+        # Get memory stats
+        total_memory = torch.cuda.get_device_properties(i).total_memory
+        allocated_memory = torch.cuda.memory_allocated(i)
+        reserved_memory = torch.cuda.memory_reserved(i)
+
+        # Calculate free memory
+        free_memory = total_memory - reserved_memory
+        free_percentage = (free_memory / total_memory) * 100
+
+        # Log memory status
+        logger.info(
+            f"GPU {i} memory: {allocated_memory / 1e9:.2f} GB allocated, {free_memory / 1e9:.2f} GB free ({free_percentage:.1f}%)")
+
+        # If memory usage is too high, trigger cache clearing
+        if free_percentage < 20:  # Less than 20% free memory
+            logger.warning(f"GPU {i} memory is running low ({free_percentage:.1f}% free). Clearing cache.")
+            torch.cuda.empty_cache()
+
+
+@dramatiq.actor(queue_name="system_tasks")
+def collect_system_statistics():
+    """Collect and store system performance statistics."""
+    stats = {
+        "timestamp": time.time(),
+        "jobs": {
+            "total": redis_client.hlen("rag_system:jobs"),
+            "pending": 0,
+            "processing": 0,
+            "completed": 0,
+            "failed": 0
+        },
+        "queues": {},
+        "gpu": {}
+    }
+
+    # Count jobs by status
+    all_jobs = redis_client.hgetall("rag_system:jobs")
+    for _, job_data_json in all_jobs.items():
+        try:
+            job_data = json.loads(job_data_json)
+            status = job_data.get("status", "unknown")
+            if status in stats["jobs"]:
+                stats["jobs"][status] += 1
+        except:
+            pass
+
+    # Get queue lengths
+    for queue in ["inference_tasks", "gpu_tasks", "transcription_tasks", "cpu_tasks"]:
+        queue_key = f"dramatiq:{queue}:msgs"
+        stats["queues"][queue] = redis_client.llen(queue_key)
+
+    # Get GPU stats if available
+    if torch.cuda.is_available():
+        for i in range(torch.cuda.device_count()):
+            stats["gpu"][f"gpu_{i}"] = {
+                "allocated": torch.cuda.memory_allocated(i) / 1e9,  # GB
+                "reserved": torch.cuda.memory_reserved(i) / 1e9,  # GB
+                "total": torch.cuda.get_device_properties(i).total_memory / 1e9  # GB
+            }
+
+    # Store statistics (last 24 hours worth, one entry per minute)
+    stats_key = "rag_system:stats"
+    redis_client.lpush(stats_key, json.dumps(stats))
+    redis_client.ltrim(stats_key, 0, 60 * 24 - 1)  # Keep 24 hours of 1-minute stats
+
+    return stats
+
+
+@dramatiq.actor(queue_name="system_tasks")
+def reload_models_periodically():
+    """Periodically reload models to avoid memory issues from long-running processes."""
+    # Get the specific worker type
+    if worker_type.startswith("gpu-"):
+        logger.info(f"Initiating periodic model reload for {worker_type} worker")
+
+        # Specific reload logic based on worker type
+        if worker_type == "gpu-inference":
+            # Clear any in-memory caches first
+            if hasattr(torch.cuda, 'empty_cache'):
+                torch.cuda.empty_cache()
+
+            # Reload LLM model
+            global _PRELOADED_LLM_MODEL
+            if _PRELOADED_LLM_MODEL is not None:
+                # Delete old model reference first
+                del _PRELOADED_LLM_MODEL
+                _PRELOADED_LLM_MODEL = None
+
+                # Force garbage collection
+                import gc
+                gc.collect()
+
+                # Reload model
+                preload_llm_model()
+
+                logger.info("LLM model successfully reloaded")
+
+            # Reload reranking models
+            global _PRELOADED_COLBERT_RERANKER
+            if _PRELOADED_COLBERT_RERANKER is not None:
+                # Delete old model reference
+                del _PRELOADED_COLBERT_RERANKER
+                _PRELOADED_COLBERT_RERANKER = None
+
+                # Force garbage collection
+                gc.collect()
+
+                # Reload model
+                preload_colbert_reranker()
+
+                logger.info("Reranking models successfully reloaded")
+
+
+@dramatiq.actor(queue_name="system_tasks")
+def balance_task_queues():
+    """Balance workload across queues to prevent starvation."""
+    # Get current queue lengths
+    queue_lengths = {}
+    for queue in ["inference_tasks", "gpu_tasks", "transcription_tasks", "cpu_tasks"]:
+        queue_key = f"dramatiq:{queue}:msgs"
+        queue_lengths[queue] = redis_client.llen(queue_key)
+
+    # Check for queue imbalances
+    high_priority_queues = ["inference_tasks", "reranking_tasks"]
+    low_priority_queues = ["gpu_tasks", "transcription_tasks"]
+
+    # If lower priority queues have too many tasks waiting,
+    # temporarily boost their priority to prevent starvation
+    if all(queue_lengths.get(q, 0) == 0 for q in high_priority_queues) and \
+            any(queue_lengths.get(q, 0) > 10 for q in low_priority_queues):
+
+        # Update priority levels temporarily
+        logger.info("Temporarily boosting priority for lower-priority queues to prevent starvation")
+
+        # Example: If transcription tasks are piling up, adjust their priority
+        if queue_lengths.get("transcription_tasks", 0) > 10:
+            # Record the temporary priority boost
+            redis_client.set(
+                "priority_boost:transcription_tasks",
+                json.dumps({"original": 4, "boosted": 2, "expires_at": time.time() + 600}),
+                ex=600  # 10 minute expiry
+            )
+
+            logger.info("Temporarily boosted transcription_tasks priority for 10 minutes")
+
+
+@dramatiq.actor(queue_name="system_tasks")
+def optimize_databases():
+    """Perform maintenance on the Redis and Qdrant databases."""
+    # Get Redis info
+    redis_info = redis_client.info()
+
+    # Check if Redis memory usage is high
+    used_memory = redis_info.get("used_memory", 0)
+    used_memory_peak = redis_info.get("used_memory_peak", 0)
+
+    # If memory usage is over 80% of peak, trigger optimization
+    if used_memory > 0.8 * used_memory_peak:
+        logger.info("Redis memory usage is high. Performing memory optimization.")
+        # Run Redis memory optimization if needed
+        redis_client.config_set("maxmemory-policy", "allkeys-lru")
+
+    # Optimize Qdrant collection if needed
+    try:
+        from qdrant_client import QdrantClient
+        qdrant_client = QdrantClient(
+            host=settings.qdrant_host,
+            port=settings.qdrant_port,
+        )
+
+        # Get collection info
+        collection_info = qdrant_client.get_collection(settings.qdrant_collection)
+
+        # Check if optimization needed
+        if collection_info.vectors_count > 10000:
+            logger.info(f"Running optimization on Qdrant collection {settings.qdrant_collection}")
+            qdrant_client.update_collection(
+                collection_name=settings.qdrant_collection,
+                optimizer_config={
+                    "indexing_threshold": 0  # Force re-indexing
+                }
+            )
+    except Exception as e:
+        logger.error(f"Error optimizing Qdrant: {str(e)}")
+
+
+@dramatiq.actor(queue_name="system_tasks")
+def analyze_error_patterns():
+    """Analyze error patterns in failed jobs to detect systemic issues."""
+    # Get all failed jobs
+    all_jobs = redis_client.hgetall("rag_system:jobs")
+    failed_jobs = []
+
+    for job_id, job_data_json in all_jobs.items():
+        try:
+            job_data = json.loads(job_data_json)
+            if job_data.get("status") in ["failed", "timeout"]:
+                failed_jobs.append(job_data)
+        except:
+            continue
+
+    # Skip if no failed jobs
+    if not failed_jobs:
+        return
+
+    # Count error types
+    error_counts = {}
+    for job in failed_jobs:
+        error = job.get("error", "")
+
+        # Extract error type (first line or first 50 chars)
+        error_type = error.split('\n')[0][:50] if error else "Unknown error"
+
+        if error_type not in error_counts:
+            error_counts[error_type] = 0
+        error_counts[error_type] += 1
+
+    # Find common patterns
+    common_errors = sorted(error_counts.items(), key=lambda x: x[1], reverse=True)
+
+    # Log patterns
+    logger.info(f"Error pattern analysis: Found {len(failed_jobs)} failed jobs")
+    for error_type, count in common_errors[:5]:  # Top 5 errors
+        logger.info(f"Common error: '{error_type}' occurred {count} times")
+
+    # Check for spikes in specific error types
+    # (Could trigger alerts or automated recovery actions)
+
+
+@dramatiq.actor(queue_name="system_tasks", periodic=True)
+def system_watchdog():
+    """
+    Main watchdog service that periodically checks system health and coordinates other maintenance tasks.
+    This task runs every minute to perform quick checks and dispatch other maintenance tasks as needed.
+    """
+    # Check GPU health
+    if torch.cuda.is_available():
+        is_healthy, message = check_gpu_health()
+        if not is_healthy:
+            logger.warning(f"GPU health check failed: {message}")
+
+            # May need to take recovery actions here
+
+    # Check if any maintenance tasks need to be run
+    current_hour = datetime.now().hour
+
+    # Run daily cleanup during off-hours (3 AM)
+    if current_hour == 3:
+        # Schedule daily maintenance tasks
+        cleanup_old_jobs.send(retention_days=7)
+        optimize_databases.send()
+
+    # Run hourly tasks
+    if datetime.now().minute < 5:  # In the first 5 minutes of each hour
+        collect_system_statistics.send()
+        analyze_error_patterns.send()
+
+    # Always check for stalled tasks
+    cleanup_stalled_tasks.send()
+
+    # Always check priority queue health
+    check_priority_queue_health.send()
+
+    # Collect basic system stats
+    stats = {
+        "timestamp": time.time(),
+        "gpu_available": torch.cuda.is_available(),
+        "queues": {
+            "inference_tasks": redis_client.llen("dramatiq:inference_tasks:msgs"),
+            "gpu_tasks": redis_client.llen("dramatiq:gpu_tasks:msgs"),
+            "transcription_tasks": redis_client.llen("dramatiq:transcription_tasks:msgs"),
+            "cpu_tasks": redis_client.llen("dramatiq:cpu_tasks:msgs"),
+        }
+    }
+
+    return stats
