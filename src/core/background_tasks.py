@@ -20,30 +20,6 @@ from dramatiq.rate_limits.backends import RedisBackend
 from dramatiq.results import Results
 from dramatiq.results.backends.redis import RedisBackend as ResultsRedisBackend
 
-
-# Create a worker middleware to run the preload function
-class WorkerSetupMiddleware:
-    """Middleware to run setup code when worker processes boot."""
-
-    def before_worker_boot(self, broker, worker):
-        """Run setup code before the worker boots."""
-        logger.info(f"Initializing worker {worker.worker_id} of type {worker_type}")
-
-        if worker_type == "gpu":
-            # Only preload models on GPU workers
-            logger.info("Preloading models for GPU worker")
-            preload_embedding_model()
-
-            # Log GPU memory statistics after preloading
-            if torch.cuda.is_available():
-                for i in range(torch.cuda.device_count()):
-                    device_name = torch.cuda.get_device_name(i)
-                    allocated = torch.cuda.memory_allocated(i) / (1024 ** 3)
-                    reserved = torch.cuda.memory_reserved(i) / (1024 ** 3)
-                    logger.info(
-                        f"GPU {i} ({device_name}) after worker init: Allocated: {allocated:.2f} GB, Reserved: {reserved:.2f} GB")
-
-
 # Set up logging
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -83,25 +59,6 @@ results_backend = ResultsRedisBackend(
     ttl=3600000
 )
 
-# Add middleware
-redis_broker.add_middleware(Callbacks())
-redis_broker.add_middleware(AgeLimit())
-redis_broker.add_middleware(Retries(max_retries=3))
-# Add Results middleware
-redis_broker.add_middleware(Results(backend=results_backend))
-# Add the middleware to the broker
-worker_setup = WorkerSetupMiddleware()
-redis_broker.add_middleware(worker_setup)
-
-dramatiq.set_broker(redis_broker)
-
-# Create GPU rate limiter - limits to 1 concurrent GPU task
-gpu_limiter = ConcurrentRateLimiter(
-    backend=rate_limiter_backend,
-    key="gpu_task_limiter",
-    limit=1,
-    ttl=600000  # 10 minute
-)
 
 # Define job status constants
 class JobStatus:
@@ -148,8 +105,11 @@ class JobTracker:
         self.redis.hset(self.job_key, job_id, json.dumps(job_data))
         logger.info(f"Created job {job_id} of type {job_type}")
 
-    def update_job_status(self, job_id: str, status: str, result: Any = None, error: str = None) -> None:
-        """Update the status of a job."""
+    # Modify the JobTracker class in background_tasks.py to track stage transitions
+
+    def update_job_status(self, job_id: str, status: str, result: Any = None, error: str = None,
+                          stage: str = None) -> None:
+        """Update the status of a job, including stage transitions."""
         job_data_json = self.redis.hget(self.job_key, job_id)
         if not job_data_json:
             logger.warning(f"Job {job_id} not found when updating status to {status}")
@@ -159,6 +119,25 @@ class JobTracker:
         job_data["status"] = status
         job_data["updated_at"] = time.time()
 
+        # Track stage transitions with timestamps
+        if stage:
+            # Initialize stage_history if it doesn't exist
+            if "stage_history" not in job_data:
+                job_data["stage_history"] = []
+
+            # Add stage transition with timestamp
+            current_time = time.time()
+            job_data["stage_history"].append({
+                "stage": stage,
+                "started_at": current_time,
+                "status": status
+            })
+
+            # Update current stage
+            job_data["current_stage"] = stage
+            job_data["stage_started_at"] = current_time
+
+        # Add result and error
         if result is not None:
             if isinstance(result, (list, dict)):
                 job_data["result"] = json.dumps(result)
@@ -169,9 +148,8 @@ class JobTracker:
             job_data["error"] = str(error)
 
         self.redis.hset(self.job_key, job_id, json.dumps(job_data))
-        logger.info(f"Updated job {job_id} status to {status}")
+        logger.info(f"Updated job {job_id} status to {status}" + (f", stage to {stage}" if stage else ""))
 
-    # Add a method to check if a job is already completed
     def is_job_completed(self, job_id: str) -> bool:
         """Check if a job has already been completed."""
         job_data_json = self.redis.hget(self.job_key, job_id)
@@ -192,7 +170,8 @@ class JobTracker:
         if "metadata" in job_data and job_data["metadata"]:
             job_data["metadata"] = json.loads(job_data["metadata"])
         # Parse result if it's JSON
-        if "result" in job_data and job_data["result"] and isinstance(job_data["result"], str) and job_data["result"].startswith('{'):
+        if "result" in job_data and job_data["result"] and isinstance(job_data["result"], str) and job_data[
+            "result"].startswith('{'):
             try:
                 job_data["result"] = json.loads(job_data["result"])
             except:
@@ -217,7 +196,8 @@ class JobTracker:
                 job_data["metadata"] = json.loads(job_data["metadata"])
 
             # Parse result if it's JSON
-            if "result" in job_data and job_data["result"] and isinstance(job_data["result"], str) and job_data["result"].startswith('{'):
+            if "result" in job_data and job_data["result"] and isinstance(job_data["result"], str) and job_data[
+                "result"].startswith('{'):
                 try:
                     job_data["result"] = json.loads(job_data["result"])
                 except:
@@ -234,23 +214,190 @@ class JobTracker:
         deleted = self.redis.hdel(self.job_key, job_id)
         return deleted > 0
 
-    def clean_old_jobs(self, days: int = 7) -> int:
-        """Clean up jobs older than specified days."""
-        all_jobs = self.redis.hgetall(self.job_key)
-        cutoff_time = time.time() - (days * 24 * 60 * 60)
-        deleted_count = 0
-
-        for job_id, job_data_json in all_jobs.items():
-            job_data = json.loads(job_data_json)
-            if job_data.get("created_at", 0) < cutoff_time:
-                self.redis.hdel(self.job_key, job_id)
-                deleted_count += 1
-
-        return deleted_count
-
 
 # Initialize the job tracker
 job_tracker = JobTracker()
+
+
+class PriorityQueueManager:
+    """Manages task priorities across different queues."""
+
+    def __init__(self, redis_client, priority_levels=None):
+        self.redis = redis_client
+        self.priority_queue_key = "priority_task_queue"
+        self.active_task_key = "active_gpu_task"
+        # Set priority levels - lower number = higher priority
+        self.priority_levels = priority_levels or {
+            "inference_tasks": 1,  # Highest priority
+            "reranking_tasks": 2,
+            "gpu_tasks": 3,
+            "transcription_tasks": 4
+        }
+
+    def register_task(self, queue_name, task_id, metadata=None):
+        """Register a task in the priority system."""
+        priority = self.priority_levels.get(queue_name, 999)
+        task_data = {
+            "task_id": task_id,
+            "queue_name": queue_name,
+            "priority": priority,
+            "registered_at": time.time(),
+            "metadata": metadata or {}
+        }
+
+        # Add to sorted set with priority as score
+        self.redis.zadd(self.priority_queue_key, {json.dumps(task_data): priority})
+        logger.info(f"Registered task {task_id} from queue {queue_name} with priority {priority}")
+        return task_id
+
+    def get_active_task(self):
+        """Get the currently active GPU task, if any."""
+        active_task = self.redis.get(self.active_task_key)
+        if active_task:
+            return json.loads(active_task)
+        return None
+
+    def mark_task_active(self, task_data):
+        """Mark a task as currently active on GPU."""
+        self.redis.set(self.active_task_key, json.dumps(task_data), ex=3600)  # 1 hour expiry as safety
+        logger.info(f"Marked task {task_data.get('task_id')} as active on GPU")
+
+    def mark_task_completed(self, task_id):
+        """Mark a task as completed and remove from priority queue."""
+        # Remove from active task if it's this task
+        active_task = self.get_active_task()
+        if active_task and active_task.get("task_id") == task_id:
+            self.redis.delete(self.active_task_key)
+            logger.info(f"Removed task {task_id} from active GPU task")
+
+        # Remove from priority queue by searching for task with this ID
+        all_tasks = self.redis.zrange(self.priority_queue_key, 0, -1, withscores=True)
+        for task_json, _ in all_tasks:
+            task = json.loads(task_json)
+            if task.get("task_id") == task_id:
+                self.redis.zrem(self.priority_queue_key, task_json)
+                logger.info(f"Removed task {task_id} from priority queue")
+                break
+
+    def get_next_task(self):
+        """Get the highest priority task that should run next."""
+        # Get the task with the lowest score (highest priority)
+        tasks = self.redis.zrange(self.priority_queue_key, 0, 0, withscores=True)
+        if not tasks:
+            return None
+
+        task_json, priority = tasks[0]
+        return json.loads(task_json)
+
+    def can_run_task(self, queue_name, task_id):
+        """Determine if a task can run according to priorities, with anti-starvation measures."""
+        # Get the task details
+        task_details = None
+        all_tasks = self.redis.zrange(self.priority_queue_key, 0, -1, withscores=True)
+        for task_json, _ in all_tasks:
+            task = json.loads(task_json)
+            if task.get("task_id") == task_id:
+                task_details = task
+                break
+
+        if not task_details:
+            # Task not found in queue
+            return False
+
+        # For inference tasks, always allow them to run immediately
+        # This ensures they have absolute priority
+        if queue_name == "inference_tasks":
+            active_task = self.get_active_task()
+            # If no active task, or active task is not inference, allow to run
+            if not active_task or active_task.get("queue_name") != "inference_tasks":
+                return True
+
+        # Check if task has been waiting too long (5 minutes)
+        current_time = time.time()
+        registered_time = task_details.get("registered_at", current_time)
+
+        if current_time - registered_time > 300:  # 5 minutes
+            # Task has waited too long, allow it to run regardless of priority
+            logger.info(f"Task {task_id} has waited over 5 minutes, allowing to run")
+            return True
+
+        # If no active task, can run if it's the highest priority task
+        active_task = self.get_active_task()
+        if not active_task:
+            # Check if this is the highest priority task
+            next_task = self.get_next_task()
+
+            # If no tasks in queue or this is the highest priority task, run it
+            if not next_task or next_task.get("task_id") == task_id:
+                return True
+
+            # If this task's queue has higher priority than next task, run it
+            task_priority = self.priority_levels.get(queue_name, 999)
+            next_priority = next_task.get("priority", 999)
+            return task_priority <= next_priority
+
+        # If there's an active task of higher priority, wait
+        active_priority = active_task.get("priority", 999)
+        task_priority = self.priority_levels.get(queue_name, 999)
+
+        # Only allow if this task has strictly higher priority than the running task
+        return task_priority < active_priority
+
+
+# Initialize the priority queue manager
+priority_queue = PriorityQueueManager(redis_client=redis_broker.client)
+
+# Add middleware
+redis_broker.add_middleware(Callbacks())
+redis_broker.add_middleware(AgeLimit())
+redis_broker.add_middleware(Retries(max_retries=3))
+# Add Results middleware
+redis_broker.add_middleware(Results(backend=results_backend))
+
+dramatiq.set_broker(redis_broker)
+
+# Global variables to hold the preloaded models
+_PRELOADED_EMBEDDING_MODEL = None
+_PRELOADED_LLM_MODEL = None
+_PRELOADED_COLBERT_RERANKER = None
+_PRELOADED_WHISPER_MODEL = None
+
+
+# Create worker middleware to run the preload function
+class WorkerSetupMiddleware:
+    """Middleware to run setup code when worker processes boot."""
+
+    def before_worker_boot(self, broker, worker):
+        """Run setup code before the worker boots."""
+        logger.info(f"Initializing worker {worker.worker_id} of type {worker_type}")
+
+        # Preload appropriate models based on worker type
+        if worker_type == "gpu-inference":
+            logger.info("Preloading LLM and reranking models for gpu-inference worker")
+            preload_llm_model()
+            preload_colbert_reranker()
+
+        elif worker_type == "gpu-embedding":
+            logger.info("Preloading embedding model for gpu-embedding worker")
+            preload_embedding_model()
+
+        elif worker_type == "gpu-whisper":
+            logger.info("Preloading Whisper model for gpu-whisper worker")
+            preload_whisper_model()
+
+        # Log GPU memory statistics after preloading
+        if torch.cuda.is_available() and worker_type.startswith("gpu-"):
+            for i in range(torch.cuda.device_count()):
+                device_name = torch.cuda.get_device_name(i)
+                allocated = torch.cuda.memory_allocated(i) / (1024 ** 3)
+                reserved = torch.cuda.memory_reserved(i) / (1024 ** 3)
+                logger.info(
+                    f"GPU {i} ({device_name}) after worker init: Allocated: {allocated:.2f} GB, Reserved: {reserved:.2f} GB")
+
+
+# Add the middleware to the broker
+worker_setup = WorkerSetupMiddleware()
+redis_broker.add_middleware(worker_setup)
 
 
 def check_gpu_health():
@@ -311,19 +458,14 @@ def check_gpu_health():
         return False, f"Unexpected error in GPU health check: {str(e)}"
 
 
-# Global variable to hold the preloaded embedding model
-_PRELOADED_EMBEDDING_MODEL = None
-
-
 def preload_embedding_model():
     """
     Preload the embedding model at worker startup to avoid loading it for each job.
-    This function should be called during worker initialization.
     """
     global _PRELOADED_EMBEDDING_MODEL
 
-    # Skip if already loaded or if we're on a CPU worker
-    if _PRELOADED_EMBEDDING_MODEL is not None or worker_type == "cpu":
+    # Skip if already loaded or if we're not on the right worker type
+    if _PRELOADED_EMBEDDING_MODEL is not None or worker_type != "gpu-embedding":
         return
 
     logger.info(f"Preloading embedding model {settings.default_embedding_model} on {settings.device}")
@@ -341,7 +483,7 @@ def preload_embedding_model():
                 allocated = torch.cuda.memory_allocated(i) / (1024 ** 3)
                 reserved = torch.cuda.memory_reserved(i) / (1024 ** 3)
                 logger.info(
-                    f"GPU {i} ({device_name}) before model loading: Allocated: {allocated:.2f} GB, Reserved: {reserved:.2f} GB")
+                    f"GPU {i} ({device_name}) before embedding model loading: Allocated: {allocated:.2f} GB, Reserved: {reserved:.2f} GB")
 
         # Load the model
         _PRELOADED_EMBEDDING_MODEL = HuggingFaceEmbeddings(
@@ -360,47 +502,347 @@ def preload_embedding_model():
             for i in range(torch.cuda.device_count()):
                 allocated = torch.cuda.memory_allocated(i) / (1024 ** 3)
                 reserved = torch.cuda.memory_reserved(i) / (1024 ** 3)
-                logger.info(f"GPU {i} after model loading: Allocated: {allocated:.2f} GB, Reserved: {reserved:.2f} GB")
+                logger.info(
+                    f"GPU {i} after embedding model loading: Allocated: {allocated:.2f} GB, Reserved: {reserved:.2f} GB")
 
         logger.info(f"Successfully preloaded embedding model with dimension {embedding_dim}")
     except Exception as e:
         logger.error(f"Failed to preload embedding model: {str(e)}")
-        # We don't raise the exception here - the worker should still start
-        # Individual jobs will attempt to load the model as needed
 
 
+def preload_llm_model():
+    """
+    Preload the LLM model at worker startup.
+    """
+    global _PRELOADED_LLM_MODEL
+
+    # Skip if already loaded or if we're not on the right worker type
+    if _PRELOADED_LLM_MODEL is not None or worker_type != "gpu-inference":
+        return
+
+    logger.info(f"Preloading LLM model {settings.default_llm_model} on {settings.device}")
+
+    try:
+        # Clear CUDA cache before loading
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            for i in range(torch.cuda.device_count()):
+                torch.cuda.synchronize(i)
+
+            # Log GPU memory status before loading
+            for i in range(torch.cuda.device_count()):
+                device_name = torch.cuda.get_device_name(i)
+                allocated = torch.cuda.memory_allocated(i) / (1024 ** 3)
+                reserved = torch.cuda.memory_reserved(i) / (1024 ** 3)
+                logger.info(
+                    f"GPU {i} ({device_name}) before LLM model loading: Allocated: {allocated:.2f} GB, Reserved: {reserved:.2f} GB")
+
+        # Import here to avoid circular imports
+        from src.core.llm import LocalLLM
+
+        # Load the model
+        _PRELOADED_LLM_MODEL = LocalLLM(
+            model_name=settings.default_llm_model,
+            device=settings.device,
+            temperature=settings.llm_temperature,
+            max_tokens=settings.llm_max_tokens,
+            use_4bit=settings.llm_use_4bit,
+            use_8bit=settings.llm_use_8bit,
+            torch_dtype=torch.float16 if settings.use_fp16 and settings.device.startswith("cuda") else None
+        )
+
+        # Test the LLM with a simple prompt to ensure it works
+        test_response = _PRELOADED_LLM_MODEL.answer_query(
+            query="What is 2+2?",
+            documents=[]
+        )
+
+        # Log GPU memory status after loading
+        if torch.cuda.is_available():
+            for i in range(torch.cuda.device_count()):
+                allocated = torch.cuda.memory_allocated(i) / (1024 ** 3)
+                reserved = torch.cuda.memory_reserved(i) / (1024 ** 3)
+                logger.info(
+                    f"GPU {i} after LLM model loading: Allocated: {allocated:.2f} GB, Reserved: {reserved:.2f} GB")
+
+        logger.info(f"Successfully preloaded LLM model")
+    except Exception as e:
+        logger.error(f"Failed to preload LLM model: {str(e)}")
+
+
+def preload_colbert_reranker():
+    """
+    Preload the ColBERT and BGE reranking models.
+    """
+    global _PRELOADED_COLBERT_RERANKER
+
+    # Skip if already loaded or if we're not on the right worker type
+    if _PRELOADED_COLBERT_RERANKER is not None or worker_type != "gpu-inference":
+        return
+
+    logger.info(f"Preloading ColBERT and BGE reranking models on {settings.device}")
+
+    try:
+        # Clear CUDA cache before loading
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            for i in range(torch.cuda.device_count()):
+                torch.cuda.synchronize(i)
+
+            # Log GPU memory status before loading
+            for i in range(torch.cuda.device_count()):
+                device_name = torch.cuda.get_device_name(i)
+                allocated = torch.cuda.memory_allocated(i) / (1024 ** 3)
+                reserved = torch.cuda.memory_reserved(i) / (1024 ** 3)
+                logger.info(
+                    f"GPU {i} ({device_name}) before reranker loading: Allocated: {allocated:.2f} GB, Reserved: {reserved:.2f} GB")
+
+        # Import here to avoid circular imports
+        from src.core.colbert_reranker import ColBERTReranker
+
+        # Load the reranking models
+        _PRELOADED_COLBERT_RERANKER = ColBERTReranker(
+            model_name=settings.default_colbert_model,
+            device=settings.device,
+            batch_size=settings.colbert_batch_size,
+            use_fp16=settings.use_fp16,
+            use_bge_reranker=settings.use_bge_reranker,
+            colbert_weight=settings.colbert_weight,
+            bge_weight=settings.bge_weight,
+            bge_model_name=settings.default_bge_reranker_model
+        )
+
+        # Test the reranker with a simple query and document to ensure it works
+        from langchain_core.documents import Document
+        test_doc = Document(page_content="This is a test document.", metadata={})
+        test_results = _PRELOADED_COLBERT_RERANKER.rerank("test query", [test_doc], 1)
+
+        # Log GPU memory status after loading
+        if torch.cuda.is_available():
+            for i in range(torch.cuda.device_count()):
+                allocated = torch.cuda.memory_allocated(i) / (1024 ** 3)
+                reserved = torch.cuda.memory_reserved(i) / (1024 ** 3)
+                logger.info(
+                    f"GPU {i} after reranker loading: Allocated: {allocated:.2f} GB, Reserved: {reserved:.2f} GB")
+
+        logger.info(f"Successfully preloaded ColBERT and BGE reranking models")
+    except Exception as e:
+        logger.error(f"Failed to preload reranking models: {str(e)}")
+
+
+def preload_whisper_model():
+    """
+    Preload the Whisper model for transcription.
+    """
+    global _PRELOADED_WHISPER_MODEL
+
+    # Skip if already loaded or if we're not on the right worker type
+    if _PRELOADED_WHISPER_MODEL is not None or worker_type != "gpu-whisper":
+        return
+
+    logger.info(f"Preloading Whisper model {settings.whisper_model_size} on {settings.device}")
+
+    try:
+        # Clear CUDA cache before loading
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            for i in range(torch.cuda.device_count()):
+                torch.cuda.synchronize(i)
+
+            # Log GPU memory status before loading
+            for i in range(torch.cuda.device_count()):
+                device_name = torch.cuda.get_device_name(i)
+                allocated = torch.cuda.memory_allocated(i) / (1024 ** 3)
+                reserved = torch.cuda.memory_reserved(i) / (1024 ** 3)
+                logger.info(
+                    f"GPU {i} ({device_name}) before Whisper model loading: Allocated: {allocated:.2f} GB, Reserved: {reserved:.2f} GB")
+
+        # Import the WhisperModel
+        from faster_whisper import WhisperModel
+
+        # Get the model path
+        model_path = settings.whisper_model_full_path if hasattr(settings,
+                                                                 'whisper_model_full_path') else settings.whisper_model_size
+
+        # Load the Whisper model
+        _PRELOADED_WHISPER_MODEL = WhisperModel(
+            model_path,
+            device=settings.device,
+            compute_type="float16" if settings.use_fp16 else "float32",
+            cpu_threads=4,  # Use multiple CPU threads for pre/post-processing
+            num_workers=2  # Number of workers for parallel processing
+        )
+
+        # Log GPU memory status after loading
+        if torch.cuda.is_available():
+            for i in range(torch.cuda.device_count()):
+                allocated = torch.cuda.memory_allocated(i) / (1024 ** 3)
+                reserved = torch.cuda.memory_reserved(i) / (1024 ** 3)
+                logger.info(
+                    f"GPU {i} after Whisper model loading: Allocated: {allocated:.2f} GB, Reserved: {reserved:.2f} GB")
+
+        logger.info(f"Successfully preloaded Whisper model")
+    except Exception as e:
+        logger.error(f"Failed to preload Whisper model: {str(e)}")
+
+
+def get_vector_store():
+    """
+    Get a vector store instance for background tasks with support for preloaded models.
+    """
+    global _PRELOADED_EMBEDDING_MODEL
+
+    from src.core.vectorstore import QdrantStore
+    from src.config.settings import settings
+    import torch
+
+    # Initialize qdrant client
+    from qdrant_client import QdrantClient
+    qdrant_client = QdrantClient(
+        host=settings.qdrant_host,
+        port=settings.qdrant_port,
+    )
+
+    # If we have a preloaded model and we're on the embedding worker, use it
+    if _PRELOADED_EMBEDDING_MODEL is not None and worker_type == "gpu-embedding":
+        logger.info("Using preloaded embedding model for vector store")
+        return QdrantStore(
+            client=qdrant_client,
+            collection_name=settings.qdrant_collection,
+            embedding_function=_PRELOADED_EMBEDDING_MODEL,
+        )
+
+    # Create a new embedding model instance
+    logger.info("Creating new embedding model instance for vector store")
+    from langchain_huggingface import HuggingFaceEmbeddings
+
+    # Determine the device (default to CPU for non-embedding workers)
+    device = settings.device if worker_type == "gpu-embedding" else "cpu"
+
+    embedding_function = HuggingFaceEmbeddings(
+        model_name=settings.embedding_model_full_path,
+        model_kwargs={"device": device},
+        encode_kwargs={"batch_size": settings.batch_size, "normalize_embeddings": True},
+        cache_folder=os.path.join(settings.models_dir, settings.embedding_model_path)
+    )
+
+    return QdrantStore(
+        client=qdrant_client,
+        collection_name=settings.qdrant_collection,
+        embedding_function=embedding_function,
+    )
+
+
+# Define a periodic task to clean up stalled tasks in the priority system
+@dramatiq.actor(queue_name="system_tasks")
+def cleanup_stalled_tasks():
+    """Clean up stalled tasks in the priority system."""
+    redis_client = redis_broker.client
+
+    # Check active task
+    active_task_json = redis_client.get("active_gpu_task")
+    if not active_task_json:
+        logger.info("No active GPU task to clean up")
+        return
+
+    active_task = json.loads(active_task_json)
+    task_id = active_task.get("task_id")
+    job_id = active_task.get("job_id", "unknown")
+
+    # Get when this task was marked active
+    task_age = time.time() - active_task.get("registered_at", time.time())
+
+    # If task has been active for more than 30 minutes, it's likely stalled
+    if task_age > 1800:  # 30 minutes
+        logger.warning(f"Found stalled task {task_id} for job {job_id} (active for {task_age:.2f} seconds)")
+
+        # Check if the job still exists and its status
+        job_data = job_tracker.get_job(job_id)
+        if not job_data or job_data.get("status") in ["completed", "failed", "timeout"]:
+            # Job is no longer running or doesn't exist, but task is still marked active
+            redis_client.delete("active_gpu_task")
+            logger.warning(f"Cleaned up stalled task: {task_id} for job {job_id}")
+
+            # Try to update job status if it exists but isn't marked as failed
+            if job_data and job_data.get("status") == "processing":
+                job_tracker.update_job_status(
+                    job_id,
+                    JobStatus.FAILED,
+                    error="Task appears to be stalled and was terminated"
+                )
+        else:
+            # Job is still in processing state - check GPU health
+            is_healthy, status_message = check_gpu_health()
+            if not is_healthy:
+                # GPU is unhealthy, terminate the task
+                redis_client.delete("active_gpu_task")
+                logger.error(f"Terminating stalled task due to GPU health issues: {status_message}")
+
+                # Update job status
+                job_tracker.update_job_status(
+                    job_id,
+                    JobStatus.FAILED,
+                    error=f"Task terminated due to GPU health issues: {status_message}"
+                )
+            else:
+                # GPU is healthy but task is still running - log but don't terminate yet
+                logger.warning(f"Found long-running task {task_id} for job {job_id}, but GPU appears healthy")
+
+
+# Specialized actor for LLM inference with priority handling
 @dramatiq.actor(
     queue_name="inference_tasks",
-    max_retries=3,  # Increase retries
-    time_limit=300000,
-    min_backoff=10000,  # 10 seconds minimum backoff
-    max_backoff=300000  # 5 minutes maximum backoff
+    max_retries=3,
+    time_limit=300000,  # 5 minutes
+    min_backoff=10000,  # 10 seconds
+    max_backoff=300000  # 5 minutes
 )
 def perform_llm_inference(job_id: str, query: str, documents: List[Dict], metadata_filter: Optional[Dict] = None):
-    """Perform LLM inference using GPU with high priority and resource management."""
+    """Perform LLM inference using reranking and local LLM with priority handling."""
+    global _PRELOADED_LLM_MODEL, _PRELOADED_COLBERT_RERANKER
+
     try:
-        # Use the GPU rate limiter to ensure only one GPU task runs at a time
-        with gpu_limiter.acquire():
-            # Try to acquire GPU resources
-            logger.info(f"Acquiring GPU resources for job {job_id}")
+        # Register task with the priority system
+        task_id = f"inference_{job_id}"
+        priority_queue.register_task("inference_tasks", task_id, {"job_id": job_id, "query": query})
 
+        # Update job status to show we're queued
+        job_tracker.update_job_status(
+            job_id,
+            JobStatus.PROCESSING,
+            result={"message": "In priority queue for inference resources"}
+        )
+
+        # Wait for priority system to allow this task to run
+        # For inference tasks, can_run_task will always return True if there's no active inference task
+        wait_start = time.time()
+        while not priority_queue.can_run_task("inference_tasks", task_id):
+            # Log every 10 seconds of waiting
+            if int(time.time() - wait_start) % 10 == 0:
+                logger.info(f"Inference task {task_id} waiting in priority queue")
+            time.sleep(0.5)
+
+        # Mark this task as now active on GPU
+        priority_queue.mark_task_active({
+            "task_id": task_id,
+            "queue_name": "inference_tasks",
+            "priority": 1,
+            "job_id": job_id,
+            "registered_at": time.time()
+        })
+
+        logger.info(f"Starting inference for job {job_id} with priority handling")
+
+        try:
             # Update job status to processing
-            job_tracker.update_job_status(job_id, JobStatus.PROCESSING)
-            logger.info(f"GPU worker performing inference for query: {query}")
-
-            # Import here to avoid circular imports
-            from src.core.llm import LocalLLM
-            from src.config.settings import settings
-            from langchain_core.documents import Document
-            import torch
-
-            # Try to clean up CUDA memory
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-                initial_memory = torch.cuda.memory_allocated() / (1024 ** 3)
-                logger.info(f"Initial GPU memory allocated: {initial_memory:.2f} GB")
+            job_tracker.update_job_status(
+                job_id,
+                JobStatus.PROCESSING,
+                result={"message": "Processing query with LLM"}
+            )
 
             # Convert document dictionaries back to Document objects
+            from langchain_core.documents import Document
             doc_objects = []
             for doc_dict in documents:
                 doc = Document(
@@ -410,50 +852,47 @@ def perform_llm_inference(job_id: str, query: str, documents: List[Dict], metada
                 score = doc_dict.get("relevance_score", 0)
                 doc_objects.append((doc, score))
 
-            # Initialize LLM with memory efficient settings
-            llm = LocalLLM(
-                model_name=settings.default_llm_model,
-                device="cuda",
-                temperature=settings.llm_temperature,
-                max_tokens=settings.llm_max_tokens,
-                use_4bit=settings.llm_use_4bit,
-                use_8bit=settings.llm_use_8bit,
-                torch_dtype=torch.float16 if settings.use_fp16 and settings.device.startswith("cuda") else None
-            )
+            # Perform reranking if available
+            reranker = _PRELOADED_COLBERT_RERANKER
+            if reranker is not None:
+                logger.info(f"Reranking {len(doc_objects)} documents")
+                reranked_docs = reranker.rerank(query, [doc for doc, _ in doc_objects], 5)
+            else:
+                logger.warning("Reranker not available, using original document order")
+                reranked_docs = doc_objects[:5]
 
-            # Log memory usage after loading model
-            if torch.cuda.is_available():
-                model_memory = torch.cuda.memory_allocated() / (1024 ** 3)
-                logger.info(f"GPU memory after loading model: {model_memory:.2f} GB")
-                logger.info(f"Model memory delta: {model_memory - initial_memory:.2f} GB")
+            # Use preloaded LLM model if available
+            llm = _PRELOADED_LLM_MODEL
+            if llm is None:
+                logger.warning("Preloaded LLM not available, loading on demand")
+                # Import here to avoid circular imports
+                from src.core.llm import LocalLLM
+                import torch
 
-            start_time = time.time()
+                # Initialize LLM with memory efficient settings
+                llm = LocalLLM(
+                    model_name=settings.default_llm_model,
+                    device=settings.device,
+                    temperature=settings.llm_temperature,
+                    max_tokens=settings.llm_max_tokens,
+                    use_4bit=settings.llm_use_4bit,
+                    use_8bit=settings.llm_use_8bit,
+                    torch_dtype=torch.float16 if settings.use_fp16 and settings.device.startswith("cuda") else None
+                )
 
             # Perform inference
+            start_time = time.time()
             answer = llm.answer_query(
                 query=query,
-                documents=doc_objects,
+                documents=reranked_docs,
                 metadata_filter=metadata_filter
             )
-
             inference_time = time.time() - start_time
             logger.info(f"Inference completed in {inference_time:.2f}s")
 
-            # Extract source information
-            sources = []
-            for doc, score in doc_objects:
-                source = {
-                    "id": doc.metadata.get("id", ""),
-                    "title": doc.metadata.get("title", "Unknown"),
-                    "source_type": doc.metadata.get("source", "unknown"),
-                    "url": doc.metadata.get("url"),
-                    "relevance_score": score,
-                }
-                sources.append(source)
-
             # Prepare formatted documents for response
             formatted_documents = []
-            for doc, score in doc_objects:
+            for doc, score in reranked_docs:
                 formatted_doc = {
                     "id": doc.metadata.get("id", ""),
                     "content": doc.page_content,
@@ -461,16 +900,6 @@ def perform_llm_inference(job_id: str, query: str, documents: List[Dict], metada
                     "relevance_score": score,
                 }
                 formatted_documents.append(formatted_doc)
-
-            # Clean up GPU memory after inference
-            if torch.cuda.is_available():
-                # Explicitly delete model to free memory
-                del llm.model
-                del llm.pipe
-                del llm
-                torch.cuda.empty_cache()
-                final_memory = torch.cuda.memory_allocated() / (1024 ** 3)
-                logger.info(f"Final GPU memory after cleanup: {final_memory:.2f} GB")
 
             # Update job with success result
             job_tracker.update_job_status(
@@ -481,8 +910,7 @@ def perform_llm_inference(job_id: str, query: str, documents: List[Dict], metada
                     "answer": answer,
                     "documents": formatted_documents,
                     "metadata_filters_used": metadata_filter,
-                    "execution_time": inference_time,
-                    "sources": sources,
+                    "execution_time": inference_time
                 }
             )
 
@@ -491,15 +919,14 @@ def perform_llm_inference(job_id: str, query: str, documents: List[Dict], metada
                 "documents": formatted_documents,
                 "execution_time": inference_time
             }
+        finally:
+            # Always mark task as completed, even if it failed
+            priority_queue.mark_task_completed(task_id)
 
-    except TimeLimitExceeded:
-        logger.error(f"Time limit exceeded for job {job_id}")
-        job_tracker.update_job_status(
-            job_id,
-            JobStatus.TIMEOUT,
-            error="Inference timeout exceeded"
-        )
-        raise
+            # Clear cache if needed
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
     except Exception as e:
         import traceback
         error_detail = f"Error performing LLM inference: {str(e)}\n{traceback.format_exc()}"
@@ -515,328 +942,111 @@ def perform_llm_inference(job_id: str, query: str, documents: List[Dict], metada
         # Clean up GPU memory on error
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
-            logger.info(f"Cleaned up GPU memory after error")
+
+        # Make sure to mark task as completed even in error case
+        priority_queue.mark_task_completed(f"inference_{job_id}")
 
         # Re-raise for dramatiq retry mechanism
         raise
 
 
-# Now modify the get_vector_store function to use the preloaded model when available
-def get_vector_store(force_cpu=False):
-    """
-    Get a vector store instance for background tasks with support for preloaded models.
-
-    Args:
-        force_cpu: Whether to force CPU usage for embeddings
-    """
-    global _PRELOADED_EMBEDDING_MODEL
-
-    from src.core.vectorstore import QdrantStore
-    from src.config.settings import settings
-    import torch
-
-    # Initialize qdrant client
-    from qdrant_client import QdrantClient
-    qdrant_client = QdrantClient(
-        host=settings.qdrant_host,
-        port=settings.qdrant_port,
-    )
-
-    # If we have a preloaded model and we're not forcing CPU, use the preloaded model
-    if _PRELOADED_EMBEDDING_MODEL is not None and not force_cpu and worker_type != "cpu":
-        logger.info("Using preloaded embedding model")
-        return QdrantStore(
-            client=qdrant_client,
-            collection_name=settings.qdrant_collection,
-            embedding_function=_PRELOADED_EMBEDDING_MODEL,
-        )
-
-    # If forcing CPU or on a CPU worker, use CPU model
-    if force_cpu or worker_type == "cpu":
-        logger.info("Using CPU embedding model")
-        from langchain_huggingface import HuggingFaceEmbeddings
-        embedding_function = HuggingFaceEmbeddings(
-            model_name=settings.embedding_model_full_path,
-            model_kwargs={"device": "cpu"},
-            encode_kwargs={"batch_size": settings.batch_size, "normalize_embeddings": True},
-            cache_folder=os.path.join(settings.models_dir, settings.embedding_model_path)
-        )
-        return QdrantStore(
-            client=qdrant_client,
-            collection_name=settings.qdrant_collection,
-            embedding_function=embedding_function,
-        )
-
-    # If we reach here, we need to create a new GPU model instance
-    # This should only happen if preloading failed or was skipped
-    logger.info("Creating new GPU embedding model instance")
-    # For GPU workers, implement robust GPU handling
-    if torch.cuda.is_available():
-        # Maximum number of GPU attempts - but fail faster on model loading
-        max_gpu_attempts = 2  # Reduced from 3 to fail faster
-        gpu_attempts = 0
-
-        while gpu_attempts < max_gpu_attempts:
-            try:
-                # Aggressive GPU memory cleanup
-                torch.cuda.empty_cache()
-                for i in range(torch.cuda.device_count()):
-                    torch.cuda.synchronize(i)
-
-                # Add a cooling-off period to allow GPU to stabilize, but shorter
-                time.sleep(1)  # Reduced from 2s to make failure faster
-
-                # Check GPU memory status and log it for debugging
-                allocated = torch.cuda.memory_allocated() / (1024 ** 3)
-                reserved = torch.cuda.memory_reserved() / (1024 ** 3)
-                logger.info(
-                    f"GPU memory before embedding model: Allocated: {allocated:.2f} GB, Reserved: {reserved:.2f} GB")
-
-                # Try to get embedding function on GPU - with timeout to fail faster
-                from langchain_huggingface import HuggingFaceEmbeddings
-                try:
-                    # Try to import the model with a timeout to fail faster
-                    import signal
-                    import functools
-
-                    # Define a timeout handler
-                    class TimeoutError(Exception):
-                        pass
-
-                    def timeout_handler(signum, frame):
-                        raise TimeoutError("Model loading timed out")
-
-                    # Set timeout - 30 seconds should be enough for model loading
-                    # If it takes longer, something is likely wrong
-                    signal.signal(signal.SIGALRM, timeout_handler)
-                    signal.alarm(30)
-
-                    # Try to load the model
-                    embedding_function = HuggingFaceEmbeddings(
-                        model_name=settings.embedding_model_full_path,
-                        model_kwargs={"device": settings.device},
-                        encode_kwargs={"batch_size": settings.batch_size, "normalize_embeddings": True},
-                        cache_folder=os.path.join(settings.models_dir, settings.embedding_model_path)
-                    )
-
-                    # Cancel the alarm if successful
-                    signal.alarm(0)
-                except TimeoutError:
-                    logger.error("Embedding model loading timed out - failing fast")
-                    raise RuntimeError("Embedding model loading timed out")
-
-                logger.info("Successfully initialized GPU embedding model")
-
-                # Initialize vector store with GPU embeddings
-                return QdrantStore(
-                    client=qdrant_client,
-                    collection_name=settings.qdrant_collection,
-                    embedding_function=embedding_function,
-                )
-            except Exception as e:
-                gpu_attempts += 1
-                logger.warning(f"GPU embedding attempt {gpu_attempts}/{max_gpu_attempts} failed: {str(e)}")
-
-                # Fail fast on certain error types that suggest hardware issues
-                if "CUDA out of memory" in str(e) or "CUDA error" in str(e) or "invalid argument" in str(e):
-                    logger.error(f"Critical CUDA error detected, failing fast: {str(e)}")
-                    # Don't retry on these fundamental errors
-                    break
-
-                # Try more aggressive CUDA reset approach for next attempt
-                if gpu_attempts < max_gpu_attempts:
-                    try:
-                        # Force CUDA reset by creating and destroying a dummy tensor
-                        dummy = torch.ones(1).cuda()
-                        del dummy
-                        torch.cuda.empty_cache()
-
-                        # Wait between attempts, but not too long to fail fast
-                        wait_time = 3 * gpu_attempts  # Reduced wait time
-                        logger.info(f"Waiting {wait_time} seconds before next GPU attempt")
-                        time.sleep(wait_time)
-                    except Exception as reset_error:
-                        logger.warning(f"Error during GPU reset: {str(reset_error)}")
-
-        # If we've exhausted all GPU attempts, this is a critical error
-        # Don't fall back to CPU for embedding - that would be too slow
-        error_msg = f"Critical error: Failed to initialize GPU embedding model after {gpu_attempts} attempts"
-        logger.error(error_msg)
-        raise RuntimeError(error_msg)
-    else:
-        # No GPU available but we're on a GPU worker - this is unexpected
-        error_msg = "Critical error: GPU worker but no CUDA available"
-        logger.error(error_msg)
-        raise RuntimeError(error_msg)
-
-
+# Specialized actor for GPU-based embedding with priority handling
 @dramatiq.actor(
     queue_name="gpu_tasks",
-    max_retries=5,
-    time_limit=3600000,
-    min_backoff=60000,
-    max_backoff=300000,
-    store_results=True  # Enable result storage with Results middleware
+    max_retries=3,
+    time_limit=600000,  # 10 minutes
+    min_backoff=10000,
+    max_backoff=300000
 )
-def process_video_gpu(job_id: str, url: str, custom_metadata: Optional[Dict[str, Any]] = None):
-    """Process a video using GPU for transcription and embedding with improved error handling."""
+def generate_embeddings_gpu(job_id: str, chunks: List[Dict], metadata: Optional[Dict] = None):
+    """Generate embeddings with priority handling."""
     try:
-        # First, check if this job has already been completed
-        if job_tracker.is_job_completed(job_id):
-            logger.info(f"Job {job_id} has already been completed. Skipping processing.")
-            return {"message": "Job already completed", "job_id": job_id, "status": "already_completed"}
+        # Register task with the priority system
+        task_id = f"embedding_{job_id}"
+        priority_queue.register_task("gpu_tasks", task_id, {"job_id": job_id})
 
-        # Perform proactive GPU health check BEFORE trying to acquire the limiter
-        is_healthy, health_message = check_gpu_health()
-        if not is_healthy:
-            # Don't even try to acquire the GPU limiter if the GPU is in a bad state
-            error_msg = f"GPU health check failed: {health_message}"
-            logger.error(error_msg)
+        # Update job status to show we're queued
+        job_tracker.update_job_status(
+            job_id,
+            JobStatus.PROCESSING,
+            result={"message": "In priority queue for GPU resources"}
+        )
 
-            # Update job status to reflect GPU health issues
-            job_tracker.update_job_status(
-                job_id,
-                JobStatus.FAILED,
-                error=error_msg
-            )
+        # Wait for priority system to allow this task to run
+        wait_start = time.time()
+        while not priority_queue.can_run_task("gpu_tasks", task_id):
+            # Log every 30 seconds of waiting
+            if int(time.time() - wait_start) % 30 == 0:
+                logger.info(f"Embedding task {task_id} waiting in priority queue")
+            time.sleep(1)
 
-            # Raise an exception to trigger retry with backoff
-            raise RuntimeError(error_msg)
+        # Mark this task as now active on GPU
+        priority_queue.mark_task_active({
+            "task_id": task_id,
+            "queue_name": "gpu_tasks",
+            "priority": 3,
+            "job_id": job_id,
+            "registered_at": time.time()
+        })
 
-        # GPU health check passed, now try to acquire the rate limiter
-        logger.info(f"GPU health check passed. Attempting to acquire GPU limiter for job {job_id}")
+        logger.info(f"Starting embedding generation for job {job_id} with priority handling")
 
         try:
-            # Update job status to reflect waiting for GPU
+            # Update job status to processing
             job_tracker.update_job_status(
                 job_id,
                 JobStatus.PROCESSING,
-                result={"message": "Waiting for GPU resources to become available"}
+                result={"message": "Generating embeddings"}
             )
 
-            # Attempt to acquire the limiter
-            with gpu_limiter.acquire():
-                # Once we have the limiter, check GPU health again - it might have changed
-                is_still_healthy, health_message = check_gpu_health()
-                if not is_still_healthy:
-                    # GPU was healthy before, but is unhealthy now that we have the lock
-                    error_msg = f"GPU health deteriorated while waiting for lock: {health_message}"
-                    logger.error(error_msg)
-
-                    # Update job status
-                    job_tracker.update_job_status(
-                        job_id,
-                        JobStatus.FAILED,
-                        error=error_msg
-                    )
-
-                    # Raise an exception to release the lock and trigger retry
-                    raise RuntimeError(error_msg)
-
-                # Update job status to processing
-                job_tracker.update_job_status(
-                    job_id,
-                    JobStatus.PROCESSING,
-                    result={"message": f"Processing video with GPU: {url}"}
+            # Convert chunk dictionaries to Document objects
+            from langchain_core.documents import Document
+            documents = []
+            for chunk in chunks:
+                doc = Document(
+                    page_content=chunk["content"],
+                    metadata=chunk.get("metadata", {})
                 )
-                logger.info(f"GPU resources acquired for job {job_id}")
+                documents.append(doc)
 
-                # Import here to avoid circular imports
-                from src.core.document_processor import DocumentProcessor
-                from src.core.video_transcriber import VideoTranscriber
-                import torch
+            # Get vector store with preloaded embeddings
+            vector_store = get_vector_store()
 
-                # Advanced GPU preparation
-                if torch.cuda.is_available():
-                    # Log GPU state before processing
-                    for i in range(torch.cuda.device_count()):
-                        device_name = torch.cuda.get_device_name(i)
-                        allocated = torch.cuda.memory_allocated(i) / (1024 ** 3)
-                        reserved = torch.cuda.memory_reserved(i) / (1024 ** 3)
-                        logger.info(
-                            f"GPU {i} ({device_name}) before processing: Allocated: {allocated:.2f} GB, Reserved: {reserved:.2f} GB")
+            # Generate embeddings and add to vector store
+            start_time = time.time()
+            doc_ids = vector_store.add_documents(documents)
+            embedding_time = time.time() - start_time
 
-                    # Reset CUDA context
-                    torch.cuda.empty_cache()
-                    for i in range(torch.cuda.device_count()):
-                        torch.cuda.synchronize(i)
-                    time.sleep(1)  # Short pause
+            logger.info(f"Generated embeddings for {len(documents)} documents in {embedding_time:.2f}s")
 
-                # Get vector store with improved GPU handling
-                vector_store = get_vector_store(force_cpu=False)
-
-                # Create transcriber with GPU
-                transcriber = VideoTranscriber(
-                    whisper_model_size=os.environ.get("WHISPER_MODEL_SIZE", "medium"),
-                    device="cuda",
-                    num_workers=1  # Use single worker thread to avoid oversubscription
-                )
-
-                # Initialize document processor
-                processor = DocumentProcessor(
-                    vector_store=vector_store,
-                    video_transcriber=transcriber
-                )
-
-                # Process the video - this uses GPU for transcription and embedding
-                document_ids = processor.process_video(url=url, custom_metadata=custom_metadata)
-
-                # Clean up GPU memory
-                if torch.cuda.is_available():
-                    # Log GPU state after processing
-                    for i in range(torch.cuda.device_count()):
-                        allocated = torch.cuda.memory_allocated(i) / (1024 ** 3)
-                        reserved = torch.cuda.memory_reserved(i) / (1024 ** 3)
-                        logger.info(
-                            f"GPU {i} after processing: Allocated: {allocated:.2f} GB, Reserved: {reserved:.2f} GB")
-
-                    # Thorough cleanup
-                    torch.cuda.empty_cache()
-                    for i in range(torch.cuda.device_count()):
-                        torch.cuda.synchronize(i)
-
-                # Update job with success result
-                job_tracker.update_job_status(
-                    job_id,
-                    JobStatus.COMPLETED,
-                    result={
-                        "message": f"Successfully processed video using GPU: {url}",
-                        "document_count": len(document_ids),
-                        "document_ids": document_ids,
-                    }
-                )
-
-                logger.info(f"Released GPU resources for job {job_id}")
-                return {
-                    "message": "Successfully processed video",
-                    "document_count": len(document_ids),
-                    "document_ids": document_ids,
-                    "job_id": job_id,
-                    "status": "completed"
-                }
-
-        except dramatiq.errors.RateLimitExceeded:
-            # This will trigger a retry with backoff thanks to the actor decorator settings
-            logger.warning(f"Rate limit exceeded for job {job_id}, will retry with backoff")
-            # Update job status to indicate it's pending retry
+            # Update job status upon completion
             job_tracker.update_job_status(
                 job_id,
-                JobStatus.PENDING,
-                result={"message": "Waiting in queue for GPU resources, will retry automatically"}
+                JobStatus.COMPLETED,
+                result={
+                    "message": f"Generated embeddings for {len(documents)} documents",
+                    "document_count": len(documents),
+                    "document_ids": doc_ids,
+                    "execution_time": embedding_time
+                }
             )
-            raise  # Raise to trigger dramatiq's built-in retry
 
-    except TimeLimitExceeded:
-        logger.error(f"Time limit exceeded for job {job_id}")
-        job_tracker.update_job_status(
-            job_id,
-            JobStatus.TIMEOUT,
-            error="Processing timeout exceeded"
-        )
-        raise
+            return {
+                "document_count": len(documents),
+                "document_ids": doc_ids,
+                "execution_time": embedding_time
+            }
+        finally:
+            # Always mark task as completed, even if it failed
+            priority_queue.mark_task_completed(task_id)
+
+            # Clear cache if needed
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
     except Exception as e:
         import traceback
-        error_detail = f"Error processing video with GPU: {str(e)}\n{traceback.format_exc()}"
+        error_detail = f"Error generating embeddings: {str(e)}\n{traceback.format_exc()}"
         logger.error(error_detail)
 
         # Update job with error
@@ -849,9 +1059,485 @@ def process_video_gpu(job_id: str, url: str, custom_metadata: Optional[Dict[str,
         # Clean up GPU memory on error
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
-            for i in range(torch.cuda.device_count()):
-                torch.cuda.synchronize(i)
-            logger.info(f"Cleaned up GPU memory after error")
+
+        # Make sure to mark task as completed even in error case
+        priority_queue.mark_task_completed(f"embedding_{job_id}")
 
         # Re-raise for dramatiq retry mechanism
         raise
+
+
+# Specialized actor for Whisper transcription with priority handling
+@dramatiq.actor(
+    queue_name="transcription_tasks",
+    max_retries=3,
+    time_limit=3600000,  # 1 hour for long videos
+    min_backoff=10000,
+    max_backoff=300000
+)
+def transcribe_video_gpu(job_id: str, media_path: str):
+    """Process a video using GPU-accelerated Whisper transcription with priority handling."""
+    global _PRELOADED_WHISPER_MODEL
+
+    try:
+        # Register task with the priority system
+        task_id = f"transcription_{job_id}"
+        priority_queue.register_task("transcription_tasks", task_id, {"job_id": job_id, "media_path": media_path})
+
+        # Update job status to show we're queued
+        job_tracker.update_job_status(
+            job_id,
+            JobStatus.PROCESSING,
+            result={"message": "In priority queue for GPU transcription resources"}
+        )
+
+        # Wait for priority system to allow this task to run
+        wait_start = time.time()
+        while not priority_queue.can_run_task("transcription_tasks", task_id):
+            # Log every 60 seconds of waiting
+            if int(time.time() - wait_start) % 60 == 0:
+                logger.info(f"Transcription task {task_id} waiting in priority queue")
+            time.sleep(1)
+
+        # Mark this task as now active on GPU
+        priority_queue.mark_task_active({
+            "task_id": task_id,
+            "queue_name": "transcription_tasks",
+            "priority": 4,
+            "job_id": job_id,
+            "registered_at": time.time()
+        })
+
+        logger.info(f"Starting transcription for job {job_id} with priority handling")
+
+        try:
+            # Update job status to processing
+            job_tracker.update_job_status(
+                job_id,
+                JobStatus.PROCESSING,
+                result={"message": "Transcribing video"}
+            )
+
+            # Use preloaded Whisper model if available
+            whisper_model = _PRELOADED_WHISPER_MODEL
+            if whisper_model is None:
+                logger.warning("Preloaded Whisper model not available, loading on demand")
+                from faster_whisper import WhisperModel
+
+                # Get the model path
+                model_path = settings.whisper_model_full_path if hasattr(settings,
+                                                                         'whisper_model_full_path') else settings.whisper_model_size
+
+                # Load the Whisper model
+                whisper_model = WhisperModel(
+                    model_path,
+                    device=settings.device,
+                    compute_type="float16" if settings.use_fp16 else "float32"
+                )
+
+            # Perform transcription
+            start_time = time.time()
+            segments, info = whisper_model.transcribe(
+                media_path,
+                beam_size=5,
+                vad_filter=True,
+                vad_parameters=dict(min_silence_duration_ms=500)
+            )
+
+            # Collect all segments
+            all_text = [segment.text for segment in segments]
+            transcript = " ".join(all_text)
+
+            # Apply Chinese conversion if needed
+            if info.language == "zh" and hasattr(settings, 'chinese_converter') and settings.chinese_converter:
+                import opencc
+                converter = opencc.OpenCC('t2s')
+                transcript = converter.convert(transcript)
+
+            transcription_time = time.time() - start_time
+
+            logger.info(f"Transcription completed in {transcription_time:.2f}s, detected language: {info.language}")
+
+            # Update job with success result
+            job_tracker.update_job_status(
+                job_id,
+                JobStatus.COMPLETED,
+                result={
+                    "transcript": transcript,
+                    "language": info.language,
+                    "duration": info.duration,
+                    "processing_time": transcription_time
+                }
+            )
+
+            # Chain to process_transcript actor for embedding
+            process_transcript.send(job_id, transcript, info.language)
+
+            return transcript
+
+        finally:
+            # Always mark task as completed, even if it failed
+            priority_queue.mark_task_completed(task_id)
+
+            # Clear cache if needed
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+    except Exception as e:
+        import traceback
+        error_detail = f"Error performing transcription: {str(e)}\n{traceback.format_exc()}"
+        logger.error(error_detail)
+
+        # Update job with error
+        job_tracker.update_job_status(
+            job_id,
+            JobStatus.FAILED,
+            error=error_detail
+        )
+
+        # Clean up GPU memory on error
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+        # Make sure to mark task as completed even in error case
+        priority_queue.mark_task_completed(f"transcription_{job_id}")
+
+        # Re-raise for dramatiq retry mechanism
+        raise
+
+
+# Actor for processing text chunks (CPU task)
+@dramatiq.actor(queue_name="cpu_tasks")
+def process_text(job_id: str, text: str, metadata: Dict[str, Any] = None):
+    """Process text and prepare for embedding."""
+    try:
+        logger.info(f"Processing text for job {job_id}")
+
+        # Update job status
+        job_tracker.update_job_status(
+            job_id,
+            JobStatus.PROCESSING,
+            result={"message": "Processing text"}
+        )
+
+        # Split text into chunks
+        from langchain_text_splitters import RecursiveCharacterTextSplitter
+        text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=settings.chunk_size,
+            chunk_overlap=settings.chunk_overlap,
+        )
+
+        chunks = text_splitter.split_text(text)
+        logger.info(f"Split text into {len(chunks)} chunks")
+
+        # Convert chunks to documents with metadata
+        from langchain_core.documents import Document
+        documents = []
+        for i, chunk_text in enumerate(chunks):
+            # Create a document with metadata
+            doc = Document(
+                page_content=chunk_text,
+                metadata={
+                    "chunk_id": i,
+                    "source": "manual",
+                    "source_id": job_id,
+                    **metadata
+                }
+            )
+            documents.append(doc)
+
+        # Convert documents to format for embedding
+        document_dicts = []
+        for doc in documents:
+            document_dicts.append({
+                "content": doc.page_content,
+                "metadata": doc.metadata
+            })
+
+        # Chain to embedding task
+        embedding_job_id = f"{job_id}_embed"
+        job_tracker.create_job(
+            job_id=embedding_job_id,
+            job_type="embedding",
+            metadata={
+                "parent_job_id": job_id,
+                "chunk_count": len(document_dicts)
+            }
+        )
+
+        # Send to embedding worker
+        generate_embeddings_gpu.send(embedding_job_id, document_dicts, metadata)
+
+        # Update original job status
+        job_tracker.update_job_status(
+            job_id,
+            JobStatus.PROCESSING,
+            result={
+                "message": "Text processed, embedding in progress",
+                "chunk_count": len(chunks),
+                "embedding_job_id": embedding_job_id
+            }
+        )
+
+        return {
+            "chunk_count": len(chunks),
+            "embedding_job_id": embedding_job_id
+        }
+    except Exception as e:
+        import traceback
+        error_detail = f"Error processing text: {str(e)}\n{traceback.format_exc()}"
+        logger.error(error_detail)
+
+        # Update job with error
+        job_tracker.update_job_status(
+            job_id,
+            JobStatus.FAILED,
+            error=error_detail
+        )
+
+        # Re-raise for dramatiq retry mechanism
+        raise
+
+
+# Actor for processing transcript and adding to vector store
+@dramatiq.actor(queue_name="cpu_tasks")
+def process_transcript(job_id: str, transcript: str, language: str):
+    """Process transcript and prepare for embedding."""
+    try:
+        logger.info(f"Processing transcript for job {job_id}")
+
+        # Update job status
+        job_tracker.update_job_status(
+            job_id,
+            JobStatus.PROCESSING,
+            result={"message": "Processing transcript"}
+        )
+
+        # Get job metadata
+        job_data = job_tracker.get_job(job_id)
+        if not job_data:
+            raise ValueError(f"Job {job_id} not found")
+
+        metadata = job_data.get("metadata", {})
+
+        # Split transcript into chunks
+        from langchain_text_splitters import RecursiveCharacterTextSplitter
+        text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=settings.chunk_size,
+            chunk_overlap=settings.chunk_overlap,
+        )
+
+        chunks = text_splitter.split_text(transcript)
+        logger.info(f"Split transcript into {len(chunks)} chunks")
+
+        # Convert chunks to documents with metadata
+        from langchain_core.documents import Document
+        documents = []
+        for i, chunk_text in enumerate(chunks):
+            # Create document metadata
+            doc_metadata = {
+                "chunk_id": i,
+                "language": language,
+                "source": "video",
+                "source_id": job_id,
+            }
+
+            # Add any metadata from the job
+            if "url" in metadata:
+                doc_metadata["url"] = metadata["url"]
+            if "platform" in metadata:
+                doc_metadata["platform"] = metadata["platform"]
+
+            # Create document
+            doc = Document(
+                page_content=chunk_text,
+                metadata=doc_metadata
+            )
+            documents.append(doc)
+
+        # Convert documents to format for embedding
+        document_dicts = []
+        for doc in documents:
+            document_dicts.append({
+                "content": doc.page_content,
+                "metadata": doc.metadata
+            })
+
+        # Chain to embedding task
+        embedding_job_id = f"{job_id}_embed"
+        job_tracker.create_job(
+            job_id=embedding_job_id,
+            job_type="embedding",
+            metadata={
+                "parent_job_id": job_id,
+                "chunk_count": len(document_dicts)
+            }
+        )
+
+        # Send to embedding worker
+        generate_embeddings_gpu.send(embedding_job_id, document_dicts, metadata)
+
+        # Update original job status
+        job_tracker.update_job_status(
+            job_id,
+            JobStatus.PROCESSING,
+            result={
+                "message": "Transcript processed, embedding in progress",
+                "chunk_count": len(chunks),
+                "embedding_job_id": embedding_job_id
+            }
+        )
+
+        return {
+            "chunk_count": len(chunks),
+            "embedding_job_id": embedding_job_id
+        }
+    except Exception as e:
+        import traceback
+        error_detail = f"Error processing transcript: {str(e)}\n{traceback.format_exc()}"
+        logger.error(error_detail)
+
+        # Update job with error
+        job_tracker.update_job_status(
+            job_id,
+            JobStatus.FAILED,
+            error=error_detail
+        )
+
+        # Re-raise for dramatiq retry mechanism
+        raise
+
+
+# Actor for processing PDFs with OCR on CPU
+@dramatiq.actor(queue_name="cpu_tasks")
+def process_pdf_cpu(job_id: str, file_path: str, custom_metadata: Optional[Dict[str, Any]] = None):
+    """Process a PDF file using CPU for OCR and text extraction."""
+    try:
+        logger.info(f"Processing PDF {file_path} for job {job_id}")
+
+        # Update job status
+        job_tracker.update_job_status(
+            job_id,
+            JobStatus.PROCESSING,
+            result={"message": "Processing PDF"}
+        )
+
+        # Import PDF loader
+        from src.core.pdf_loader import PDFLoader
+
+        # Create PDF loader (on CPU only)
+        pdf_loader = PDFLoader(
+            chunk_size=settings.chunk_size,
+            chunk_overlap=settings.chunk_overlap,
+            device="cpu",
+            use_ocr=settings.use_pdf_ocr,
+            ocr_languages=settings.ocr_languages
+        )
+
+        # Process PDF
+        start_time = time.time()
+        documents = pdf_loader.process_pdf(
+            file_path=file_path,
+            custom_metadata=custom_metadata,
+        )
+        processing_time = time.time() - start_time
+
+        logger.info(f"Processed PDF into {len(documents)} documents in {processing_time:.2f}s")
+
+        # Convert documents to format for embedding
+        document_dicts = []
+        for doc in documents:
+            document_dicts.append({
+                "content": doc.page_content,
+                "metadata": doc.metadata
+            })
+
+        # Chain to embedding task
+        embedding_job_id = f"{job_id}_embed"
+        job_tracker.create_job(
+            job_id=embedding_job_id,
+            job_type="embedding",
+            metadata={
+                "parent_job_id": job_id,
+                "file_path": file_path,
+                "chunk_count": len(document_dicts)
+            }
+        )
+
+        # Send to embedding worker
+        generate_embeddings_gpu.send(embedding_job_id, document_dicts, custom_metadata)
+
+        # Update original job status
+        job_tracker.update_job_status(
+            job_id,
+            JobStatus.PROCESSING,
+            result={
+                "message": "PDF processed, embedding in progress",
+                "chunk_count": len(documents),
+                "processing_time": processing_time,
+                "embedding_job_id": embedding_job_id
+            }
+        )
+
+        return {
+            "chunk_count": len(documents),
+            "processing_time": processing_time,
+            "embedding_job_id": embedding_job_id
+        }
+    except Exception as e:
+        import traceback
+        error_detail = f"Error processing PDF: {str(e)}\n{traceback.format_exc()}"
+        logger.error(error_detail)
+
+        # Update job with error
+        job_tracker.update_job_status(
+            job_id,
+            JobStatus.FAILED,
+            error=error_detail
+        )
+
+        # Re-raise for dramatiq retry mechanism
+        raise
+
+
+# Utility actor to get priority queue status
+@dramatiq.actor(queue_name="system_tasks")
+def get_priority_queue_status():
+    """Get the status of the priority queue system."""
+    redis_client = redis_broker.client
+
+    # Get all tasks in priority queue
+    all_tasks = redis_client.zrange(
+        "priority_task_queue", 0, -1,
+        withscores=True
+    )
+
+    # Get active task
+    active_task_json = redis_client.get("active_gpu_task")
+    active_task = json.loads(active_task_json) if active_task_json else None
+
+    # Compile stats
+    stats = {
+        "total_tasks": len(all_tasks),
+        "tasks_by_priority": {},
+        "tasks_by_queue": {},
+        "active_task": active_task,
+        "timestamp": time.time()
+    }
+
+    # Group tasks by priority and queue
+    for task_json, priority in all_tasks:
+        task = json.loads(task_json)
+        queue_name = task.get("queue_name", "unknown")
+
+        # Count by priority
+        if priority not in stats["tasks_by_priority"]:
+            stats["tasks_by_priority"][priority] = 0
+        stats["tasks_by_priority"][priority] += 1
+
+        # Count by queue
+        if queue_name not in stats["tasks_by_queue"]:
+            stats["tasks_by_queue"][queue_name] = 0
+        stats["tasks_by_queue"][queue_name] += 1
+
+    return stats

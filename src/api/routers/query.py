@@ -19,16 +19,10 @@ router = APIRouter()
 async def query(
         request: QueryRequest,
         retriever: HybridRetriever = Depends(get_retriever),
-        llm: LocalLLM = Depends(get_llm),
 ) -> QueryResponse:
     """
     Query the RAG system with hybrid search, ColBERT reranking, and local DeepSeek LLM.
-
-    Args:
-        request: Query request with query text and optional metadata filters
-
-    Returns:
-        Query response with answer and retrieved documents
+    Uses asynchronous processing for the GPU-intensive parts.
     """
     start_time = time.time()
 
@@ -36,37 +30,46 @@ async def query(
     documents, _ = retriever.retrieve(
         query=request.query,
         metadata_filter=request.metadata_filter,
-        rerank=True,
+        rerank=False,  # Don't rerank yet - will be done in background task
     )
 
-    # Generate answer using the local LLM
-    answer, sources = llm.answer_query_with_sources(
-        query=request.query,
-        documents=documents,
-        metadata_filter=request.metadata_filter,
+    # Generate a unique job ID
+    job_id = str(uuid.uuid4())
+
+    # Create a job record
+    from src.core.background_tasks import job_tracker
+    job_tracker.create_job(
+        job_id=job_id,
+        job_type="llm_inference",
+        metadata={
+            "query": request.query,
+            "metadata_filter": request.metadata_filter
+        }
     )
 
-    # Format retrieved documents for response
-    formatted_documents = []
+    # Prepare documents for serialization
+    serializable_docs = []
     for doc, score in documents:
-        formatted_doc = {
-            "id": doc.metadata.get("id", ""),
+        serializable_docs.append({
             "content": doc.page_content,
             "metadata": doc.metadata,
-            "relevance_score": score,
-        }
-        formatted_documents.append(formatted_doc)
+            "relevance_score": score
+        })
 
+    # Send to background task for reranking and inference
+    from src.core.background_tasks import perform_llm_inference
+    perform_llm_inference.send(job_id, request.query, serializable_docs, request.metadata_filter)
+
+    # Create response indicating task is in progress
     execution_time = time.time() - start_time
-
-    # Create response
     response = QueryResponse(
         query=request.query,
-        answer=answer,
-        documents=formatted_documents,
+        answer="Your query is being processed. Please check back in a moment.",
+        documents=[],
         metadata_filters_used=request.metadata_filter,
         execution_time=execution_time,
-        status="completed"
+        status="processing",
+        job_id=job_id
     )
 
     return response
@@ -272,3 +275,23 @@ async def get_llm_info(
         info["vram_usage"] = f"{torch.cuda.memory_allocated() / (1024 ** 3):.2f} GB"
 
     return info
+
+
+@router.get("/queue-status", response_model=Dict[str, Any])
+async def get_priority_queue_status():
+    """Get status of the priority queue system."""
+    # Import the actor to get queue status
+    from src.core.background_tasks import get_priority_queue_status
+
+    # Call the actor and get the result
+    result = get_priority_queue_status.send()
+
+    # Get the result with a timeout
+    try:
+        queue_status = result.get(block=True, timeout=10)
+        return queue_status
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error getting priority queue status: {str(e)}"
+        )

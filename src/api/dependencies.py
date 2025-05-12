@@ -194,13 +194,13 @@ def get_job_tracker() -> JobTracker:
 
 def load_all_components():
     """Initialize all components at application startup."""
-    load_video_transcriber()
-    load_llm()
-    load_colbert_and_bge_reranker()
-    load_pdf_loader()
+    # load_video_transcriber()
+    # load_llm()
+    # load_colbert_and_bge_reranker()
+    # load_pdf_loader()
     init_vector_store()
-    init_retriever()
-    init_document_processor()
+    # init_retriever()
+    # init_document_processor()
     init_redis_client()
     init_job_tracker()
 

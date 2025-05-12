@@ -14,11 +14,6 @@ services:
       - DEVICE=cuda
       - USE_FP16=true
       - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
-      - WHISPER_MODEL_SIZE=small
-      - USE_YOUTUBE_CAPTIONS=false
-      - USE_WHISPER_AS_FALLBACK=false
-      - FORCE_WHISPER=true
-      - USE_PDF_OCR=true
       - LOG_LEVEL=INFO
       - CONTAINER_RUNTIME=docker
       - NVIDIA_VISIBLE_DEVICES=all
@@ -41,25 +36,87 @@ services:
       retries: 3
       start_period: 40s
 
-  # GPU Worker - prioritizes inference over other GPU tasks
-  worker-gpu:
+  # LLM Inference Worker - prioritizes inference and reranking
+  worker-gpu-inference:
     build:
       context: .
       dockerfile: Dockerfile.api
     runtime: nvidia
-    command: python -m dramatiq src.core.background_tasks --processes 1 --threads 1 --queues inference_tasks,gpu_tasks
+    command: python -m dramatiq src.core.background_tasks --processes 1 --threads 1 --queues inference_tasks,reranking_tasks
     environment:
-      - WORKER_TYPE=gpu
-      - QDRANT_HOST=qdrant
-      - QDRANT_PORT=6333
+      - WORKER_TYPE=gpu-inference
       - DEVICE=cuda
       - USE_FP16=true
-      - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
-      - WHISPER_MODEL_SIZE=small
+      - CONTAINER_RUNTIME=docker
+      - NVIDIA_VISIBLE_DEVICES=all
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - LOG_LEVEL=INFO
+    volumes:
+      - ./data:/app/data
+      - ./models:/app/models
+      - ./logs:/app/logs
+    depends_on:
+      - redis
+      - qdrant
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "bash", "-c", "ps aux | grep dramatiq | grep -v grep"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # Embedding Worker - handles document vectorization
+  worker-gpu-embedding:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    runtime: nvidia
+    command: python -m dramatiq src.core.background_tasks --processes 1 --threads 1 --queues gpu_tasks
+    environment:
+      - WORKER_TYPE=gpu-embedding
+      - DEVICE=cuda
+      - USE_FP16=true
+      - QDRANT_HOST=qdrant
+      - QDRANT_PORT=6333
+      - CONTAINER_RUNTIME=docker
+      - NVIDIA_VISIBLE_DEVICES=all
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - LOG_LEVEL=INFO
+    volumes:
+      - ./data:/app/data
+      - ./models:/app/models
+      - ./logs:/app/logs
+    depends_on:
+      - redis
+      - qdrant
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "bash", "-c", "ps aux | grep dramatiq | grep -v grep"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # Whisper Transcription Worker - dedicated to speech transcription
+  worker-gpu-whisper:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    runtime: nvidia
+    command: python -m dramatiq src.core.background_tasks --processes 1 --threads 1 --queues transcription_tasks
+    environment:
+      - WORKER_TYPE=gpu-whisper
+      - DEVICE=cuda
+      - USE_FP16=true
+      - WHISPER_MODEL_SIZE=medium
+      - QDRANT_HOST=qdrant
+      - QDRANT_PORT=6333
       - USE_YOUTUBE_CAPTIONS=false
       - USE_WHISPER_AS_FALLBACK=false
       - FORCE_WHISPER=true
-      - USE_PDF_OCR=true
       - CONTAINER_RUNTIME=docker
       - NVIDIA_VISIBLE_DEVICES=all
       - REDIS_HOST=redis
@@ -71,15 +128,8 @@ services:
       - ./logs:/app/logs
     env_file:
       - .env
-    ulimits:
-      memlock: -1
-      stack: 67108864
-    shm_size: 8gb
     depends_on:
-      - qdrant
       - redis
-    deploy:
-      replicas: 1  # Just one GPU worker
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "bash", "-c", "ps aux | grep dramatiq | grep -v grep"]
@@ -88,25 +138,18 @@ services:
       retries: 3
       start_period: 30s
 
-  # CPU Worker - handles PDF processing and text operations
+  # CPU Worker - handles document processing, PDF parsing, OCR
   worker-cpu:
     build:
       context: .
       dockerfile: Dockerfile.api
-    command: python -m dramatiq src.core.background_tasks --processes 1 --threads 1 --queues cpu_tasks
+    command: python -m dramatiq src.core.background_tasks --processes 2 --threads 4 --queues cpu_tasks
     environment:
       - WORKER_TYPE=cpu
-      - QDRANT_HOST=qdrant
-      - QDRANT_PORT=6333
       - DEVICE=cpu
       - CUDA_VISIBLE_DEVICES=""  # Hide GPU
-      - WHISPER_MODEL_SIZE=small
-      - USE_YOUTUBE_CAPTIONS=false
-      - USE_WHISPER_AS_FALLBACK=false
-      - FORCE_WHISPER=true
       - USE_PDF_OCR=true
       - CONTAINER_RUNTIME=docker
-      - NVIDIA_VISIBLE_DEVICES=all
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - LOG_LEVEL=INFO
@@ -117,10 +160,10 @@ services:
     env_file:
       - .env
     depends_on:
-      - qdrant
       - redis
+      - qdrant
     deploy:
-      replicas: 2  # Scale this for more parallel CPU processing
+      replicas: 1  # Scale CPU workers as needed
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "bash", "-c", "ps aux | grep dramatiq | grep -v grep"]
@@ -129,23 +172,31 @@ services:
       retries: 3
       start_period: 30s
 
-  # Job Cleanup Service - periodically purges old completed jobs
-  job-cleanup:
+  # Priority System and Task Cleanup
+  system-worker:
     build:
       context: .
       dockerfile: Dockerfile.api
-    command: python /app/job_cleanup_service.py --retention-days 7 --interval 3600
+    command: python -m dramatiq src.core.background_tasks --processes 1 --threads 1 --queues system_tasks --watch src
     environment:
+      - WORKER_TYPE=system
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-      - JOB_RETENTION_DAYS=7
-      - CLEANUP_INTERVAL=3600
+      - DEVICE=cpu
+      - CUDA_VISIBLE_DEVICES=""  # Explicitly hide GPUs from this worker
+      - CONTAINER_RUNTIME=docker
       - LOG_LEVEL=INFO
     volumes:
       - ./logs:/app/logs
+      - ./src:/app/src  # For --watch to work
     depends_on:
       - redis
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "bash", "-c", "ps aux | grep dramatiq | grep -v grep"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
   # Streamlit UI
   ui:
