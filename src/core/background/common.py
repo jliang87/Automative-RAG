@@ -84,6 +84,9 @@ dramatiq.set_broker(redis_broker)
 class WorkerSetupMiddleware:
     """Middleware to run setup code when worker processes boot."""
 
+    # Required by Dramatiq - empty set of actor options
+    actor_options = set()
+
     def before_worker_boot(self, broker, worker):
         """Run setup code before the worker boots."""
         logger.info(f"Initializing worker {worker.worker_id} of type {worker_type}")
