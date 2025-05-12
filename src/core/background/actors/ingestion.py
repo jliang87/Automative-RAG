@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 # Specialized actor for generating embeddings with priority handling
 @dramatiq.actor(
-    queue_name="gpu_tasks",
+    queue_name="embedding_tasks",
     max_retries=3,
     time_limit=600000,  # 10 minutes
     min_backoff=10000,
@@ -36,19 +36,19 @@ def generate_embeddings_gpu(job_id: str, chunks: List[Dict], metadata: Optional[
     try:
         # Register task with the priority system
         task_id = f"embedding_{job_id}"
-        priority_queue.register_task("gpu_tasks", task_id, {"job_id": job_id})
+        priority_queue.register_task("embedding_tasks", task_id, {"job_id": job_id})
 
         # Update job status to show we're queued
         job_tracker.update_job_status(
             job_id,
             JobStatus.PROCESSING,
             result={"message": "In priority queue for GPU resources"},
-            stage="gpu_tasks"
+            stage="embedding_tasks"
         )
 
         # Wait for priority system to allow this task to run
         wait_start = time.time()
-        while not priority_queue.can_run_task("gpu_tasks", task_id):
+        while not priority_queue.can_run_task("embedding_tasks", task_id):
             # Log every 30 seconds of waiting
             if int(time.time() - wait_start) % 30 == 0:
                 logger.info(f"Embedding task {task_id} waiting in priority queue")
@@ -57,7 +57,7 @@ def generate_embeddings_gpu(job_id: str, chunks: List[Dict], metadata: Optional[
         # Mark this task as now active on GPU
         priority_queue.mark_task_active({
             "task_id": task_id,
-            "queue_name": "gpu_tasks",
+            "queue_name": "embedding_tasks",
             "priority": 3,
             "job_id": job_id,
             "registered_at": time.time()
@@ -663,7 +663,7 @@ def batch_process_videos(job_id: str, urls: List[str], custom_metadata: Optional
 
 # Actor for GPU video processing
 @dramatiq.actor(
-    queue_name="gpu_tasks",
+    queue_name="embedding_tasks",
     max_retries=3,
     time_limit=3600000,  # 1 hour
     min_backoff=10000,

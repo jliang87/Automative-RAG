@@ -5,7 +5,7 @@ from fastapi.openapi.utils import get_openapi
 
 from contextlib import asynccontextmanager
 
-from src.api.routers import auth, ingest, query
+from src.api.routers import auth, ingest, query, system
 from src.config.settings import settings
 from src.api.dependencies import get_token_header, load_all_components
 
@@ -67,6 +67,8 @@ app.include_router(
     tags=["Query"],
     dependencies=[Depends(get_token_header)] if settings.api_auth_enabled else [],
 )
+
+app.include_router(system.router, prefix="/system", tags=["System"])
 
 # Root endpoint
 @app.get("/", tags=["Root"])

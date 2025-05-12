@@ -73,7 +73,7 @@ services:
       context: .
       dockerfile: Dockerfile.api
     runtime: nvidia
-    command: python -m dramatiq src.core.background_tasks --processes 1 --threads 1 --queues gpu_tasks
+    command: python -m dramatiq src.core.background_tasks --processes 1 --threads 1 --queues embedding_tasks
     environment:
       - WORKER_TYPE=gpu-embedding
       - DEVICE=cuda

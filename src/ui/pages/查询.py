@@ -43,7 +43,7 @@ def process_async_query(query: str, metadata_filter, top_k: int = 5):
     # 使用加载动画发送 API 请求
     with st.spinner("正在提交您的查询..."):
         result = api_request(
-            endpoint="/query/async",
+            endpoint="/query",
             method="POST",
             data=request_data
         )

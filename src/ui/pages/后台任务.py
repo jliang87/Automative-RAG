@@ -34,7 +34,7 @@ JOB_STATUS_COLORS = {
 # 任务阶段名称映射
 STAGE_NAMES = {
     "cpu_tasks": "文本/PDF处理 (CPU)",
-    "gpu_tasks": "向量嵌入 (GPU-Embedding)",
+    "embedding_tasks": "向量嵌入 (GPU-Embedding)",
     "inference_tasks": "查询生成 (GPU-Inference)",
     "transcription_tasks": "语音转录 (GPU-Whisper)",
     "reranking_tasks": "文档重排序 (GPU-Inference)",
@@ -73,13 +73,13 @@ def get_job_stage(job_data):
     # 检查是否有子任务ID（表示任务链）
     if isinstance(result, dict) and "embedding_job_id" in result:
         # 表明主任务已完成其阶段，正在等待嵌入任务
-        return "processing", "gpu_tasks"
+        return "processing", "embedding_tasks"
 
     # 检查任务类型来确定处理阶段
     if job_type == "video_processing" or job_type == "batch_video_processing":
         # 检查结果中是否有转录信息
         if isinstance(result, dict) and "transcript" in result:
-            return "processing", "gpu_tasks"  # 转录完成，正在嵌入
+            return "processing", "embedding_tasks"  # 转录完成，正在嵌入
         elif isinstance(result, dict) and "message" in result:
             message = result.get("message", "")
             if "transcription in progress" in message:
@@ -92,19 +92,19 @@ def get_job_stage(job_data):
         # 检查是否在处理PDF
         if isinstance(result, dict) and "embedding_job_id" in result:
             # PDF处理完成，等待嵌入
-            return "processing", "gpu_tasks"
+            return "processing", "embedding_tasks"
         return "processing", "cpu_tasks"  # 默认在CPU处理阶段
 
     elif job_type == "manual_text":
         # 检查是否在处理文本
         if isinstance(result, dict) and "embedding_job_id" in result:
             # 文本处理完成，等待嵌入
-            return "processing", "gpu_tasks"
+            return "processing", "embedding_tasks"
         return "processing", "cpu_tasks"  # 默认在CPU处理阶段
 
     elif job_type == "embedding":
         # 嵌入任务始终在GPU嵌入工作器上
-        return "processing", "gpu_tasks"
+        return "processing", "embedding_tasks"
 
     elif job_type == "llm_inference":
         # 查询始终在GPU推理工作器上
@@ -194,7 +194,7 @@ def retry_job(job_id: str, job_type: str, metadata: dict):
 
         # 重新提交异步查询任务
         response = api_request(
-            endpoint="/query/async",
+            endpoint="/query",
             method="POST",
             data={
                 "query": query,
@@ -518,9 +518,9 @@ def render_task_status_page():
                     ingestion_cols = st.columns(5)
 
                     # 各阶段状态
-                    download_status = "🔵" if stage == "cpu_tasks" else ("🟢" if stage in ["transcription_tasks", "gpu_tasks"] else "⚪")
-                    transcription_status = "🔵" if stage == "transcription_tasks" else ("🟢" if stage == "gpu_tasks" else "⚪")
-                    embedding_status = "🔵" if stage == "gpu_tasks" else "⚪"
+                    download_status = "🔵" if stage == "cpu_tasks" else ("🟢" if stage in ["transcription_tasks", "embedding_tasks"] else "⚪")
+                    transcription_status = "🔵" if stage == "transcription_tasks" else ("🟢" if stage == "embedding_tasks" else "⚪")
+                    embedding_status = "🔵" if stage == "embedding_tasks" else "⚪"
                     completed_status = "🟢" if status == "completed" else "⚪"
 
                     with ingestion_cols[0]:
@@ -549,8 +549,8 @@ def render_task_status_page():
                     ingestion_cols = st.columns(3)
 
                     # 各阶段状态
-                    process_status = "🔵" if stage == "cpu_tasks" else ("🟢" if stage == "gpu_tasks" else "⚪")
-                    embedding_status = "🔵" if stage == "gpu_tasks" else "⚪"
+                    process_status = "🔵" if stage == "cpu_tasks" else ("🟢" if stage == "embedding_tasks" else "⚪")
+                    embedding_status = "🔵" if stage == "embedding_tasks" else "⚪"
                     completed_status = "🟢" if status == "completed" else "⚪"
 
                     with ingestion_cols[0]:

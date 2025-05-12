@@ -52,7 +52,7 @@ def get_queue_status() -> Dict[str, int]:
     queue_status = {}
 
     # Get all queue lengths
-    for queue in ["inference_tasks", "gpu_tasks", "transcription_tasks", "cpu_tasks", "system_tasks", "default"]:
+    for queue in ["inference_tasks", "embedding_tasks", "transcription_tasks", "cpu_tasks", "system_tasks", "default"]:
         queue_key = f"dramatiq:{queue}:msgs"
         queue_status[queue] = redis_client.llen(queue_key)
 

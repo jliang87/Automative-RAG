@@ -230,7 +230,7 @@ class PriorityQueueManager:
         self.priority_levels = priority_levels or {
             "inference_tasks": 1,  # Highest priority
             "reranking_tasks": 2,
-            "gpu_tasks": 3,
+            "embedding_tasks": 3,
             "transcription_tasks": 4
         }
 
@@ -952,7 +952,7 @@ def perform_llm_inference(job_id: str, query: str, documents: List[Dict], metada
 
 # Specialized actor for GPU-based embedding with priority handling
 @dramatiq.actor(
-    queue_name="gpu_tasks",
+    queue_name="embedding_tasks",
     max_retries=3,
     time_limit=600000,  # 10 minutes
     min_backoff=10000,
@@ -963,7 +963,7 @@ def generate_embeddings_gpu(job_id: str, chunks: List[Dict], metadata: Optional[
     try:
         # Register task with the priority system
         task_id = f"embedding_{job_id}"
-        priority_queue.register_task("gpu_tasks", task_id, {"job_id": job_id})
+        priority_queue.register_task("embedding_tasks", task_id, {"job_id": job_id})
 
         # Update job status to show we're queued
         job_tracker.update_job_status(
@@ -974,7 +974,7 @@ def generate_embeddings_gpu(job_id: str, chunks: List[Dict], metadata: Optional[
 
         # Wait for priority system to allow this task to run
         wait_start = time.time()
-        while not priority_queue.can_run_task("gpu_tasks", task_id):
+        while not priority_queue.can_run_task("embedding_tasks", task_id):
             # Log every 30 seconds of waiting
             if int(time.time() - wait_start) % 30 == 0:
                 logger.info(f"Embedding task {task_id} waiting in priority queue")
@@ -983,7 +983,7 @@ def generate_embeddings_gpu(job_id: str, chunks: List[Dict], metadata: Optional[
         # Mark this task as now active on GPU
         priority_queue.mark_task_active({
             "task_id": task_id,
-            "queue_name": "gpu_tasks",
+            "queue_name": "embedding_tasks",
             "priority": 3,
             "job_id": job_id,
             "registered_at": time.time()
@@ -1673,7 +1673,7 @@ def collect_system_statistics():
             pass
 
     # Get queue lengths
-    for queue in ["inference_tasks", "gpu_tasks", "transcription_tasks", "cpu_tasks"]:
+    for queue in ["inference_tasks", "embedding_tasks", "transcription_tasks", "cpu_tasks"]:
         queue_key = f"dramatiq:{queue}:msgs"
         stats["queues"][queue] = redis_client.llen(queue_key)
 
@@ -1744,13 +1744,13 @@ def balance_task_queues():
     """Balance workload across queues to prevent starvation."""
     # Get current queue lengths
     queue_lengths = {}
-    for queue in ["inference_tasks", "gpu_tasks", "transcription_tasks", "cpu_tasks"]:
+    for queue in ["inference_tasks", "embedding_tasks", "transcription_tasks", "cpu_tasks"]:
         queue_key = f"dramatiq:{queue}:msgs"
         queue_lengths[queue] = redis_client.llen(queue_key)
 
     # Check for queue imbalances
     high_priority_queues = ["inference_tasks", "reranking_tasks"]
-    low_priority_queues = ["gpu_tasks", "transcription_tasks"]
+    low_priority_queues = ["embedding_tasks", "transcription_tasks"]
 
     # If lower priority queues have too many tasks waiting,
     # temporarily boost their priority to prevent starvation
@@ -1895,7 +1895,7 @@ def system_watchdog():
         "gpu_available": torch.cuda.is_available(),
         "queues": {
             "inference_tasks": redis_client.llen("dramatiq:inference_tasks:msgs"),
-            "gpu_tasks": redis_client.llen("dramatiq:gpu_tasks:msgs"),
+            "embedding_tasks": redis_client.llen("dramatiq:embedding_tasks:msgs"),
             "transcription_tasks": redis_client.llen("dramatiq:transcription_tasks:msgs"),
             "cpu_tasks": redis_client.llen("dramatiq:cpu_tasks:msgs"),
         }

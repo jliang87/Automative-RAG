@@ -104,14 +104,6 @@ class DocumentResponse(BaseModel):
     relevance_score: float
 
 
-class QueryResponse(BaseModel):
-    query: str
-    answer: str
-    documents: List[DocumentResponse]
-    metadata_filters_used: Optional[Dict[str, Union[str, List[str], int, List[int]]]] = None
-    execution_time: float
-
-
 class IngestResponse(BaseModel):
     message: str
     document_count: int
@@ -135,3 +127,4 @@ class QueryResponse(BaseModel):
     metadata_filters_used: Optional[Dict[str, Union[str, List[str], int, List[int]]]] = None
     execution_time: float
     status: str = "completed"
+    job_id: Optional[str] = None

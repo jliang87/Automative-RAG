@@ -289,7 +289,7 @@ def collect_system_statistics():
     stats["jobs"].update(job_stats)
 
     # Get queue lengths
-    for queue in ["inference_tasks", "gpu_tasks", "transcription_tasks", "cpu_tasks"]:
+    for queue in ["inference_tasks", "embedding_tasks", "transcription_tasks", "cpu_tasks"]:
         queue_key = f"dramatiq:{queue}:msgs"
         stats["queues"][queue] = redis_client.llen(queue_key)
 
@@ -415,10 +415,7 @@ def analyze_error_patterns():
 
 
 # Main watchdog service
-@dramatiq.actor(
-    queue_name="system_tasks",
-    periodic=True
-)
+@dramatiq.actor(queue_name="system_tasks")
 def system_watchdog():
     """
     Main watchdog service that periodically checks system health and coordinates other maintenance tasks.
@@ -467,7 +464,7 @@ def system_watchdog():
         "gpu_available": torch.cuda.is_available(),
         "queues": {
             "inference_tasks": redis_client.llen("dramatiq:inference_tasks:msgs"),
-            "gpu_tasks": redis_client.llen("dramatiq:gpu_tasks:msgs"),
+            "embedding_tasks": redis_client.llen("dramatiq:embedding_tasks:msgs"),
             "transcription_tasks": redis_client.llen("dramatiq:transcription_tasks:msgs"),
             "cpu_tasks": redis_client.llen("dramatiq:cpu_tasks:msgs"),
         }

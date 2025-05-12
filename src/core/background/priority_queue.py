@@ -33,7 +33,7 @@ class PriorityQueueManager:
         self.priority_levels = priority_levels or {
             "inference_tasks": 1,  # Highest priority
             "reranking_tasks": 2,
-            "gpu_tasks": 3,
+            "embedding_tasks": 3,
             "transcription_tasks": 4
         }
 
@@ -278,7 +278,7 @@ class PriorityQueueManager:
 
         # Check for queue imbalances
         high_priority_queues = ["inference_tasks", "reranking_tasks"]
-        low_priority_queues = ["gpu_tasks", "transcription_tasks"]
+        low_priority_queues = ["embedding_tasks", "transcription_tasks"]
 
         # If lower priority queues have too many tasks waiting,
         # temporarily boost their priority to prevent starvation

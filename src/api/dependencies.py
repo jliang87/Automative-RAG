@@ -20,7 +20,7 @@ from typing import Annotated, Any, Dict, List, Optional, Tuple
 from fastapi import Depends, HTTPException, Header, status
 
 # Import the JobTracker
-from src.core.background import job_tracker
+from src.core.background.job_tracker import JobTracker
 
 # Redis client configuration
 redis_host = os.environ.get("REDIS_HOST", "localhost")
@@ -186,7 +186,7 @@ def get_redis_client() -> redis.Redis:
     return redis_client
 
 # JobTracker dependency
-def get_job_tracker() -> JobTracker:
+def get_job_tracker() -> job_tracker:
     """Get the cached JobTracker instance."""
     if job_tracker is None:
         raise HTTPException(status_code=500, detail="Job tracker not initialized yet.")

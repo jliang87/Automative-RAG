@@ -15,106 +15,33 @@ from src.models.schema import QueryRequest, QueryResponse, BackgroundJobResponse
 router = APIRouter()
 
 
-@router.post("/", response_model=QueryResponse)
+@router.post("/", response_model=BackgroundJobResponse)
 async def query(
         request: QueryRequest,
-        retriever: HybridRetriever = Depends(get_retriever),
-) -> QueryResponse:
-    """
-    Query the RAG system with hybrid search, ColBERT reranking, and local DeepSeek LLM.
-    Uses asynchronous processing for the GPU-intensive parts.
-    """
-    start_time = time.time()
-
-    # Get top documents using the retriever
-    documents, _ = retriever.retrieve(
-        query=request.query,
-        metadata_filter=request.metadata_filter,
-        rerank=False,  # Don't rerank yet - will be done in background task
-    )
-
-    # Generate a unique job ID
-    job_id = str(uuid.uuid4())
-
-    # Create a job record
-    from src.core.background import job_tracker
-    job_tracker.create_job(
-        job_id=job_id,
-        job_type="llm_inference",
-        metadata={
-            "query": request.query,
-            "metadata_filter": request.metadata_filter
-        }
-    )
-
-    # Prepare documents for serialization
-    serializable_docs = []
-    for doc, score in documents:
-        serializable_docs.append({
-            "content": doc.page_content,
-            "metadata": doc.metadata,
-            "relevance_score": score
-        })
-
-    # Send to background task for reranking and inference
-    from src.core.background import perform_llm_inference
-    perform_llm_inference.send(job_id, request.query, serializable_docs, request.metadata_filter)
-
-    # Create response indicating task is in progress
-    execution_time = time.time() - start_time
-    response = QueryResponse(
-        query=request.query,
-        answer="Your query is being processed. Please check back in a moment.",
-        documents=[],
-        metadata_filters_used=request.metadata_filter,
-        execution_time=execution_time,
-        status="processing",
-        job_id=job_id
-    )
-
-    return response
-
-
-from src.core.background import perform_llm_inference, job_tracker
-@router.post("/async", response_model=BackgroundJobResponse)
-async def query_async(
-        request: QueryRequest,
-        retriever: HybridRetriever = Depends(get_retriever)
 ) -> BackgroundJobResponse:
     """
     Asynchronous query that returns a job ID for later polling.
+    All processing happens in background workers.
     """
     # Generate a unique job ID
     job_id = str(uuid.uuid4())
 
-    # Get top documents using the retriever (this is quick)
-    documents, _ = retriever.retrieve(
-        query=request.query,
-        metadata_filter=request.metadata_filter,
-        rerank=True,
-    )
-
-    # Prepare documents for serialization
-    serializable_docs = []
-    for doc, score in documents:
-        serializable_docs.append({
-            "content": doc.page_content,
-            "metadata": doc.metadata,
-            "relevance_score": score
-        })
-
+    from src.core.background import job_tracker
     # Create a job record
     job_tracker.create_job(
         job_id=job_id,
         job_type="llm_inference",
         metadata={
             "query": request.query,
-            "metadata_filter": request.metadata_filter
+            "metadata_filter": request.metadata_filter,
+            "top_k": request.top_k if hasattr(request, "top_k") else 5
         }
     )
 
-    # Start the background job without waiting for completion
-    perform_llm_inference.send(job_id, request.query, serializable_docs, request.metadata_filter)
+    # Send to process_query_request actor which will handle all phases
+    # This new actor will coordinate the entire process
+    from src.core.background.actors.inference import process_query_request
+    process_query_request.send(job_id, request.query, request.metadata_filter)
 
     # Return job ID immediately
     return BackgroundJobResponse(
@@ -167,7 +94,8 @@ async def get_query_result(job_id: str) -> Optional[QueryResponse]:
             documents=result.get("documents", []),
             metadata_filters_used=job_data.get("metadata", {}).get("metadata_filter"),
             execution_time=result.get("execution_time", 0),
-            status=status
+            status=status,
+            job_id=job_id
         )
     elif status == "failed":
         # Return error response with status
@@ -177,7 +105,8 @@ async def get_query_result(job_id: str) -> Optional[QueryResponse]:
             documents=[],
             metadata_filters_used=job_data.get("metadata", {}).get("metadata_filter"),
             execution_time=0,
-            status=status
+            status=status,
+            job_id=job_id
         )
     else:
         # Still processing - return status only
@@ -187,7 +116,8 @@ async def get_query_result(job_id: str) -> Optional[QueryResponse]:
             documents=[],
             metadata_filters_used=job_data.get("metadata", {}).get("metadata_filter"),
             execution_time=0,
-            status=status
+            status=status,
+            job_id=job_id
         )
 
 

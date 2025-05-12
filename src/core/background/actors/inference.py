@@ -17,7 +17,7 @@ import torch
 from ..common import JobStatus
 from ..job_tracker import job_tracker
 from ..priority_queue import priority_queue
-from ..models import get_colbert_reranker, get_llm_model
+from ..models import get_colbert_reranker, get_llm_model, get_vector_store
 
 logger = logging.getLogger(__name__)
 
@@ -278,6 +278,194 @@ def rerank_documents(job_id: str, query: str, documents: List[Dict], top_k: int 
 
         # Make sure to mark task as completed
         priority_queue.mark_task_completed(f"rerank_{job_id}")
+
+        # Re-raise for dramatiq retry mechanism
+        raise
+
+
+@dramatiq.actor(
+    queue_name="embedding_tasks",  # This runs on the worker-gpu-embedding worker
+    max_retries=3,
+    store_results=True
+)
+def retrieve_documents(job_id: str, query: str, metadata_filter: Optional[Dict] = None):
+    """
+    Retrieve documents from the vector store for a query.
+    This actor runs on the worker-gpu-embedding to ensure efficient embedding model usage.
+    """
+    try:
+        # Register with priority system
+        task_id = f"retrieval_{job_id}"
+        priority_queue.register_task("embedding_tasks", task_id, {"job_id": job_id, "query": query})
+
+        # Update job status
+        job_tracker.update_job_status(
+            job_id,
+            JobStatus.PROCESSING,
+            result={"message": "Retrieving documents"},
+            stage="retrieval"
+        )
+
+        # Wait for priority system to allow task to run
+        wait_start = time.time()
+        while not priority_queue.can_run_task("embedding_tasks", task_id):
+            # Log every 10 seconds of waiting
+            if int(time.time() - wait_start) % 10 == 0:
+                logger.info(f"Retrieval task {task_id} waiting in priority queue")
+            time.sleep(1)
+
+        # Mark task as active
+        priority_queue.mark_task_active({
+            "task_id": task_id,
+            "queue_name": "embedding_tasks",
+            "priority": 3,  # Same priority as other embedding tasks
+            "job_id": job_id,
+            "registered_at": time.time()
+        })
+
+        try:
+            # Get vector store (which uses the preloaded embedding model)
+            vector_store = get_vector_store()
+
+            # Get job metadata to find top_k value
+            job_data = job_tracker.get_job(job_id)
+            parent_job_id = job_data.get("metadata", {}).get("parent_job_id")
+            parent_job = job_tracker.get_job(parent_job_id) if parent_job_id else None
+
+            # Get top_k from parent job or use default
+            top_k = parent_job.get("metadata", {}).get("top_k", 20) if parent_job else 20
+
+            # Perform retrieval
+            start_time = time.time()
+
+            # Use QdrantStore's similarity_search_with_score method
+            results = vector_store.similarity_search_with_score(
+                query=query,
+                k=top_k,
+                metadata_filter=metadata_filter
+            )
+
+            # Format results for transfer between workers
+            serialized_docs = []
+            for doc, score in results:
+                serialized_docs.append({
+                    "content": doc.page_content,
+                    "metadata": doc.metadata,
+                    "relevance_score": score
+                })
+
+            retrieval_time = time.time() - start_time
+
+            # Update job status
+            job_tracker.update_job_status(
+                job_id,
+                JobStatus.COMPLETED,
+                result={
+                    "documents": serialized_docs,
+                    "document_count": len(serialized_docs),
+                    "retrieval_time": retrieval_time
+                }
+            )
+
+            # Return documents
+            return {
+                "documents": serialized_docs,
+                "document_count": len(serialized_docs),
+                "retrieval_time": retrieval_time
+            }
+
+        finally:
+            # Always mark task as completed
+            priority_queue.mark_task_completed(task_id)
+
+    except Exception as e:
+        import traceback
+        error_detail = f"Error retrieving documents: {str(e)}\n{traceback.format_exc()}"
+        logger.error(error_detail)
+
+        # Update job with error
+        job_tracker.update_job_status(
+            job_id,
+            JobStatus.FAILED,
+            error=error_detail
+        )
+
+        # Re-raise for dramatiq retry mechanism
+        raise
+
+
+@dramatiq.actor(
+    queue_name="cpu_tasks",  # Start on CPU for orchestration
+    max_retries=3,
+    store_results=True
+)
+def process_query_request(job_id: str, query: str, metadata_filter: Optional[Dict] = None):
+    """
+    Process a query request by coordinating multiple stages across different workers.
+
+    This actor orchestrates the following sequence:
+    1. Document retrieval (performed by worker-gpu-embedding)
+    2. Document reranking (performed by worker-gpu-inference)
+    3. LLM inference (performed by worker-gpu-inference)
+    """
+    try:
+        # Update job status to show we're starting
+        job_tracker.update_job_status(
+            job_id,
+            JobStatus.PROCESSING,
+            result={"message": "Query processing started"},
+            stage="query_processing"
+        )
+
+        # Step 1: Submit retrieval job to the GPU embedding worker
+        retrieval_job_id = f"{job_id}_retrieval"
+
+        # Create a sub-job for retrieval
+        job_tracker.create_job(
+            job_id=retrieval_job_id,
+            job_type="document_retrieval",
+            metadata={
+                "parent_job_id": job_id,
+                "query": query,
+                "metadata_filter": metadata_filter
+            }
+        )
+
+        # Send to retrieve_documents actor (on embedding_tasks queue)
+        # Use the retrieve_documents actor defined above in the same file
+        retrieve_result = retrieve_documents.send(retrieval_job_id, query, metadata_filter)
+
+        # Wait for retrieval to complete
+        retrieval_result = retrieve_result.get_result(block=True, timeout=120)  # 2-minute timeout
+
+        if not retrieval_result or "documents" not in retrieval_result:
+            raise ValueError("Document retrieval failed")
+
+        documents = retrieval_result["documents"]
+
+        # Step 2: Submit to LLM inference (which includes reranking)
+        # Now send to LLM inference worker
+        perform_llm_inference.send(job_id, query, documents, metadata_filter)
+
+        # The job is now being processed by perform_llm_inference, so we're done here
+        logger.info(f"Query {job_id} passed to LLM inference worker after retrieval")
+
+        return {
+            "message": "Query processing handed off to LLM inference worker",
+            "document_count": len(documents)
+        }
+
+    except Exception as e:
+        import traceback
+        error_detail = f"Error processing query: {str(e)}\n{traceback.format_exc()}"
+        logger.error(error_detail)
+
+        # Update job with error
+        job_tracker.update_job_status(
+            job_id,
+            JobStatus.FAILED,
+            error=error_detail
+        )
 
         # Re-raise for dramatiq retry mechanism
         raise

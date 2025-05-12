@@ -20,7 +20,9 @@ from .actors.ingestion import (
 )
 from .actors.inference import (
     perform_llm_inference,
-    rerank_documents
+    rerank_documents,
+    retrieve_documents,
+    process_query_request
 )
 from .actors.system import (
     cleanup_old_jobs,
@@ -62,6 +64,8 @@ __all__ = [
     # Inference actors
     "perform_llm_inference",
     "rerank_documents",
+    "retrieve_documents",
+    "process_query_request",
 
     # System actors
     "cleanup_old_jobs",
