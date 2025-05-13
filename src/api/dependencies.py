@@ -2,7 +2,7 @@ from typing import Dict, Optional
 import logging
 import os
 import redis
-from fastapi import HTTPException, Header, status
+from fastapi import Depends, HTTPException, Header, status
 from qdrant_client import QdrantClient
 
 from src.config.settings import settings
@@ -23,6 +23,9 @@ job_tracker = None
 qdrant_client = None
 vector_store = None
 
+# Determine if we're in API-only mode
+IS_API_MODE = os.environ.get("WORKER_TYPE", "") == "api"
+
 
 def init_vector_store():
     """Initialize Qdrant client and vector store."""
@@ -39,13 +42,23 @@ def init_vector_store():
         logger.info("🚀 Initializing Vector Store...")
 
         # API service only needs metadata-only mode
-        from src.core.vectorstore import QdrantStore
-        vector_store = QdrantStore(
-            client=qdrant_client,
-            collection_name=settings.qdrant_collection,
-            embedding_function=None,  # No embedding function needed for API
-        )
-        logger.info("✅ Vector Store Initialized (metadata-only mode)!")
+        if IS_API_MODE:
+            from src.core.vectorstore import QdrantStore
+            vector_store = QdrantStore(
+                client=qdrant_client,
+                collection_name=settings.qdrant_collection,
+                embedding_function=None,  # No embedding function needed for API
+            )
+            logger.info("✅ Vector Store Initialized (metadata-only mode)!")
+        else:
+            # Full initialization with embedding model for workers
+            from src.core.vectorstore import QdrantStore
+            vector_store = QdrantStore(
+                client=qdrant_client,
+                collection_name=settings.qdrant_collection,
+                embedding_function=settings.embedding_function,
+            )
+            logger.info("✅ Vector Store Initialized with embedding function!")
 
 
 def init_redis_client():
@@ -98,14 +111,28 @@ def get_job_tracker() -> JobTracker:
 
 def load_all_components():
     """Initialize only necessary components at application startup."""
-    logger.info("🔄 Initializing API service with minimal components...")
+    if IS_API_MODE:
+        logger.info("🔄 Initializing API service with minimal components...")
 
-    # Only initialize necessary components for API service
-    init_vector_store()
-    init_redis_client()
-    init_job_tracker()
+        # Only initialize necessary components for API service
+        init_vector_store()
+        init_redis_client()
+        init_job_tracker()
 
-    logger.info("✅ API service initialized with minimal components")
+        logger.info("✅ API service initialized with minimal components")
+    else:
+        # For worker services, load required components based on worker type
+        worker_type = os.environ.get("WORKER_TYPE", "unknown")
+        logger.info(f"🔄 Initializing worker service: {worker_type}")
+
+        # All worker types need these
+        init_vector_store()
+        init_redis_client()
+        init_job_tracker()
+
+        # For specific worker types, additional initialization happens elsewhere
+        # in the worker startup process (see background_tasks.py)
+        logger.info(f"✅ Base components initialized for worker: {worker_type}")
 
 
 # Authentication dependency
@@ -132,38 +159,12 @@ def get_vector_store() -> QdrantStore:
     return vector_store
 
 
-# Placeholder function for model-related endpoints
-def model_not_available(model_name: str) -> None:
-    """Helper function to handle requests for models that are not available in API mode."""
-    raise HTTPException(
-        status_code=501,
-        detail=f"{model_name} is not available in API-only mode. Use worker services for processing."
-    )
-
-
-# For endpoints that need access to models, provide these helper functions
-def get_document_processor():
-    """Placeholder for document processor - API server doesn't load this."""
-    # When endpoints requiring the document processor are called,
-    # they'll receive this error instead of trying to load the model
-    return model_not_available("Document processor")
-
-
-def get_colbert_reranker():
-    """Placeholder for ColBERT reranker - API server doesn't load this."""
-    return model_not_available("ColBERT reranker")
-
-
-def get_llm():
-    """Placeholder for LLM - API server doesn't load this."""
-    return model_not_available("LLM")
-
-
-def get_video_transcriber():
-    """Placeholder for video transcriber - API server doesn't load this."""
-    return model_not_available("Video transcriber")
-
-
-def get_pdf_loader():
-    """Placeholder for PDF loader - API server doesn't load this."""
-    return model_not_available("PDF loader")
+# Function to handle missing model dependencies
+def api_mode_only_handler(model_name: str):
+    """Handler for endpoints that require models in API-only mode."""
+    if IS_API_MODE:
+        raise HTTPException(
+            status_code=501,
+            detail=f"{model_name} is not available in API-only mode. Use worker services for processing."
+        )
+    # If we're in worker mode, this won't be called as the models will be initialized
