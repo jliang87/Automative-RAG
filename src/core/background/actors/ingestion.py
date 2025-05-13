@@ -764,3 +764,108 @@ def process_video_gpu(job_id: str, url: str, custom_metadata: Optional[Dict[str,
 
         # Re-raise for dramatiq retry mechanism
         raise
+
+
+@dramatiq.actor(
+    queue_name="embedding_tasks",  # Use embedding_tasks queue for GPU access
+    max_retries=2,
+    store_results=True
+)
+def delete_document_gpu(job_id: str, doc_id: str):
+    """
+    Delete a document from the vector store with access to the GPU embedding model.
+
+    Using the embedding_tasks queue ensures this task runs on a worker with GPU access.
+    """
+    try:
+        # Register task with the priority system
+        task_id = f"delete_{job_id}"
+        priority_queue.register_task("embedding_tasks", task_id, {"job_id": job_id, "doc_id": doc_id})
+
+        # Update job status to show we're queued
+        job_tracker.update_job_status(
+            job_id,
+            JobStatus.PROCESSING,
+            result={"message": "In priority queue for GPU resources"},
+            stage="embedding_tasks"
+        )
+
+        # Wait for priority system to allow this task to run
+        wait_start = time.time()
+        while not priority_queue.can_run_task("embedding_tasks", task_id):
+            # Log every 30 seconds of waiting
+            if int(time.time() - wait_start) % 30 == 0:
+                logger.info(f"Document deletion task {task_id} waiting in priority queue")
+            time.sleep(1)
+
+        # Mark this task as now active on GPU
+        priority_queue.mark_task_active({
+            "task_id": task_id,
+            "queue_name": "embedding_tasks",
+            "priority": 3,  # Same priority as other embedding tasks
+            "job_id": job_id,
+            "registered_at": time.time()
+        })
+
+        try:
+            # Update job status to processing
+            job_tracker.update_job_status(
+                job_id,
+                JobStatus.PROCESSING,
+                result={"message": "Deleting document"},
+                stage="deletion"
+            )
+
+            # Get vector store with GPU access
+            vector_store = get_vector_store()
+
+            # Delete the document
+            start_time = time.time()
+            vector_store.delete_by_ids([doc_id])
+            deletion_time = time.time() - start_time
+
+            logger.info(f"Deleted document {doc_id} in {deletion_time:.2f}s")
+
+            # Update job status upon completion
+            job_tracker.update_job_status(
+                job_id,
+                JobStatus.COMPLETED,
+                result={
+                    "message": f"Successfully deleted document: {doc_id}",
+                    "execution_time": deletion_time
+                }
+            )
+
+            return {
+                "document_id": doc_id,
+                "execution_time": deletion_time
+            }
+        finally:
+            # Always mark task as completed, even if it failed
+            priority_queue.mark_task_completed(task_id)
+
+            # Clear cache if needed
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+    except Exception as e:
+        import traceback
+        error_detail = f"Error deleting document: {str(e)}\n{traceback.format_exc()}"
+        logger.error(error_detail)
+
+        # Update job with error
+        job_tracker.update_job_status(
+            job_id,
+            JobStatus.FAILED,
+            error=error_detail
+        )
+
+        # Clean up GPU memory on error
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+        # Make sure to mark task as completed even in error case
+        priority_queue.mark_task_completed(f"delete_{job_id}")
+
+        # Re-raise for dramatiq retry mechanism
+        raise

@@ -10,13 +10,12 @@ import logging
 import traceback
 import redis
 from src.core.background.job_tracker import JobTracker
-from src.api.dependencies import get_vector_store, get_redis_client, get_job_tracker, get_document_processor
+from src.api.dependencies import get_vector_store, get_redis_client, get_job_tracker
 
 # Create a logger
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)  # Set to DEBUG level
 
-from src.core.document_processor import DocumentProcessor
 from src.core.vectorstore import QdrantStore
 from src.models.schema import IngestResponse, ManualIngestRequest, BackgroundJobResponse
 
@@ -148,8 +147,7 @@ async def ingest_pdf(
         file: UploadFile = File(...),
         metadata: Optional[str] = Form(None),
         use_ocr: Optional[bool] = Form(None),
-        extract_tables: bool = Form(True),
-        processor: DocumentProcessor = Depends(get_document_processor),
+        extract_tables: bool = Form(True)
 ) -> BackgroundJobResponse:
     """
     Ingest a PDF file with GPU-accelerated OCR and table extraction.
@@ -210,10 +208,7 @@ async def ingest_pdf(
 
 
 @router.post("/text", response_model=BackgroundJobResponse)
-async def ingest_text(
-        manual_request: ManualIngestRequest,
-        processor: DocumentProcessor = Depends(get_document_processor),
-) -> BackgroundJobResponse:
+async def ingest_text(manual_request: ManualIngestRequest) -> BackgroundJobResponse:
     """
     Ingest manually entered text.
     All processing happens asynchronously in the background.
@@ -317,22 +312,41 @@ async def delete_job(job_id: str) -> Dict[str, str]:
     return {"message": f"Successfully deleted job: {job_id}"}
 
 
-@router.delete("/documents/{doc_id}", response_model=Dict[str, str])
+@router.delete("/documents/{doc_id}", response_model=BackgroundJobResponse)
 async def delete_document(
         doc_id: str,
-        processor: DocumentProcessor = Depends(get_document_processor),
-) -> Dict[str, str]:
+        job_tracker: JobTracker = Depends(get_job_tracker),
+) -> BackgroundJobResponse:
     """
-    Delete a document by ID.
+    Delete a document by ID as a background task.
     """
     try:
-        # Delete the document using pre-initialized processor
-        processor.delete_documents([doc_id])
+        # Generate a unique job ID
+        job_id = str(uuid.uuid4())
 
-        return {"message": f"Successfully deleted document: {doc_id}"}
+        # Create a job record
+        job_tracker.create_job(
+            job_id=job_id,
+            job_type="document_deletion",
+            metadata={
+                "document_id": doc_id
+            }
+        )
+
+        # Start the background job - use the embedding_tasks queue for GPU access
+        from src.core.background import delete_document_gpu
+        delete_document_gpu.send(job_id, doc_id)
+
+        # Return the job ID immediately
+        return BackgroundJobResponse(
+            message=f"Document deletion scheduled in the background",
+            job_id=job_id,
+            job_type="document_deletion",
+            status="pending",
+        )
     except Exception as e:
         # Log the full traceback
-        error_detail = f"Error deleting document: {str(e)}\n{traceback.format_exc()}"
+        error_detail = f"Error scheduling document deletion: {str(e)}\n{traceback.format_exc()}"
         logger.error(error_detail)
 
         # Return detailed error information

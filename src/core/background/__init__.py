@@ -16,7 +16,8 @@ from .actors.ingestion import (
     process_transcript,
     process_pdf_cpu,
     process_video_gpu,
-    batch_process_videos
+    batch_process_videos,
+    delete_document_gpu
 )
 from .actors.inference import (
     perform_llm_inference,
@@ -60,6 +61,7 @@ __all__ = [
     "process_pdf_cpu",
     "process_video_gpu",
     "batch_process_videos",
+    "delete_document_gpu",
 
     # Inference actors
     "perform_llm_inference",
