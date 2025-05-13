@@ -5,8 +5,10 @@
 import streamlit as st
 import os
 from src.ui.components import header
-from src.ui.enhanced_worker_status import enhanced_worker_status
 from src.ui.enhanced_error_handling import robust_api_status_indicator
+
+# 导入通知模块
+from src.ui.system_notifications import main_notification_dashboard
 
 # API 配置
 API_URL = os.environ.get("API_URL", "http://localhost:8000")
@@ -20,15 +22,11 @@ if "api_key" not in st.session_state:
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 
-# 导入通知模块
-from src.ui.system_notifications import main_notification_dashboard
-
-# 渲染通知中心页面
-# Check API status in sidebar
+# 在侧边栏检查 API 状态
 with st.sidebar:
     api_available = robust_api_status_indicator(show_detail=True)
 
-# Only proceed with main content if API is available
+# 仅在 API 可用时继续主要内容
 if api_available:
     header(
         "系统通知中心",
@@ -38,9 +36,10 @@ if api_available:
     # 显示通知仪表板
     main_notification_dashboard(st.session_state.api_url, st.session_state.api_key)
 
-    # Add enhanced worker status display as well
-    st.subheader("Worker Status")
-    enhanced_worker_status()
+    # 添加查看系统状态的链接
+    st.markdown("---")
+    st.info("要查看详细的系统组件状态，请访问[系统管理页面](/系统管理)")
+
 else:
     header(
         "系统通知中心",

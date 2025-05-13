@@ -8,13 +8,18 @@ import time
 import os
 import json
 import pandas as pd
-from src.ui.components import header, api_request, display_document
+from typing import Dict, Any
 
-# Import enhanced components
+# 导入统一的 API 客户端
+from src.ui.api_client import api_request
+
+# 导入组件
+from src.ui.components import header, display_document
+
+# 导入增强组件
 from src.ui.system_notifications import display_notifications_sidebar
 from src.ui.enhanced_error_handling import robust_api_status_indicator, handle_worker_dependency
-from src.ui.model_loading_status_indicator import model_loading_status
-from src.ui.task_progress_visualization import display_task_progress, display_stage_timeline, render_priority_queue_visualization
+from src.ui.task_progress_visualization import display_task_progress, display_stage_timeline
 
 # API 配置
 API_URL = os.environ.get("API_URL", "http://localhost:8000")
@@ -129,8 +134,8 @@ def check_priority_queue_status():
         response = api_request(
             endpoint="/query/queue-status",
             method="GET",
-            retries=2,  # Add retries for more robust error handling
-            timeout=5.0  # Increased timeout
+            retries=2,  # 增加重试以提高错误处理的稳健性
+            timeout=5.0  # 增加超时时间
         )
         if response:
             return response
@@ -172,7 +177,7 @@ def retry_job(job_id: str, job_type: str, metadata: dict):
                 "url": url,
                 "metadata": custom_metadata
             },
-            retries=1  # Add retry for robustness
+            retries=1  # 增加重试以提高稳健性
         )
 
         if response and "job_id" in response:
@@ -267,18 +272,14 @@ def render_task_status_page():
         "查看和管理各种任务的状态，包括查询、视频处理、PDF处理和文本处理。"
     )
 
-    # Display notifications in sidebar
+    # 在侧边栏显示通知
     display_notifications_sidebar(st.session_state.api_url, st.session_state.api_key)
 
-    # Check API status in sidebar
+    # 在侧边栏检查 API 状态
     with st.sidebar:
         api_available = robust_api_status_indicator(show_detail=True)
 
-        # Show model loading status
-        with st.expander("模型加载状态", expanded=False):
-            model_loading_status()
-
-    # Only proceed if API is available
+    # 仅在 API 可用时继续
     if api_available:
         # 创建两个选项卡：任务列表和任务详情
         tab1, tab2, tab3 = st.tabs(["任务列表", "任务详情", "系统状态"])
@@ -318,7 +319,7 @@ def render_task_status_page():
                     endpoint="/ingest/jobs",
                     method="GET",
                     params={"limit": 100},
-                    retries=2  # Add retries for robustness
+                    retries=2  # 增加重试以提高稳健性
                 )
 
             if not all_jobs:
@@ -505,7 +506,7 @@ def render_task_status_page():
                 job_data = api_request(
                     endpoint=f"/ingest/jobs/{selected_id}",
                     method="GET",
-                    retries=2  # Add retries for robustness
+                    retries=2  # 增加重试以提高稳健性
                 )
 
                 if not job_data:
@@ -589,8 +590,11 @@ def render_task_status_page():
             queue_status = check_priority_queue_status()
 
             if queue_status:
-                # 使用 task_progress_visualization 组件渲染优先队列
-                render_priority_queue_visualization(queue_status)
+                # 导入优先队列可视化组件
+                from src.ui.interactive_priority_queue_visualization import render_interactive_queue_visualization
+
+                # 使用交互式队列可视化组件
+                render_interactive_queue_visualization(st.session_state.api_url, st.session_state.api_key)
             else:
                 st.warning("无法获取优先队列状态")
 
@@ -605,7 +609,7 @@ def render_task_status_page():
             system_status = api_request(
                 endpoint="/ingest/status",
                 method="GET",
-                retries=2  # Add retries for robustness
+                retries=2  # 增加重试以提高稳健性
             )
 
             if system_status and "gpu_info" in system_status:

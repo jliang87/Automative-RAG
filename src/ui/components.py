@@ -8,6 +8,9 @@ import streamlit as st
 import httpx
 from typing import Dict, List, Optional, Union, Callable, Any
 
+# 导入统一的 API 客户端
+from src.ui.api_client import api_request
+
 
 def header(title: str, description: Optional[str] = None):
     """显示页面标题和描述"""
@@ -39,40 +42,40 @@ def api_status_indicator():
 
 
 def worker_status_indicator():
-    """Display worker status in the sidebar."""
+    """在侧边栏显示worker状态。"""
     try:
-        # Get worker info from API
+        # 从API获取worker信息
         response = api_request(
             endpoint="/query/llm-info",
             method="GET",
-            timeout=2.0  # Short timeout to avoid UI blocking
+            timeout=2.0  # 短超时以避免UI阻塞
         )
 
         if not response:
-            st.sidebar.warning("⚠️ Unable to get worker status")
+            st.sidebar.warning("⚠️ 无法获取worker状态")
             return
 
-        # Display active workers
+        # 显示活动workers
         active_workers = response.get("active_workers", {})
         if active_workers:
-            with st.sidebar.expander("Worker Status"):
+            with st.sidebar.expander("Worker状态"):
                 for worker_type, info in active_workers.items():
                     count = info.get("count", 0)
                     description = info.get("description", worker_type)
-                    st.success(f"✅ {description} ({count} active)")
+                    st.success(f"✅ {description} ({count} 个活动)")
 
-                # Display queue info if available
+                # 如果有队列信息，显示队列信息
                 queue_stats = response.get("queue_stats", {})
                 if queue_stats:
-                    st.subheader("Task Queues")
+                    st.subheader("任务队列")
                     for queue, count in queue_stats.items():
                         if count > 0:
-                            st.text(f"{queue}: {count} tasks")
+                            st.text(f"{queue}: {count} 个任务")
         else:
-            st.sidebar.warning("⚠️ No active workers detected")
+            st.sidebar.warning("⚠️ 未检测到活动的workers")
 
     except Exception as e:
-        st.sidebar.warning(f"⚠️ Error checking worker status: {str(e)}")
+        st.sidebar.warning(f"⚠️ 检查worker状态时出错: {str(e)}")
 
 
 def llm_status_indicator():
@@ -167,51 +170,6 @@ def metadata_filters():
         metadata_filter["transmission"] = transmission
 
     return metadata_filter if metadata_filter else None
-
-
-def api_request(
-    endpoint: str,
-    method: str = "GET",
-    data: Optional[Dict] = None,
-    files: Optional[Dict] = None,
-    params: Optional[Dict] = None,
-    handle_error: Callable[[str], Any] = None,
-) -> Optional[Dict]:
-    """发送 API 请求并处理错误"""
-    headers = {"x-token": st.session_state.api_key}
-    url = f"{st.session_state.api_url}{endpoint}"
-
-    try:
-        with httpx.Client(timeout=150.0) as client:
-            if method == "GET":
-                response = client.get(url, headers=headers, params=params)
-            elif method == "POST":
-                if files:
-                    response = client.post(url, headers=headers, data=data, files=files)
-                else:
-                    response = client.post(url, headers=headers, json=data)
-            elif method == "DELETE":
-                response = client.delete(url, headers=headers)
-            else:
-                st.error(f"不支持的请求方法: {method}")
-                return None
-
-            if response.status_code >= 400:
-                error_msg = f"API 错误 ({response.status_code}): {response.text}"
-                if handle_error:
-                    return handle_error(error_msg)
-                else:
-                    st.error(error_msg)
-                    return None
-
-            return response.json()
-    except Exception as e:
-        error_msg = f"连接错误: {str(e)}"
-        if handle_error:
-            return handle_error(error_msg)
-        else:
-            st.error(error_msg)
-            return None
 
 
 def display_document(doc: Dict, index: int):

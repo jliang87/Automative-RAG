@@ -5,7 +5,7 @@ Model loading status indicator component
 import streamlit as st
 import time
 from typing import Dict, Any, List, Optional
-
+from src.ui.api_client import api_request, check_worker_availability
 
 def model_loading_status(detailed: bool = False):
     """
@@ -82,45 +82,3 @@ def model_loading_status(detailed: bool = False):
                         model_name = model_names.get(model_type, model_type)
                         loading_time = status.get("loading_time", 0)
                         st.text(f"✓ {model_name} (加载用时: {loading_time:.1f}秒)")
-
-
-def api_request(
-        endpoint: str,
-        method: str = "GET",
-        data: Optional[Dict] = None,
-        params: Optional[Dict] = None,
-        silent: bool = False,
-        timeout: float = 3.0
-) -> Optional[Dict]:
-    """Send API request and handle errors silently if specified."""
-    import httpx
-
-    if "api_url" not in st.session_state or "api_key" not in st.session_state:
-        if not silent:
-            st.error("API 配置未初始化")
-        return None
-
-    headers = {"x-token": st.session_state.api_key}
-    url = f"{st.session_state.api_url}{endpoint}"
-
-    try:
-        with httpx.Client(timeout=timeout) as client:
-            if method == "GET":
-                response = client.get(url, headers=headers, params=params)
-            elif method == "POST":
-                response = client.post(url, headers=headers, json=data)
-            else:
-                if not silent:
-                    st.error(f"不支持的请求方法: {method}")
-                return None
-
-            if response.status_code >= 400:
-                if not silent:
-                    st.error(f"API 错误 ({response.status_code}): {response.text}")
-                return None
-
-            return response.json()
-    except Exception as e:
-        if not silent:
-            st.error(f"请求错误: {str(e)}")
-        return None

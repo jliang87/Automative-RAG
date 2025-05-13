@@ -2,11 +2,13 @@ import os
 import streamlit as st
 import httpx
 from typing import Dict, List, Optional, Union
-from src.ui.components import header, api_request
 
-# Import enhanced components
+# 导入统一的 API 客户端
+from src.ui.api_client import api_request
+from src.ui.components import header
+
+# 导入增强组件
 from src.ui.system_notifications import display_notifications_sidebar
-from src.ui.enhanced_worker_status import enhanced_worker_status
 from src.ui.enhanced_error_handling import robust_api_status_indicator, handle_worker_dependency
 
 # 配置应用
@@ -33,16 +35,15 @@ if "system_notifications" not in st.session_state:
 if "last_notification_check" not in st.session_state:
     st.session_state.last_notification_check = 0
 
-# Display notifications in the sidebar
+# 在侧边栏显示通知
 display_notifications_sidebar(st.session_state.api_url, st.session_state.api_key)
 
-# Use robust API status indicator instead of simple status check
+# 使用增强的 API 状态指示器代替简单的状态检查
 with st.sidebar:
     api_available = robust_api_status_indicator(show_detail=True)
 
-# Only show main content if API is available
+# 仅在 API 可用时显示主要内容
 if api_available:
-
     header(
         "汽车规格 RAG 系统",
         "一个基于 GPU 加速的系统，用于使用延迟交互检索 (Late Interaction Retrieval) 和混合重排序进行汽车规格信息检索。"
@@ -106,36 +107,73 @@ try:
         col1, col2 = st.columns(2)
 
         with col1:
-            st.subheader("System Status")
-            st.write(f"Status: {status_info.get('status', '未知')}")
+            st.subheader("系统状态")
+            st.write(f"状态: {status_info.get('status', '未知')}")
             document_count = status_info.get('document_count') or 0
-            st.write(f"Document Count: {document_count}")
+            st.write(f"文档数量: {document_count}")
 
-            # Display collection info
+            # 显示集合信息
             collection = status_info.get("collection") or '未定义'
-            st.write(f"Collection: {collection}")
+            st.write(f"集合: {collection}")
 
-            # Display job stats
+            # 显示任务统计
             if "job_stats" in status_info:
                 job_stats = status_info.get("job_stats", {})
-                st.subheader("Background Tasks")
+                st.subheader("后台任务")
 
                 col1a, col1b, col1c, col1d = st.columns(4)
                 with col1a:
-                    st.metric("Pending", job_stats.get("pending_jobs", 0))
+                    st.metric("等待中", job_stats.get("pending_jobs", 0))
                 with col1b:
-                    st.metric("Processing", job_stats.get("processing_jobs", 0))
+                    st.metric("处理中", job_stats.get("processing_jobs", 0))
                 with col1c:
-                    st.metric("Completed", job_stats.get("completed_jobs", 0))
+                    st.metric("已完成", job_stats.get("completed_jobs", 0))
                 with col1d:
-                    st.metric("Failed", job_stats.get("failed_jobs", 0))
+                    st.metric("失败", job_stats.get("failed_jobs", 0))
 
         with col2:
-            st.subheader("Worker Status")
-            # Use enhanced worker status instead of basic status display
-            enhanced_worker_status()
+            st.subheader("服务状态")
+
+            # 获取简单的服务状态信息
+            service_status = api_request(
+                endpoint="/system/health/detailed",
+                method="GET",
+                silent=True
+            )
+
+            if service_status:
+                # 创建一个简洁的服务状态摘要
+                services = {
+                    "API 服务": "✅ 正常",
+                    "LLM 服务": "⚠️ 未知",
+                    "嵌入服务": "⚠️ 未知",
+                    "转录服务": "⚠️ 未知",
+                    "文本处理服务": "⚠️ 未知"
+                }
+
+                # 从健康检查更新服务状态
+                workers = service_status.get("workers", {})
+                for worker_id, info in workers.items():
+                    worker_type = info.get("type", "unknown")
+                    status = info.get("status", "unknown")
+
+                    if "gpu-inference" in worker_type:
+                        services["LLM 服务"] = "✅ 正常" if status == "healthy" else "❌ 异常"
+                    elif "gpu-embedding" in worker_type:
+                        services["嵌入服务"] = "✅ 正常" if status == "healthy" else "❌ 异常"
+                    elif "gpu-whisper" in worker_type:
+                        services["转录服务"] = "✅ 正常" if status == "healthy" else "❌ 异常"
+                    elif "cpu" in worker_type:
+                        services["文本处理服务"] = "✅ 正常" if status == "healthy" else "❌ 异常"
+
+                # 显示服务状态表格
+                for service, status in services.items():
+                    st.text(f"{service}: {status}")
+
+                # 添加查看详情链接
+                st.markdown("[查看详细状态](/系统管理)")
 
 except Exception as e:
-    st.error(f"Error fetching system status: {str(e)}")
+    st.error(f"获取系统状态时出错: {str(e)}")
 else:
     st.info("API服务可用，但未能获取系统状态。请检查系统配置。")

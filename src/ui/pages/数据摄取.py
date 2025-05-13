@@ -1,6 +1,6 @@
 """
 汽车数据导入页面（Streamlit UI）- 支持后台处理
-Updated to use enhanced error handling
+已更新为使用增强的错误处理
 """
 
 import json
@@ -8,9 +8,10 @@ import os
 import datetime
 import streamlit as st
 import time
-from src.ui.components import header, api_request, loading_spinner
+from src.ui.components import header, loading_spinner
 from src.ui.system_notifications import display_notifications_sidebar
 from src.ui.enhanced_error_handling import robust_api_status_indicator, handle_worker_dependency
+from src.ui.api_client import api_request
 
 # API 配置
 API_URL = os.environ.get("API_URL", "http://localhost:8000")
@@ -30,14 +31,14 @@ if "job_id" not in st.session_state:
 if "redirect_to_jobs" not in st.session_state:
     st.session_state.redirect_to_jobs = False
 
-# Display notifications in sidebar
+# 在侧边栏显示通知
 display_notifications_sidebar(st.session_state.api_url, st.session_state.api_key)
 
-# Check API status in sidebar
+# 在侧边栏检查 API 状态
 with st.sidebar:
     api_available = robust_api_status_indicator(show_detail=True)
 
-# Only proceed with main content if API is available
+# 仅在 API 可用时继续主要内容
 if api_available:
     header(
         "导入汽车数据",
@@ -49,7 +50,7 @@ if api_available:
         st.success(f"已创建后台任务，任务ID: {st.session_state.job_id}")
         st.info("正在跳转到任务管理页面...")
 
-        # Add a countdown timer instead of indefinite waiting
+        # 添加倒计时定时器，而不是无限期等待
         import time
 
         for i in range(3, 0, -1):
@@ -57,14 +58,14 @@ if api_available:
             time.sleep(1)
             st.rerun()
 
-        # After countdown completes, redirect using relative path
+        # 倒计时完成后，使用相对路径重定向
         st.switch_page("pages/后台任务.py")
 
-        # Add button for immediate redirect
+        # 添加立即重定向按钮
         if st.button("立即跳转到任务页面"):
             st.switch_page("pages/后台任务.py")
 
-        # Stop page execution here
+        # 在此停止页面执行
         st.stop()
 
     st.info("""
@@ -102,7 +103,7 @@ if api_available:
             video_manufacturer = st.text_input("制造商", key="video_manufacturer")
             video_model = st.text_input("车型", key="video_model")
             video_year = st.text_input("年份", key="video_year")
-            # Validate year format if needed
+            # 验证年份格式（如果需要）
             if video_year:
                 try:
                     year_value = int(video_year)
@@ -127,7 +128,7 @@ if api_available:
                 st.warning("请输入视频链接")
                 return
 
-            # Check worker dependency for video processing
+            # 检查视频处理的 worker 依赖
             if not handle_worker_dependency("video"):
                 return
 
@@ -185,7 +186,7 @@ if api_available:
             pdf_manufacturer = st.text_input("制造商", key="pdf_manufacturer")
             pdf_model = st.text_input("车型", key="pdf_model")
             pdf_year = st.text_input("年份", key="pdf_year")
-            # Validate year format if needed
+            # 验证年份格式（如果需要）
             if pdf_year:
                 try:
                     year_value = int(pdf_year)
@@ -216,7 +217,7 @@ if api_available:
                 st.warning("请上传 PDF 文件")
                 return
 
-            # Check worker dependency for PDF processing
+            # 检查 PDF 处理的 worker 依赖
             if not handle_worker_dependency("pdf"):
                 return
 
@@ -276,7 +277,7 @@ if api_available:
             manual_manufacturer = st.text_input("制造商", key="manual_manufacturer")
             manual_model = st.text_input("车型", key="manual_model")
             manual_year = st.text_input("年份", key="manual_year")
-            # Validate year format if needed
+            # 验证年份格式（如果需要）
             if manual_year:
                 try:
                     year_value = int(manual_year)
@@ -303,7 +304,7 @@ if api_available:
                 st.warning("请输入内容")
                 return
 
-            # Check worker dependency for text processing
+            # 检查文本处理的 worker 依赖
             if not handle_worker_dependency("text"):
                 return
 

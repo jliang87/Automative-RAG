@@ -1,16 +1,17 @@
 """
 汽车规格查询页面（Streamlit UI）
 支持异步查询，避免前端超时
-Updated to use enhanced error handling
+已更新为使用增强的错误处理
 """
 
 import streamlit as st
 import time
 import os
 import json
-from src.ui.components import header, metadata_filters, api_request, display_document, loading_spinner
+from src.ui.components import header, metadata_filters, display_document, loading_spinner
 from src.ui.system_notifications import display_notifications_sidebar
 from src.ui.enhanced_error_handling import robust_api_status_indicator, handle_worker_dependency
+from src.ui.api_client import api_request
 
 # API 配置
 API_URL = os.environ.get("API_URL", "http://localhost:8000")
@@ -36,7 +37,7 @@ if "poll_count" not in st.session_state:
 
 def process_async_query(query: str, metadata_filter, top_k: int = 5):
     """处理异步查询并启动轮询"""
-    # Check worker dependency first (more robust error handling)
+    # 首先检查 worker 依赖（更加健壮的错误处理）
     if not handle_worker_dependency("query"):
         return
 
@@ -138,14 +139,14 @@ def render_query_page():
         "输入问题，获取汽车规格的精准答案。"
     )
 
-    # Display notifications in sidebar
+    # 在侧边栏显示通知
     display_notifications_sidebar(st.session_state.api_url, st.session_state.api_key)
 
-    # Check API status
+    # 检查 API 状态
     with st.sidebar:
         api_available = robust_api_status_indicator(show_detail=True)
 
-    # Only proceed if API is available
+    # 仅在 API 可用时继续
     if api_available:
         # 查询输入框
         query = st.text_area("输入您的问题", height=100)
