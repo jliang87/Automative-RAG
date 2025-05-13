@@ -4,6 +4,11 @@ import httpx
 from typing import Dict, List, Optional, Union
 from src.ui.components import header, api_request
 
+# Import enhanced components
+from src.ui.system_notifications import display_notifications_sidebar
+from src.ui.enhanced_worker_status import enhanced_worker_status
+from src.ui.enhanced_error_handling import robust_api_status_indicator, handle_worker_dependency
+
 # 配置应用
 st.set_page_config(
     page_title="汽车规格 RAG 系统",
@@ -23,11 +28,25 @@ if "api_key" not in st.session_state:
     st.session_state.api_key = API_KEY
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
+if "system_notifications" not in st.session_state:
+    st.session_state.system_notifications = []
+if "last_notification_check" not in st.session_state:
+    st.session_state.last_notification_check = 0
 
-header(
-    "汽车规格 RAG 系统",
-    "一个基于 GPU 加速的系统，用于使用延迟交互检索 (Late Interaction Retrieval) 和混合重排序进行汽车规格信息检索。"
-)
+# Display notifications in the sidebar
+display_notifications_sidebar(st.session_state.api_url, st.session_state.api_key)
+
+# Use robust API status indicator instead of simple status check
+with st.sidebar:
+    api_available = robust_api_status_indicator(show_detail=True)
+
+# Only show main content if API is available
+if api_available:
+
+    header(
+        "汽车规格 RAG 系统",
+        "一个基于 GPU 加速的系统，用于使用延迟交互检索 (Late Interaction Retrieval) 和混合重排序进行汽车规格信息检索。"
+    )
 
 # 系统概述
 st.markdown("""
@@ -61,6 +80,7 @@ st.markdown("""
 - **高并发支持**：同时处理多个任务，充分利用系统资源
 - **自动资源管理**：优化CPU和内存使用，防止系统过载
 - **任务恢复**：支持从意外中断中恢复任务
+- **系统通知**：重要事件通知系统，及时提醒管理员处理问题
 
 ### 支持的后台任务类型
 
@@ -72,6 +92,7 @@ st.markdown("""
 
 1. 提交任务后，系统会自动创建一个后台作业并跳转到任务管理页面
 2. 在任务管理页面查看所有任务的状态和结果
+3. 系统通知页面可以查看所有系统警告和错误
 """)
 
 # 获取系统状态信息
@@ -111,24 +132,10 @@ try:
 
         with col2:
             st.subheader("Worker Status")
-            active_workers = status_info.get("active_workers", {})
-
-            if active_workers:
-                for worker_type, count in active_workers.items():
-                    if worker_type == "gpu-inference":
-                        st.success(f"✅ LLM & Reranking: {count} workers")
-                    elif worker_type == "gpu-embedding":
-                        st.success(f"✅ Vector Embeddings: {count} workers")
-                    elif worker_type == "gpu-whisper":
-                        st.success(f"✅ Speech Transcription: {count} workers")
-                    elif worker_type == "cpu":
-                        st.success(f"✅ Text Processing: {count} workers")
-                    elif worker_type == "system":
-                        st.success(f"✅ System Management: {count} workers")
-            else:
-                st.warning("⚠️ No active workers detected")
-                st.info(
-                    "Start worker services with: `docker-compose up -d worker-gpu-inference worker-gpu-embedding worker-gpu-whisper worker-cpu system-worker`")
+            # Use enhanced worker status instead of basic status display
+            enhanced_worker_status()
 
 except Exception as e:
     st.error(f"Error fetching system status: {str(e)}")
+else:
+    st.info("API服务可用，但未能获取系统状态。请检查系统配置。")

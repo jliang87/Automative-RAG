@@ -1,6 +1,7 @@
 """
 汽车规格查询页面（Streamlit UI）
 支持异步查询，避免前端超时
+Updated to use enhanced error handling
 """
 
 import streamlit as st
@@ -8,6 +9,8 @@ import time
 import os
 import json
 from src.ui.components import header, metadata_filters, api_request, display_document, loading_spinner
+from src.ui.system_notifications import display_notifications_sidebar
+from src.ui.enhanced_error_handling import robust_api_status_indicator, handle_worker_dependency
 
 # API 配置
 API_URL = os.environ.get("API_URL", "http://localhost:8000")
@@ -33,6 +36,10 @@ if "poll_count" not in st.session_state:
 
 def process_async_query(query: str, metadata_filter, top_k: int = 5):
     """处理异步查询并启动轮询"""
+    # Check worker dependency first (more robust error handling)
+    if not handle_worker_dependency("query"):
+        return
+
     # 准备请求数据
     request_data = {
         "query": query,
@@ -131,39 +138,51 @@ def render_query_page():
         "输入问题，获取汽车规格的精准答案。"
     )
 
-    # 查询输入框
-    query = st.text_area("输入您的问题", height=100)
+    # Display notifications in sidebar
+    display_notifications_sidebar(st.session_state.api_url, st.session_state.api_key)
 
-    # 元数据筛选（可展开）
-    with st.expander("高级筛选"):
-        filter_data = metadata_filters()
+    # Check API status
+    with st.sidebar:
+        api_available = robust_api_status_indicator(show_detail=True)
 
-    # Top-K 选择器
-    top_k = st.slider("最多检索文档数量", min_value=1, max_value=20, value=5)
+    # Only proceed if API is available
+    if api_available:
+        # 查询输入框
+        query = st.text_area("输入您的问题", height=100)
 
-    # 提交按钮
-    if st.button("提交查询", type="primary"):
-        if not query:
-            st.warning("请输入查询内容")
-        else:
-            process_async_query(query, filter_data, top_k)
+        # 元数据筛选（可展开）
+        with st.expander("高级筛选"):
+            filter_data = metadata_filters()
 
-    # 如果正在轮询，显示取消按钮
-    if st.session_state.polling:
-        if st.button("取消等待"):
-            st.session_state.polling = False
-            st.info("查询仍在后台处理中，您可以稍后在任务管理页面查看结果")
-            st.session_state.query_job_id = None
+        # Top-K 选择器
+        top_k = st.slider("最多检索文档数量", min_value=1, max_value=20, value=5)
 
-    # 如果有任务ID但未在轮询，显示检查结果按钮
-    elif st.session_state.query_job_id and not st.session_state.polling:
-        if st.button("检查查询结果"):
-            st.session_state.polling = True
-            st.rerun()
+        # 提交按钮
+        if st.button("提交查询", type="primary"):
+            if not query:
+                st.warning("请输入查询内容")
+            else:
+                process_async_query(query, filter_data, top_k)
 
-    # 轮询结果
-    if st.session_state.polling:
-        poll_for_results()
+        # 如果正在轮询，显示取消按钮
+        if st.session_state.polling:
+            if st.button("取消等待"):
+                st.session_state.polling = False
+                st.info("查询仍在后台处理中，您可以稍后在任务管理页面查看结果")
+                st.session_state.query_job_id = None
+
+        # 如果有任务ID但未在轮询，显示检查结果按钮
+        elif st.session_state.query_job_id and not st.session_state.polling:
+            if st.button("检查查询结果"):
+                st.session_state.polling = True
+                st.rerun()
+
+        # 轮询结果
+        if st.session_state.polling:
+            poll_for_results()
+    else:
+        st.error("无法连接到API服务或所需的Worker未运行。")
+        st.info("请确保API服务和GPU-Inference Worker正在运行。")
 
 # 渲染页面
 render_query_page()
