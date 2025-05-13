@@ -130,8 +130,6 @@ def load_all_components():
         init_redis_client()
         init_job_tracker()
 
-        # For specific worker types, additional initialization happens elsewhere
-        # in the worker startup process (see background_tasks.py)
         logger.info(f"✅ Base components initialized for worker: {worker_type}")
 
 
