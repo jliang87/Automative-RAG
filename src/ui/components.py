@@ -38,41 +38,41 @@ def api_status_indicator():
         return False
 
 
-def gpu_status_indicator():
-    """显示 GPU 状态信息"""
+def worker_status_indicator():
+    """Display worker status in the sidebar."""
     try:
-        with httpx.Client() as client:
-            response = client.get(
-                f"{st.session_state.api_url}/ingest/status",
-                headers={"x-token": st.session_state.api_key},
-                timeout=3.0
-            )
+        # Get worker info from API
+        response = api_request(
+            endpoint="/query/llm-info",
+            method="GET",
+            timeout=2.0  # Short timeout to avoid UI blocking
+        )
 
-        if response.status_code == 200:
-            data = response.json()
+        if not response:
+            st.sidebar.warning("⚠️ Unable to get worker status")
+            return
 
-            if "gpu_info" in data and data["gpu_info"]:
-                gpu_info = data["gpu_info"]
+        # Display active workers
+        active_workers = response.get("active_workers", {})
+        if active_workers:
+            with st.sidebar.expander("Worker Status"):
+                for worker_type, info in active_workers.items():
+                    count = info.get("count", 0)
+                    description = info.get("description", worker_type)
+                    st.success(f"✅ {description} ({count} active)")
 
-                # 创建 GPU 信息展开区域
-                with st.sidebar.expander("GPU 状态"):
-                    if "device_name" in gpu_info:
-                        st.info(f"GPU: {gpu_info['device_name']}")
-
-                    if "memory_allocated" in gpu_info:
-                        st.metric("显存占用", gpu_info['memory_allocated'])
-
-                    if "whisper_model" in gpu_info:
-                        st.text(f"Whisper 版本: {gpu_info['whisper_model']}")
-
-                    if "fp16_enabled" in gpu_info:
-                        fp16 = gpu_info['fp16_enabled']
-                        st.text(f"混合精度: {'✓' if fp16 else '✗'}")
-            else:
-                st.sidebar.warning("⚠️ 当前运行在 CPU 上")
+                # Display queue info if available
+                queue_stats = response.get("queue_stats", {})
+                if queue_stats:
+                    st.subheader("Task Queues")
+                    for queue, count in queue_stats.items():
+                        if count > 0:
+                            st.text(f"{queue}: {count} tasks")
+        else:
+            st.sidebar.warning("⚠️ No active workers detected")
 
     except Exception as e:
-        st.sidebar.warning("⚠️ 无法获取 GPU 状态")
+        st.sidebar.warning(f"⚠️ Error checking worker status: {str(e)}")
 
 
 def llm_status_indicator():

@@ -85,76 +85,50 @@ try:
         col1, col2 = st.columns(2)
 
         with col1:
-            st.subheader("系统状态")
-            st.write(f"状态: {status_info.get('status', '未知')}")
+            st.subheader("System Status")
+            st.write(f"Status: {status_info.get('status', '未知')}")
             document_count = status_info.get('document_count') or 0
-            st.write(f"文档数量: {document_count}")
+            st.write(f"Document Count: {document_count}")
 
-            # 显示集合信息（如果可用）
+            # Display collection info
             collection = status_info.get("collection") or '未定义'
-            st.write(f"数据集合: {collection}")
+            st.write(f"Collection: {collection}")
 
-            # 显示后台任务状态（如果可用）
+            # Display job stats
             if "job_stats" in status_info:
                 job_stats = status_info.get("job_stats", {})
-                st.subheader("后台任务状态")
+                st.subheader("Background Tasks")
 
                 col1a, col1b, col1c, col1d = st.columns(4)
                 with col1a:
-                    st.metric("等待中", job_stats.get("pending_jobs", 0))
+                    st.metric("Pending", job_stats.get("pending_jobs", 0))
                 with col1b:
-                    st.metric("处理中", job_stats.get("processing_jobs", 0))
+                    st.metric("Processing", job_stats.get("processing_jobs", 0))
                 with col1c:
-                    st.metric("已完成", job_stats.get("completed_jobs", 0))
+                    st.metric("Completed", job_stats.get("completed_jobs", 0))
                 with col1d:
-                    st.metric("失败", job_stats.get("failed_jobs", 0))
-
-                if job_stats.get("processing_jobs", 0) > 0 or job_stats.get("pending_jobs", 0) > 0:
-                    st.info("有任务正在处理中! [前往任务管理页面查看详情](#)")
+                    st.metric("Failed", job_stats.get("failed_jobs", 0))
 
         with col2:
-            st.subheader("GPU 信息")
-            gpu_info = status_info.get("gpu_info", {})
+            st.subheader("Worker Status")
+            active_workers = status_info.get("active_workers", {})
 
-            if gpu_info:
-                st.write(f"设备: {gpu_info.get('device', '未知')}")
-                if 'device_name' in gpu_info:
-                    st.write(f"GPU: {gpu_info['device_name']}")
-                if 'memory_allocated' in gpu_info and gpu_info['memory_allocated'] is not None:
-                    st.write(f"已使用内存: {gpu_info['memory_allocated']}")
-                else:
-                    st.write("已使用内存: 未知")
-                if 'whisper_model' in gpu_info:
-                    st.write(f"Whisper 模型: {gpu_info['whisper_model']}")
+            if active_workers:
+                for worker_type, count in active_workers.items():
+                    if worker_type == "gpu-inference":
+                        st.success(f"✅ LLM & Reranking: {count} workers")
+                    elif worker_type == "gpu-embedding":
+                        st.success(f"✅ Vector Embeddings: {count} workers")
+                    elif worker_type == "gpu-whisper":
+                        st.success(f"✅ Speech Transcription: {count} workers")
+                    elif worker_type == "cpu":
+                        st.success(f"✅ Text Processing: {count} workers")
+                    elif worker_type == "system":
+                        st.success(f"✅ System Management: {count} workers")
             else:
-                st.write("运行在 CPU 上")
-
-    # 获取 LLM 信息
-    llm_info = api_request(
-        endpoint="/query/llm-info",
-        method="GET"
-    )
-
-    if llm_info:
-        st.subheader("LLM 信息")
-
-        # 规范化模型名称
-        model_name = llm_info.get("model_name", "未知")
-        if "/" in model_name:
-            model_name = model_name.split("/")[-1]
-
-        col1, col2 = st.columns(2)
-
-        with col1:
-            st.write(f"模型: {model_name}")
-            st.write(f"量化方式: {llm_info.get('quantization', '无')}")
-
-        with col2:
-            st.write(f"温度参数: {llm_info.get('temperature', 0.0)}")
-            st.write(f"最大 Token 数: {llm_info.get('max_tokens', 0)}")
-
-        if 'vram_usage' in llm_info:
-            st.write(f"显存占用: {llm_info['vram_usage']}")
+                st.warning("⚠️ No active workers detected")
+                st.info(
+                    "Start worker services with: `docker-compose up -d worker-gpu-inference worker-gpu-embedding worker-gpu-whisper worker-cpu system-worker`")
 
 except Exception as e:
-    st.error(f"获取系统信息出错: {str(e)}")
+    st.error(f"Error fetching system status: {str(e)}")

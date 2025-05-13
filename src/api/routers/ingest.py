@@ -8,17 +8,17 @@ from typing import Dict, Any
 import torch
 import logging
 import traceback
+import redis
+from src.core.background.job_tracker import JobTracker
+from src.api.dependencies import get_vector_store, get_redis_client, get_job_tracker, get_document_processor
 
 # Create a logger
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)  # Set to DEBUG level
 
-from src.api.dependencies import get_vector_store, get_document_processor, get_pdf_loader
 from src.core.document_processor import DocumentProcessor
 from src.core.vectorstore import QdrantStore
-from src.core.pdf_loader import PDFLoader
 from src.models.schema import IngestResponse, ManualIngestRequest, BackgroundJobResponse
-from src.core.background import job_tracker, batch_process_videos, process_video_gpu, process_pdf_cpu
 
 router = APIRouter()
 
@@ -345,34 +345,20 @@ async def delete_document(
 @router.get("/status", response_model=Dict[str, Any])
 async def get_ingest_status(
         vector_store: QdrantStore = Depends(get_vector_store),
-        pdf_loader: PDFLoader = Depends(get_pdf_loader),
-        processor: DocumentProcessor = Depends(get_document_processor),
+        redis: redis.Redis = Depends(get_redis_client),  # Add this dependency
+        job_tracker: JobTracker = Depends(get_job_tracker),  # Add this dependency
 ) -> Dict[str, Any]:
     """
-    Get ingestion status and statistics with GPU information.
+    Get system status information.
 
     Returns:
-        Dictionary with status information
+        Dictionary with system status information
     """
     try:
+        # Get basic collection info
         stats = vector_store.get_stats()
 
-        # Get GPU info if available
-        gpu_info = {}
-        if torch.cuda.is_available():
-            gpu_info = {
-                "device": processor.video_transcriber.device,
-                "device_name": torch.cuda.get_device_name(0) if torch.cuda.device_count() > 0 else "N/A",
-                "device_count": torch.cuda.device_count(),
-                "memory_allocated": f"{torch.cuda.memory_allocated() / (1024 ** 3):.2f} GB",
-                "memory_reserved": f"{torch.cuda.memory_reserved() / (1024 ** 3):.2f} GB",
-                "fp16_enabled": hasattr(processor.video_transcriber,
-                                        "amp_enabled") and processor.video_transcriber.amp_enabled,
-                "whisper_model": processor.video_transcriber.whisper_model_size,
-                "ocr_enabled": pdf_loader.use_ocr
-            }
-
-        # Get background job stats
+        # Get job stats
         job_stats = {
             "pending_jobs": len([j for j in job_tracker.get_all_jobs(limit=1000) if j.get("status") == "pending"]),
             "processing_jobs": len(
@@ -382,18 +368,40 @@ async def get_ingest_status(
                                 j.get("status") == "failed" or j.get("status") == "timeout"])
         }
 
+        # Get worker status by checking active workers via Redis
+        active_workers = {}
+        worker_keys = redis.keys("dramatiq:__heartbeats__:*")
+        worker_count = {
+            "gpu-inference": 0,
+            "gpu-embedding": 0,
+            "gpu-whisper": 0,
+            "cpu": 0,
+            "system": 0
+        }
+
+        for key in worker_keys:
+            worker_id = key.decode("utf-8").split(":")[-1]
+            # Try to extract worker type from worker ID
+            for worker_type in worker_count.keys():
+                if worker_type in worker_id:
+                    worker_count[worker_type] += 1
+                    break
+
+        active_workers = {k: v for k, v in worker_count.items() if v > 0}
+
         return {
             "status": "healthy",
+            "mode": "api",
             "collection": stats.get("name"),
             "document_count": stats.get("vectors_count", 0),
             "collection_size": stats.get("disk_data_size", 0),
-            "gpu_info": gpu_info,
-            "job_stats": job_stats
+            "job_stats": job_stats,
+            "active_workers": active_workers
         }
     except Exception as e:
         raise HTTPException(
             status_code=500,
-            detail=f"Error getting ingestion status: {str(e)}",
+            detail=f"Error getting system status: {str(e)}",
         )
 
 

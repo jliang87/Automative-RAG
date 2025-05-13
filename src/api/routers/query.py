@@ -7,7 +7,8 @@ from fastapi import APIRouter, Depends, HTTPException
 import torch
 from typing import Dict, Any
 
-from src.api.dependencies import get_llm, get_retriever
+import redis
+from src.api.dependencies import get_redis_client
 from src.core.retriever import HybridRetriever
 from src.core.llm import LocalLLM
 from src.models.schema import QueryRequest, QueryResponse, BackgroundJobResponse
@@ -122,9 +123,7 @@ async def get_query_result(job_id: str) -> Optional[QueryResponse]:
 
 
 @router.get("/manufacturers", response_model=List[str])
-async def get_manufacturers(
-        retriever: HybridRetriever = Depends(get_retriever),
-) -> List[str]:
+async def get_manufacturers() -> List[str]:
     """Get a list of available manufacturers."""
     # In a real implementation, this would query the vector store
     # for unique values of the manufacturer field
@@ -136,9 +135,7 @@ async def get_manufacturers(
 
 @router.get("/models", response_model=List[str])
 async def get_models(
-        manufacturer: Optional[str] = None,
-        retriever: HybridRetriever = Depends(get_retriever),
-) -> List[str]:
+        manufacturer: Optional[str] = None) -> List[str]:
     """Get a list of available models, optionally filtered by manufacturer."""
     # In a real implementation, this would query the vector store
     # for unique values of the model field, filtered by manufacturer
@@ -181,23 +178,48 @@ async def get_transmission_types() -> List[str]:
 
 @router.get("/llm-info", response_model=Dict[str, Any])
 async def get_llm_info(
-        llm: LocalLLM = Depends(get_llm)
+        redis: redis.Redis = Depends(get_redis_client)
 ) -> Dict[str, Any]:
-    """Get information about the local LLM configuration."""
-    info = {
-        "model_name": llm.model_path,
-        "device": llm.device,
-        "temperature": llm.temperature,
-        "max_tokens": llm.max_tokens,
-        "quantization": "4-bit" if llm.use_4bit else "8-bit" if llm.use_8bit else "none",
-        "torch_dtype": str(llm.torch_dtype),
-    }
+    """Get basic information about worker status for the UI."""
+    try:
+        # Get active workers through Redis
+        active_workers = {}
+        worker_keys = redis.keys("dramatiq:__heartbeats__:*")
+        worker_types = {
+            "gpu-inference": "LLM & Reranking",
+            "gpu-embedding": "Embeddings",
+            "gpu-whisper": "Speech Transcription",
+            "cpu": "Text Processing",
+            "system": "Management"
+        }
 
-    # Add VRAM usage if on GPU
-    if llm.device.startswith("cuda") and torch.cuda.is_available():
-        info["vram_usage"] = f"{torch.cuda.memory_allocated() / (1024 ** 3):.2f} GB"
+        for worker_type, description in worker_types.items():
+            count = sum(1 for key in worker_keys if worker_type in key.decode("utf-8"))
+            if count > 0:
+                active_workers[worker_type] = {
+                    "count": count,
+                    "description": description,
+                    "status": "active"
+                }
 
-    return info
+        # Get queue information
+        queue_stats = {}
+        for queue in ["inference_tasks", "embedding_tasks", "transcription_tasks", "cpu_tasks", "system_tasks"]:
+            queue_key = f"dramatiq:{queue}:msgs"
+            queue_stats[queue] = redis.llen(queue_key)
+
+        return {
+            "mode": "api",
+            "status": "Workers handle model operations",
+            "active_workers": active_workers,
+            "queue_stats": queue_stats
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e),
+            "active_workers": {}
+        }
 
 
 @router.get("/queue-status", response_model=Dict[str, Any])

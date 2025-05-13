@@ -200,3 +200,107 @@ If GPU acceleration isn't working:
 1. Verify CUDA is available: `python -c "import torch; print(torch.cuda.is_available())"`
 2. Check that the GPU is visible to Docker (if using Docker)
 3. Ensure the correct device is specified in `.env`
+# CPU-Only API Mode for Automotive RAG System
+
+This document explains the changes made to run the API service in CPU-only mode without loading embedding models or requiring GPU.
+
+## Architecture Changes
+
+The system has been redesigned to split responsibilities:
+
+- **API Service**: Runs on CPU only, doesn't load any ML models, handles routing and job management
+- **Worker Services**: Run on GPU, load ML models, handle actual processing tasks
+
+### Main Changes:
+
+1. **API Service**: 
+   - No longer loads embedding model, LLM, or any other GPU models
+   - Runs in "metadata-only" mode
+   - Handles routing requests to appropriate worker queues
+   - Manages job status and task distribution
+
+2. **Vector Store**:
+   - Added "metadata-only" mode that doesn't require embedding function
+   - Supports basic metadata operations without vector search capabilities
+
+3. **Environment Variables**:
+   - Added configuration flags to control which models are loaded
+   - Each worker is configured to load only the models it needs
+
+4. **Docker Configuration**:
+   - Removed GPU runtime from API service
+   - Updated environment variables to disable model loading in API
+
+## Benefits
+
+- **Reduced Resource Usage**: API server now uses minimal resources
+- **Improved Stability**: API server is less likely to crash due to GPU memory issues
+- **Better Separation of Concerns**: Clear division between request handling and processing
+- **More Scalable**: Can scale API service independently of GPU workers
+
+## Usage Instructions
+
+### Starting the System
+
+1. Start the API service and required infrastructure:
+   ```bash
+   docker-compose up -d api redis qdrant
+   ```
+
+2. Start the worker services based on your needs:
+   ```bash
+   docker-compose up -d worker-gpu-inference worker-gpu-embedding worker-gpu-whisper
+   ```
+
+3. Start the UI:
+   ```bash
+   docker-compose up -d ui
+   ```
+
+### Monitoring
+
+- The API service now provides a `/health` endpoint with mode information
+- The `/ingest/status` endpoint shows system status with mode information
+- The `/query/llm-info` endpoint shows LLM status or indicates API-only mode
+
+## Configuration Options
+
+These environment variables control model loading:
+
+- `LOAD_EMBEDDING_MODEL`: Set to 'true' to load embedding model
+- `LOAD_LLM_MODEL`: Set to 'true' to load LLM model
+- `LOAD_COLBERT_MODEL`: Set to 'true' to load reranking model
+- `LOAD_WHISPER_MODEL`: Set to 'true' to load speech transcription model
+
+For the API service, all these should be set to 'false' for CPU-only mode.
+
+## Troubleshooting
+
+### API Reports "Not Available in API-only Mode"
+
+This is expected behavior. The API service now delegates processing to worker services through the task queue.
+
+### How to Enable Full Functionality in API
+
+If you need the API to handle processing directly (not recommended for production):
+
+1. Edit the `.env` file:
+   ```
+   LOAD_EMBEDDING_MODEL=true
+   LOAD_LLM_MODEL=true
+   LOAD_COLBERT_MODEL=true
+   LOAD_WHISPER_MODEL=true
+   ```
+
+2. Update the `docker-compose.yml` to provide GPU access to the API service:
+   ```yaml
+   api:
+     runtime: nvidia
+     environment:
+       - NVIDIA_VISIBLE_DEVICES=all
+   ```
+
+3. Restart the API service:
+   ```bash
+   docker-compose up -d api
+   ```

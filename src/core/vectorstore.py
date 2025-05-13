@@ -2,7 +2,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 import logging
 import time
 import numpy as np
-
+from fastapi import Depends, HTTPException, Header, status
 from langchain_qdrant import QdrantVectorStore
 from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
@@ -24,7 +24,7 @@ class QdrantStore:
             self,
             client: QdrantClient,
             collection_name: str,
-            embedding_function: Embeddings,
+            embedding_function: Optional[Embeddings] = None,
     ):
         """
         Initialize the Qdrant vector store.
@@ -32,7 +32,7 @@ class QdrantStore:
         Args:
             client: QdrantClient instance
             collection_name: Name of the collection to use
-            embedding_function: Function to create embeddings
+            embedding_function: Function to create embeddings (optional in metadata-only mode)
         """
         self.client = client
         self.collection_name = collection_name
@@ -40,18 +40,26 @@ class QdrantStore:
 
         logger.info(f"Initializing QdrantStore with collection: {collection_name}")
 
+        # Check if we're in metadata-only mode (no embedding function)
+        self.metadata_only_mode = embedding_function is None
+        if self.metadata_only_mode:
+            logger.info("⚠️ QdrantStore initialized in metadata-only mode (no embedding capabilities)")
+
         # Ensure collection exists
         self._ensure_collection()
 
-        # Initialize Langchain Qdrant wrapper
-        self.langchain_qdrant = QdrantVectorStore(
-            client=client,
-            collection_name=collection_name,
-            embedding=embedding_function,
-            distance=rest.Distance.COSINE,
-        )
-
-        logger.info(f"QdrantStore initialized successfully")
+        # Initialize Langchain Qdrant wrapper if embedding function is provided
+        if not self.metadata_only_mode:
+            self.langchain_qdrant = QdrantVectorStore(
+                client=client,
+                collection_name=collection_name,
+                embedding=embedding_function,
+                distance=rest.Distance.COSINE,
+            )
+            logger.info(f"QdrantStore initialized successfully with embedding function")
+        else:
+            self.langchain_qdrant = None
+            logger.info(f"QdrantStore initialized in metadata-only mode (no vector search)")
 
     def _ensure_collection(self) -> None:
         """
@@ -148,7 +156,14 @@ class QdrantStore:
                     doc.metadata["id"] = f"doc-{str(time.time())}-{len(doc_ids)}"
                 doc_ids.append(doc.metadata["id"])
 
-            # Add documents to vector store
+            # Check if we're in metadata-only mode
+            if self.metadata_only_mode:
+                raise HTTPException(
+                    status_code=501,
+                    detail="Cannot add documents in metadata-only mode. Use a worker service for document ingestion."
+                )
+
+            # Add documents to vector store using the embedding function
             result_ids = self.langchain_qdrant.add_documents(documents)
 
             # Verify points were added successfully
@@ -177,6 +192,21 @@ class QdrantStore:
         Returns:
             List of (document, score) tuples
         """
+        # Check if we're in metadata-only mode
+        if self.metadata_only_mode:
+            # In metadata-only mode, we can only search by metadata
+            if metadata_filter:
+                logger.info(f"Performing metadata-only search with filter: {metadata_filter}")
+                documents = self.search_by_metadata(metadata_filter, limit=k)
+                # Assign a placeholder score of 1.0 to each document
+                return [(doc, 1.0) for doc in documents]
+            else:
+                raise HTTPException(
+                    status_code=400,
+                    detail="In metadata-only mode, a metadata filter is required for search"
+                )
+
+        # Regular search with vector similarity
         logger.info(f"Performing similarity search for query: '{query}' with k={k}")
         if metadata_filter:
             logger.info(f"Using metadata filter: {metadata_filter}")

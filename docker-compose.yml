@@ -1,22 +1,24 @@
 services:
-  # FastAPI Backend
+  # FastAPI Backend (CPU-only, no models loaded)
   api:
     build:
       context: .
       dockerfile: Dockerfile.api
     ports:
       - "8000:8000"
-    runtime: nvidia
+    # Removed: runtime: nvidia
     environment:
       - WORKER_TYPE=api
       - QDRANT_HOST=qdrant
       - QDRANT_PORT=6333
-      - DEVICE=cuda
-      - USE_FP16=true
-      - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+      - DEVICE=cpu
+      - LOAD_EMBEDDING_MODEL=false
+      - LOAD_LLM_MODEL=false
+      - LOAD_COLBERT_MODEL=false
+      - LOAD_WHISPER_MODEL=false
       - LOG_LEVEL=INFO
       - CONTAINER_RUNTIME=docker
-      - NVIDIA_VISIBLE_DEVICES=all
+      # Removed: NVIDIA_VISIBLE_DEVICES=all
       - REDIS_HOST=redis
       - REDIS_PORT=6379
     volumes:
@@ -47,11 +49,16 @@ services:
       - WORKER_TYPE=gpu-inference
       - DEVICE=cuda
       - USE_FP16=true
+      - LOAD_EMBEDDING_MODEL=false
+      - LOAD_LLM_MODEL=true
+      - LOAD_COLBERT_MODEL=true
+      - LOAD_WHISPER_MODEL=false
       - CONTAINER_RUNTIME=docker
       - NVIDIA_VISIBLE_DEVICES=all
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - LOG_LEVEL=INFO
+      - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
     volumes:
       - ./data:/app/data
       - ./models:/app/models
@@ -78,6 +85,10 @@ services:
       - WORKER_TYPE=gpu-embedding
       - DEVICE=cuda
       - USE_FP16=true
+      - LOAD_EMBEDDING_MODEL=true
+      - LOAD_LLM_MODEL=false
+      - LOAD_COLBERT_MODEL=false
+      - LOAD_WHISPER_MODEL=false
       - QDRANT_HOST=qdrant
       - QDRANT_PORT=6333
       - CONTAINER_RUNTIME=docker
@@ -85,6 +96,7 @@ services:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - LOG_LEVEL=INFO
+      - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
     volumes:
       - ./data:/app/data
       - ./models:/app/models
@@ -111,6 +123,10 @@ services:
       - WORKER_TYPE=gpu-whisper
       - DEVICE=cuda
       - USE_FP16=true
+      - LOAD_EMBEDDING_MODEL=false
+      - LOAD_LLM_MODEL=false
+      - LOAD_COLBERT_MODEL=false
+      - LOAD_WHISPER_MODEL=true
       - WHISPER_MODEL_SIZE=medium
       - QDRANT_HOST=qdrant
       - QDRANT_PORT=6333
@@ -122,6 +138,7 @@ services:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - LOG_LEVEL=INFO
+      - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
     volumes:
       - ./data:/app/data
       - ./models:/app/models
@@ -148,6 +165,10 @@ services:
       - WORKER_TYPE=cpu
       - DEVICE=cpu
       - CUDA_VISIBLE_DEVICES=""  # Hide GPU
+      - LOAD_EMBEDDING_MODEL=false
+      - LOAD_LLM_MODEL=false
+      - LOAD_COLBERT_MODEL=false
+      - LOAD_WHISPER_MODEL=false
       - USE_PDF_OCR=true
       - CONTAINER_RUNTIME=docker
       - REDIS_HOST=redis
@@ -184,6 +205,10 @@ services:
       - REDIS_PORT=6379
       - DEVICE=cpu
       - CUDA_VISIBLE_DEVICES=""  # Explicitly hide GPUs from this worker
+      - LOAD_EMBEDDING_MODEL=false
+      - LOAD_LLM_MODEL=false
+      - LOAD_COLBERT_MODEL=false
+      - LOAD_WHISPER_MODEL=false
       - CONTAINER_RUNTIME=docker
       - LOG_LEVEL=INFO
     volumes:
