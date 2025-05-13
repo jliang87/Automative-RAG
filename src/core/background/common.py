@@ -81,11 +81,9 @@ redis_broker.add_middleware(Results(backend=results_backend))
 dramatiq.set_broker(redis_broker)
 
 # Worker setup middleware
-class WorkerSetupMiddleware:
+from dramatiq.middleware import Middleware
+class WorkerSetupMiddleware(Middleware):
     """Middleware to run setup code when worker processes boot."""
-
-    # Required by Dramatiq - empty set of actor options
-    actor_options = set()
 
     def before_worker_boot(self, broker, worker):
         """Run setup code before the worker boots."""
@@ -121,59 +119,6 @@ class WorkerSetupMiddleware:
                 reserved = torch.cuda.memory_reserved(i) / (1024 ** 3)
                 logger.info(
                     f"GPU {i} ({device_name}) after worker init: Allocated: {allocated:.2f} GB, Reserved: {reserved:.2f} GB")
-
-    # Add the missing methods with empty implementations
-    def before_declare_actor(self, broker, actor):
-        """Called before an actor is declared."""
-        pass
-
-    def after_declare_actor(self, broker, actor):
-        """Called after an actor is declared."""
-        pass
-
-    def before_declare_queue(self, broker, queue_name):
-        """Called before a queue is declared."""
-        pass
-
-    def after_declare_queue(self, broker, queue_name):
-        """Called after a queue is declared."""
-        pass
-
-    def after_worker_boot(self, broker, worker):
-        """Called after a worker finishes booting."""
-        pass
-
-    def before_worker_shutdown(self, broker, worker):
-        """Called before a worker shuts down."""
-        pass
-
-    def after_worker_shutdown(self, broker, worker):
-        """Called after a worker shuts down."""
-        pass
-
-    def before_process_message(self, broker, message):
-        """Called before a message is processed."""
-        pass
-
-    def after_process_message(self, broker, message, *, result=None, exception=None):
-        """Called after a message is processed."""
-        pass
-
-    def after_skip_message(self, broker, message):
-        """Called after a message is skipped."""
-        pass
-
-    def before_message_nack(self, broker, message):
-        """Called before a message is rejected."""
-        pass
-
-    def before_consumer_thread_join(self, broker, thread):
-        """Called before a consumer thread is joined."""
-        pass
-
-    def before_consumer_thread_shutdown(self, broker, thread):
-        """Called before a consumer thread is asked to shut down."""
-        pass
 
 # Add the worker setup middleware
 worker_setup = WorkerSetupMiddleware()
