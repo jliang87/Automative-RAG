@@ -1,5 +1,5 @@
 """
-Enhanced error handling components for when workers are down
+Enhanced error handling component for the UI
 """
 
 import streamlit as st

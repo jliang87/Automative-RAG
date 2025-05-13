@@ -309,5 +309,61 @@ class PriorityQueueManager:
 
         return result
 
+    def boost_job_priority(self, job_id: str) -> Dict[str, Any]:
+        """
+        Boost the priority of all tasks related to a specific job.
+
+        Args:
+            job_id: ID of the job to boost
+
+        Returns:
+            Dictionary with boosting results
+        """
+        # Get all tasks in the priority queue
+        all_tasks = self.redis.zrange(
+            self.priority_queue_key, 0, -1,
+            withscores=True
+        )
+
+        boosted_tasks = 0
+
+        for task_json, priority in all_tasks:
+            task = json.loads(task_json)
+
+            # Check if this task belongs to the job
+            if task.get("job_id") == job_id or task.get("metadata", {}).get("parent_job_id") == job_id:
+                # Remove the task from the queue
+                self.redis.zrem(self.priority_queue_key, task_json)
+
+                # Check current minimum priority (highest priority task)
+                min_priority = self.redis.zrange(
+                    self.priority_queue_key, 0, 0,
+                    withscores=True,
+                    desc=False
+                )
+
+                # Calculate new boosted priority
+                new_priority = 0  # Default to highest priority
+                if min_priority:
+                    # Set priority just below the highest priority task
+                    new_priority = min_priority[0][1] - 0.1
+                    if new_priority < 0:
+                        new_priority = 0
+
+                # Update task priority
+                task["priority"] = new_priority
+
+                # Add back to queue with boosted priority
+                self.redis.zadd(self.priority_queue_key, {json.dumps(task): new_priority})
+
+                boosted_tasks += 1
+
+                logger.info(f"Boosted task {task.get('task_id')} for job {job_id} to priority {new_priority}")
+
+        return {
+            "job_id": job_id,
+            "boosted_tasks": boosted_tasks
+        }
+
 # Initialize the global priority queue instance
 priority_queue = PriorityQueueManager()
