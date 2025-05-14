@@ -9,6 +9,10 @@ import os
 from typing import Dict, List, Any, Optional
 import json
 import httpx
+from src.ui.session_init import initialize_session_state
+
+initialize_session_state()
+
 
 
 def render_model_management():

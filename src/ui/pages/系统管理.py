@@ -19,6 +19,9 @@ from src.ui.enhanced_worker_status import enhanced_worker_status
 from src.ui.system_notifications import display_notifications_sidebar
 from src.ui.interactive_priority_queue_visualization import render_interactive_queue_visualization
 from src.ui.enhanced_error_handling import robust_api_status_indicator
+from src.ui.session_init import initialize_session_state
+
+initialize_session_state()
 
 
 def format_bytes(size_bytes):

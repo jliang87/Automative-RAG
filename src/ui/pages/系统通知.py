@@ -9,18 +9,10 @@ from src.ui.enhanced_error_handling import robust_api_status_indicator
 
 # 导入通知模块
 from src.ui.system_notifications import main_notification_dashboard
+from src.ui.session_init import initialize_session_state
 
-# API 配置
-API_URL = os.environ.get("API_URL", "http://localhost:8000")
-API_KEY = os.environ.get("API_KEY", "default-api-key")
+initialize_session_state()
 
-# 会话状态初始化
-if "api_url" not in st.session_state:
-    st.session_state.api_url = API_URL
-if "api_key" not in st.session_state:
-    st.session_state.api_key = API_KEY
-if "authenticated" not in st.session_state:
-    st.session_state.authenticated = False
 
 # 在侧边栏检查 API 状态
 with st.sidebar:

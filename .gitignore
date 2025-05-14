@@ -53,3 +53,6 @@ logs/
 # Project specific
 node_modules/
 .DS_Store
+aliases/
+collections/
+raft_state.json

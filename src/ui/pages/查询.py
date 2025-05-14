@@ -12,18 +12,10 @@ from src.ui.components import header, metadata_filters, display_document, loadin
 from src.ui.system_notifications import display_notifications_sidebar
 from src.ui.enhanced_error_handling import robust_api_status_indicator, handle_worker_dependency
 from src.ui.api_client import api_request
+from src.ui.session_init import initialize_session_state
 
-# API 配置
-API_URL = os.environ.get("API_URL", "http://localhost:8000")
-API_KEY = os.environ.get("API_KEY", "default-api-key")
+initialize_session_state()
 
-# 会话状态初始化
-if "api_url" not in st.session_state:
-    st.session_state.api_url = API_URL
-if "api_key" not in st.session_state:
-    st.session_state.api_key = API_KEY
-if "authenticated" not in st.session_state:
-    st.session_state.authenticated = False
 
 # 异步查询相关状态
 if "query_job_id" not in st.session_state:
