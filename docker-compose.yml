@@ -213,7 +213,6 @@ services:
       - LOG_LEVEL=INFO
     volumes:
       - ./logs:/app/logs
-      - ./src:/app/src  # For --watch to work
     depends_on:
       - redis
     restart: unless-stopped

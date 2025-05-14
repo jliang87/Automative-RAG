@@ -35,7 +35,8 @@ async def detailed_health_check():
     worker_heartbeats = redis_client.keys("dramatiq:__heartbeats__:*")
 
     for key in worker_heartbeats:
-        worker_id = key.decode("utf-8").split(":")[-1]
+        # Check if key is bytes or string (depending on Redis client configuration)
+        worker_id = key.split(":")[-1] if isinstance(key, str) else key.decode("utf-8").split(":")[-1]
         last_heartbeat = redis_client.get(key)
 
         if last_heartbeat:

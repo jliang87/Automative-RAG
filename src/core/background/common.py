@@ -199,14 +199,14 @@ def register_worker_heartbeats():
         heartbeat_key = f"dramatiq:__heartbeats__:{worker_id}"
 
         # Register initial heartbeat
-        redis_client.set(heartbeat_key, str(time.time()))
+        redis_client.set(heartbeat_key, str(time.time()), ex=60)
         logger.info(f"Registered initial heartbeat for {worker_id}")
 
         # Set up periodic heartbeat updates
         def update_heartbeat():
             while True:
                 try:
-                    redis_client.set(heartbeat_key, str(time.time()))
+                    redis_client.set(heartbeat_key, str(time.time()), ex=60)
                     time.sleep(15)  # Update every 15 seconds
                 except Exception as e:
                     logger.error(f"Failed to update heartbeat: {str(e)}")
