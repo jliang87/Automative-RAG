@@ -12,6 +12,7 @@ from src.api.dependencies import get_redis_client
 from src.core.retriever import HybridRetriever
 from src.core.llm import LocalLLM
 from src.models.schema import QueryRequest, QueryResponse, BackgroundJobResponse
+from src.core.worker_status import get_worker_status_for_ui
 
 router = APIRouter()
 
@@ -180,39 +181,15 @@ async def get_transmission_types() -> List[str]:
 async def get_llm_info(
         redis: redis.Redis = Depends(get_redis_client)
 ) -> Dict[str, Any]:
-    """Get basic information about worker status for the UI."""
     try:
-        # Get active workers through Redis
-        active_workers = {}
-        worker_keys = redis.keys("dramatiq:__heartbeats__:*")
-        worker_types = {
-            "gpu-inference": "LLM & Reranking",
-            "gpu-embedding": "Embeddings",
-            "gpu-whisper": "Speech Transcription",
-            "cpu": "Text Processing",
-            "system": "Management"
-        }
-
-        for worker_type, description in worker_types.items():
-            count = sum(1 for key in worker_keys if worker_type in key.decode("utf-8"))
-            if count > 0:
-                active_workers[worker_type] = {
-                    "count": count,
-                    "description": description,
-                    "status": "active"
-                }
-
-        # Get queue information
-        queue_stats = {}
-        for queue in ["inference_tasks", "embedding_tasks", "transcription_tasks", "cpu_tasks", "system_tasks"]:
-            queue_key = f"dramatiq:{queue}:msgs"
-            queue_stats[queue] = redis.llen(queue_key)
+        # Get worker status using the centralized function
+        worker_status = get_worker_status_for_ui(redis)
 
         return {
             "mode": "api",
             "status": "Workers handle model operations",
-            "active_workers": active_workers,
-            "queue_stats": queue_stats
+            "active_workers": worker_status.get("active_workers", {}),
+            "queue_stats": worker_status.get("queue_stats", {})
         }
     except Exception as e:
         return {

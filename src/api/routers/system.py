@@ -10,6 +10,8 @@ import psutil
 from src.core.background.job_tracker import job_tracker
 from src.api.dependencies import get_redis_client, get_token_header
 from src.core.background.common import check_gpu_health
+from src.core.worker_status import get_worker_heartbeats, get_worker_status, get_worker_status_for_ui
+import redis
 
 router = APIRouter()
 
@@ -30,30 +32,8 @@ async def detailed_health_check():
         "uptime": time.time() - psutil.boot_time()
     }
 
-    # Worker health information
-    worker_info = {}
-    worker_heartbeats = redis_client.keys("dramatiq:__heartbeats__:*")
-
-    for key in worker_heartbeats:
-        # Check if key is bytes or string (depending on Redis client configuration)
-        worker_id = key.split(":")[-1] if isinstance(key, str) else key.decode("utf-8").split(":")[-1]
-        last_heartbeat = redis_client.get(key)
-
-        if last_heartbeat:
-            heartbeat_age = time.time() - float(last_heartbeat)
-            worker_type = "unknown"
-
-            # Extract worker type from ID
-            for wtype in ["gpu-inference", "gpu-embedding", "gpu-whisper", "cpu", "system"]:
-                if wtype in worker_id:
-                    worker_type = wtype
-                    break
-
-            worker_info[worker_id] = {
-                "type": worker_type,
-                "last_heartbeat_seconds_ago": heartbeat_age,
-                "status": "healthy" if heartbeat_age < 60 else "stalled"
-            }
+    # Worker health information using the centralized function
+    worker_info = get_worker_heartbeats(redis_client)
 
     # Queue status
     queue_stats = {}
@@ -134,3 +114,17 @@ async def restart_worker(worker_type: str):
     redis_client.set(restart_key, "1", ex=300)  # Expires in 5 minutes
 
     return {"status": f"restart signal sent to {worker_type} workers"}
+
+@router.get("/workers")
+async def get_workers_status(redis_client: redis.Redis = Depends(get_redis_client)):
+    """
+    Get detailed information about worker processes.
+    """
+    return get_worker_status(redis_client)
+
+@router.get("/worker-ui-status")
+async def get_worker_ui_status(redis_client: redis.Redis = Depends(get_redis_client)):
+    """
+    Get worker status formatted for UI display.
+    """
+    return get_worker_status_for_ui(redis_client)

@@ -11,6 +11,7 @@ import traceback
 import redis
 from src.core.background.job_tracker import JobTracker
 from src.api.dependencies import get_vector_store, get_redis_client, get_job_tracker
+from src.core.worker_status import get_worker_status_for_ui
 
 # Create a logger
 logger = logging.getLogger(__name__)
@@ -359,64 +360,33 @@ async def delete_document(
 @router.get("/status", response_model=Dict[str, Any])
 async def get_ingest_status(
         vector_store: QdrantStore = Depends(get_vector_store),
-        redis: redis.Redis = Depends(get_redis_client),  # Add this dependency
-        job_tracker: JobTracker = Depends(get_job_tracker),  # Add this dependency
+        redis: redis.Redis = Depends(get_redis_client),
+        job_tracker: JobTracker = Depends(get_job_tracker),
 ) -> Dict[str, Any]:
-    """
-    Get system status information.
+    # Get basic collection info
+    stats = vector_store.get_stats()
 
-    Returns:
-        Dictionary with system status information
-    """
-    try:
-        # Get basic collection info
-        stats = vector_store.get_stats()
+    # Get job stats
+    job_stats = {
+        "pending_jobs": len([j for j in job_tracker.get_all_jobs(limit=1000) if j.get("status") == "pending"]),
+        "processing_jobs": len([j for j in job_tracker.get_all_jobs(limit=1000) if j.get("status") == "processing"]),
+        "completed_jobs": len([j for j in job_tracker.get_all_jobs(limit=1000) if j.get("status") == "completed"]),
+        "failed_jobs": len([j for j in job_tracker.get_all_jobs(limit=1000) if j.get("status") == "failed" or j.get("status") == "timeout"])
+    }
 
-        # Get job stats
-        job_stats = {
-            "pending_jobs": len([j for j in job_tracker.get_all_jobs(limit=1000) if j.get("status") == "pending"]),
-            "processing_jobs": len(
-                [j for j in job_tracker.get_all_jobs(limit=1000) if j.get("status") == "processing"]),
-            "completed_jobs": len([j for j in job_tracker.get_all_jobs(limit=1000) if j.get("status") == "completed"]),
-            "failed_jobs": len([j for j in job_tracker.get_all_jobs(limit=1000) if
-                                j.get("status") == "failed" or j.get("status") == "timeout"])
-        }
+    # Get worker status using the centralized function
+    worker_status = get_worker_status_for_ui(redis)
+    active_workers = worker_status.get("active_workers", {})
 
-        # Get worker status by checking active workers via Redis
-        active_workers = {}
-        worker_keys = redis.keys("dramatiq:__heartbeats__:*")
-        worker_count = {
-            "gpu-inference": 0,
-            "gpu-embedding": 0,
-            "gpu-whisper": 0,
-            "cpu": 0,
-            "system": 0
-        }
-
-        for key in worker_keys:
-            worker_id = key.decode("utf-8").split(":")[-1]
-            # Try to extract worker type from worker ID
-            for worker_type in worker_count.keys():
-                if worker_type in worker_id:
-                    worker_count[worker_type] += 1
-                    break
-
-        active_workers = {k: v for k, v in worker_count.items() if v > 0}
-
-        return {
-            "status": "healthy",
-            "mode": "api",
-            "collection": stats.get("name"),
-            "document_count": stats.get("vectors_count", 0),
-            "collection_size": stats.get("disk_data_size", 0),
-            "job_stats": job_stats,
-            "active_workers": active_workers
-        }
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error getting system status: {str(e)}",
-        )
+    return {
+        "status": "healthy",
+        "mode": "api",
+        "collection": stats.get("name"),
+        "document_count": stats.get("vectors_count", 0),
+        "collection_size": stats.get("disk_data_size", 0),
+        "job_stats": job_stats,
+        "active_workers": active_workers
+    }
 
 
 @router.post("/reset", response_model=Dict[str, str])

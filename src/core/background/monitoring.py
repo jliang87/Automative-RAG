@@ -16,6 +16,7 @@ import torch
 from .common import get_redis_client
 from .job_tracker import job_tracker
 from .priority_queue import priority_queue
+from src.core.worker_status import get_worker_status as get_centralized_worker_status
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +36,7 @@ def get_system_status() -> Dict[str, Any]:
         "queues": get_queue_status(),
         "priority_queue": priority_queue.get_queue_status(),
         "gpu": get_gpu_status(),
-        "workers": get_worker_status()
+        "workers": get_centralized_worker_status()
     }
 
     return status
@@ -93,51 +94,25 @@ def get_gpu_status() -> Dict[str, Any]:
     return gpu_status
 
 
-def get_worker_status() -> Dict[str, Any]:
+def get_system_status() -> Dict[str, Any]:
     """
-    Get information about running worker processes.
+    Get comprehensive system status, including job, queue, and GPU statistics.
 
     Returns:
-        Dictionary with worker status information
+        Dictionary with system status information
     """
     redis_client = get_redis_client()
 
-    # Get worker information from Redis
-    workers = []
-    worker_keys = redis_client.keys("dramatiq:__heartbeats__:*")
-
-    for key in worker_keys:
-        worker_id = key.split(":")[-1]
-        last_heartbeat = redis_client.get(key)
-
-        if last_heartbeat:
-            heartbeat_age = time.time() - float(last_heartbeat)
-            workers.append({
-                "worker_id": worker_id,
-                "last_heartbeat_seconds_ago": heartbeat_age
-            })
-
-    # Group workers by type
-    worker_types = {}
-    for worker in workers:
-        worker_id = worker["worker_id"]
-
-        # Extract worker type from ID (assumes format like 'worker-gpu-inference-1')
-        parts = worker_id.split("-")
-        if len(parts) >= 3:
-            worker_type = "-".join(parts[1:-1])  # Get middle parts
-        else:
-            worker_type = "unknown"
-
-        if worker_type not in worker_types:
-            worker_types[worker_type] = []
-
-        worker_types[worker_type].append(worker)
-
-    return {
-        "total_workers": len(workers),
-        "worker_types": worker_types
+    status = {
+        "timestamp": time.time(),
+        "jobs": job_tracker.count_jobs_by_status(),
+        "queues": get_queue_status(),
+        "priority_queue": priority_queue.get_queue_status(),
+        "gpu": get_gpu_status(),
+        "workers": get_centralized_worker_status(redis_client)
     }
+
+    return status
 
 
 def generate_system_report() -> Dict[str, Any]:
