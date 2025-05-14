@@ -389,11 +389,11 @@ class SystemNotifications:
 
     def _render_notification(self, notification: Dict[str, Any], index: int):
         """
-        渲染单个通知卡片。
+        Render a single notification card.
 
-        参数:
-            notification: 通知数据字典
-            index: 用于唯一键的索引
+        Args:
+            notification: Notification data dictionary
+            index: Index for unique key
         """
         level = notification.get("level", "info")
         title = notification.get("title", "系统通知")
@@ -401,23 +401,23 @@ class SystemNotifications:
         timestamp = notification.get("timestamp", time.time())
         details = notification.get("details", {})
 
-        # 格式化时间戳
+        # Format timestamp
         time_str = datetime.datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M:%S")
 
-        # 根据级别选择颜色和图标
+        # Choose color and icon based on level
         if level == "error":
-            color = "#F44336"  # 红色
+            color = "#F44336"  # Red
             icon = "❌"
         elif level == "warning":
-            color = "#FF9800"  # 橙色/琥珀色
+            color = "#FF9800"  # Orange/amber
             icon = "⚠️"
         else:
-            color = "#2196F3"  # 蓝色
+            color = "#2196F3"  # Blue
             icon = "ℹ️"
 
-        # 创建通知卡片
+        # Create notification card
         with st.container():
-            # 添加彩色标题栏
+            # Add colored title bar
             st.markdown(
                 f"<div style='padding: 5px 10px; background-color: {color}; color: white; border-radius: 5px 5px 0 0;'>"
                 f"<b>{icon} {title}</b>"
@@ -425,26 +425,40 @@ class SystemNotifications:
                 unsafe_allow_html=True
             )
 
-            # 添加消息和时间戳
+            # Add message and timestamp
             st.markdown(
                 f"<div style='padding: 10px; border: 1px solid {color}; border-top: none; border-radius: 0 0 5px 5px;'>"
                 f"{message}<br/><small>{time_str}</small>"
                 f"</div>",
                 unsafe_allow_html=True)
 
-            # 如果有详细信息则显示
+            # Display details if present - BUT NOT AS AN EXPANDER
+            # This avoids nesting expanders which is causing the error
             if details:
-                with st.expander("详细信息", expanded=False):
-                    for key, value in details.items():
-                        st.text(f"{key}: {value}")
+                # Use a collapsible container with button instead
+                detail_key = f"show_details_{index}"
+                if detail_key not in st.session_state:
+                    st.session_state[detail_key] = False
 
-            # 添加忽略按钮
+                # Add button to toggle details visibility
+                if st.button("显示详细信息" if not st.session_state[detail_key] else "隐藏详细信息",
+                             key=f"toggle_details_{index}"):
+                    st.session_state[detail_key] = not st.session_state[detail_key]
+
+                # Show details if toggled on
+                if st.session_state[detail_key]:
+                    with st.container():
+                        st.markdown("**详细信息:**")
+                        for key, value in details.items():
+                            st.text(f"{key}: {value}")
+
+            # Add dismiss button
             if st.button("忽略", key=f"dismiss_{index}"):
-                # 移除此通知
+                # Remove this notification
                 st.session_state.system_notifications.remove(notification)
                 st.rerun()
 
-            # 在通知之间添加一个小空间
+            # Add space between notifications
             st.markdown("<br/>", unsafe_allow_html=True)
 
 

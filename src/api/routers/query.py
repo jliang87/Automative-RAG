@@ -225,15 +225,12 @@ async def get_llm_info(
 @router.get("/queue-status", response_model=Dict[str, Any])
 async def get_priority_queue_status():
     """Get status of the priority queue system."""
-    # Import the actor to get queue status
-    from src.core.background import get_priority_queue_status
+    # Import the monitoring function
+    from src.core.background.monitoring import get_priority_queue_status
 
-    # Call the actor and get the result
-    result = get_priority_queue_status.send()
-
-    # Get the result with a timeout
+    # Call the function directly since it's a regular function, not an actor
     try:
-        queue_status = result.get(block=True, timeout=10)
+        queue_status = get_priority_queue_status()
         return queue_status
     except Exception as e:
         raise HTTPException(
