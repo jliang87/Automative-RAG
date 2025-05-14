@@ -44,7 +44,7 @@ services:
       context: .
       dockerfile: Dockerfile.api
     runtime: nvidia
-    command: python -m dramatiq src.core.background_tasks --processes 1 --threads 1 --queues inference_tasks,reranking_tasks
+    command: python -m dramatiq src.core.background --processes 1 --threads 1 --queues inference_tasks,reranking_tasks
     environment:
       - WORKER_TYPE=gpu-inference
       - DEVICE=cuda
@@ -80,7 +80,7 @@ services:
       context: .
       dockerfile: Dockerfile.api
     runtime: nvidia
-    command: python -m dramatiq src.core.background_tasks --processes 1 --threads 1 --queues embedding_tasks
+    command: python -m dramatiq src.core.background --processes 1 --threads 1 --queues embedding_tasks
     environment:
       - WORKER_TYPE=gpu-embedding
       - DEVICE=cuda
@@ -118,7 +118,7 @@ services:
       context: .
       dockerfile: Dockerfile.api
     runtime: nvidia
-    command: python -m dramatiq src.core.background_tasks --processes 1 --threads 1 --queues transcription_tasks
+    command: python -m dramatiq src.core.background --processes 1 --threads 1 --queues transcription_tasks
     environment:
       - WORKER_TYPE=gpu-whisper
       - DEVICE=cuda
@@ -160,7 +160,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.api
-    command: python -m dramatiq src.core.background_tasks --processes 2 --threads 4 --queues cpu_tasks
+    command: python -m dramatiq src.core.background --processes 2 --threads 4 --queues cpu_tasks
     environment:
       - WORKER_TYPE=cpu
       - DEVICE=cpu
@@ -198,7 +198,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.api
-    command: python -m dramatiq src.core.background_tasks --processes 1 --threads 1 --queues system_tasks --watch src
+    command: python -m dramatiq src.core.background --processes 1 --threads 1 --queues system_tasks --watch src
     environment:
       - WORKER_TYPE=system
       - REDIS_HOST=redis
