@@ -87,7 +87,9 @@ class WorkerSetupMiddleware(Middleware):
 
     def before_worker_boot(self, broker, worker):
         """Run setup code before the worker boots."""
-        logger.info(f"Initializing worker {worker.worker_id} of type {worker_type}")
+        # Use PID instead of trying to access worker.worker_id
+        worker_id = f"{worker_type}-{os.getpid()}"
+        logger.info(f"Initializing worker {worker_id} of type {worker_type}")
 
         # Import here to avoid circular imports
         from .models import (
@@ -119,6 +121,9 @@ class WorkerSetupMiddleware(Middleware):
                 reserved = torch.cuda.memory_reserved(i) / (1024 ** 3)
                 logger.info(
                     f"GPU {i} ({device_name}) after worker init: Allocated: {allocated:.2f} GB, Reserved: {reserved:.2f} GB")
+
+        # Register worker heartbeats
+        register_worker_heartbeats()
 
 # Add the worker setup middleware
 worker_setup = WorkerSetupMiddleware()
@@ -182,3 +187,35 @@ def check_gpu_health():
 def get_redis_client():
     """Get the Redis client from the broker."""
     return redis_broker.client
+
+def register_worker_heartbeats():
+    """
+    Register and maintain worker heartbeats in Redis.
+    This ensures that monitoring systems can detect active workers.
+    """
+    try:
+        redis_client = get_redis_client()
+        worker_id = f"{worker_type}-{os.getpid()}"
+        heartbeat_key = f"dramatiq:__heartbeats__:{worker_id}"
+
+        # Register initial heartbeat
+        redis_client.set(heartbeat_key, str(time.time()))
+        logger.info(f"Registered initial heartbeat for {worker_id}")
+
+        # Set up periodic heartbeat updates
+        def update_heartbeat():
+            while True:
+                try:
+                    redis_client.set(heartbeat_key, str(time.time()))
+                    time.sleep(15)  # Update every 15 seconds
+                except Exception as e:
+                    logger.error(f"Failed to update heartbeat: {str(e)}")
+                time.sleep(5)  # Retry after error
+
+        # Start heartbeat thread
+        import threading
+        heartbeat_thread = threading.Thread(target=update_heartbeat, daemon=True)
+        heartbeat_thread.start()
+        logger.info(f"Started heartbeat thread for {worker_id}")
+    except Exception as e:
+        logger.error(f"Failed to set up worker heartbeats: {str(e)}")
