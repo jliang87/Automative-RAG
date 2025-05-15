@@ -159,7 +159,8 @@ class JobTracker:
 
     def estimate_completion_time(self, job_id: str) -> Optional[float]:
         """Estimate the completion time based on progress and elapsed time."""
-        job_data = self.get_job(job_id)
+        # Get job data WITHOUT triggering another estimate calculation
+        job_data = self.get_job(job_id, include_estimate=False)
         if not job_data:
             return None
 
@@ -216,7 +217,7 @@ class JobTracker:
         job_data = json.loads(job_data_json)
         return job_data.get("status") == JobStatus.COMPLETED
 
-    def get_job(self, job_id: str) -> Optional[Dict[str, Any]]:
+    def get_job(self, job_id: str, include_estimate: bool = True) -> Optional[Dict[str, Any]]:
         """Get job information by ID with progress."""
         job_data_json = self.redis.hget(self.job_key, job_id)
         if not job_data_json:
@@ -226,7 +227,11 @@ class JobTracker:
 
         # Parse JSON metadata back to dict if it exists
         if "metadata" in job_data and job_data["metadata"]:
-            job_data["metadata"] = json.loads(job_data["metadata"])
+            try:
+                job_data["metadata"] = json.loads(job_data["metadata"])
+            except:
+                # If metadata isn't valid JSON, keep as string
+                pass
 
         # Parse result if it's JSON
         if "result" in job_data and job_data["result"] and isinstance(job_data["result"], str) and job_data["result"].startswith('{'):
@@ -239,13 +244,34 @@ class JobTracker:
         progress_data = self.get_job_progress(job_id)
         job_data["progress_info"] = progress_data
 
-        # Add estimated completion time if applicable
-        if job_data.get("status") == JobStatus.PROCESSING:
-            remaining_time = self.estimate_completion_time(job_id)
+        # Add estimated completion time if applicable and requested
+        if include_estimate and job_data.get("status") == "processing":
+            remaining_time = self._calculate_remaining_time(job_data)
             if remaining_time is not None:
                 job_data["estimated_remaining_seconds"] = remaining_time
 
         return job_data
+
+    def _calculate_remaining_time(self, job_data: Dict[str, Any]) -> Optional[float]:
+        """Calculate remaining time based on progress and elapsed time."""
+        progress_info = job_data.get("progress_info", {})
+        progress = progress_info.get("progress", 0)
+
+        # If progress is 0 or 100, we can't estimate
+        if progress <= 0 or progress >= 100:
+            return None
+
+        # Calculate elapsed time
+        start_time = job_data.get("created_at", time.time())
+        elapsed = time.time() - start_time
+
+        # Estimate total time based on current progress
+        if progress > 0:
+            total_estimated_time = elapsed * (100 / progress)
+            remaining_time = total_estimated_time - elapsed
+            return remaining_time
+
+        return None
 
     def get_all_jobs(self, limit: int = 100, job_type: str = None) -> List[Dict[str, Any]]:
         """Get all jobs, optionally filtered by type."""

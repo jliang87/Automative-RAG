@@ -239,7 +239,8 @@ def render_interactive_queue_visualization(api_url: str, api_key: str):
 
             # 显示为交互式表格
             task_df = pd.DataFrame(task_data)
-            selected_rows = st.dataframe(
+            # Display the dataframe without capturing its return value
+            st.dataframe(
                 task_df,
                 hide_index=True,
                 use_container_width=True,
@@ -252,14 +253,33 @@ def render_interactive_queue_visualization(api_url: str, api_key: str):
                 }
             )
 
-            # 检查是否单击了某行
-            if selected_rows is not None and len(selected_rows) > 0:
-                # 获取所选作业 ID
-                selected_job_id = task_df.iloc[selected_rows[0]]["作业ID"]
+            # Add a dropdown for selection
+            if not task_df.empty:
+                # Create options for the dropdown
+                task_options = []
+                for _, row in task_df.iterrows():
+                    task_id = row.get("任务ID", "")
+                    queue = row.get("队列", "")
+                    wait_time = row.get("等待时间", "")
+                    option_text = f"{task_id} - {queue} (等待: {wait_time})"
+                    task_options.append(option_text)
 
-                # 设置会话状态并重新运行以显示作业详情
-                st.session_state.selected_job_id = selected_job_id
-                st.rerun()
+                if task_options:
+                    selected_task = st.selectbox("选择任务查看详情", options=task_options)
+
+                    if st.button("查看详情", key="view_queue_task"):
+                        if selected_task:
+                            # Extract task ID from the selection
+                            selected_task_id = selected_task.split(" - ")[0]
+
+                            # Find the corresponding row
+                            matched_rows = task_df[task_df["任务ID"] == selected_task_id]
+                            if not matched_rows.empty:
+                                selected_job_id = matched_rows.iloc[0]["作业ID"]
+
+                                # Set the job ID in session state
+                                st.session_state.selected_job_id = selected_job_id
+                                st.rerun()
 
             # 显示管理选项
             with st.expander("任务队列管理", expanded=False):
