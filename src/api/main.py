@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 import logging
 
 from src.api.routers import auth, ingest, query, system
+from src.api.routers.model import router as model_router  # Import new router
 from src.config.settings import settings
 from src.api.dependencies import get_token_header, load_all_components
 
@@ -87,6 +88,13 @@ app.include_router(
 )
 
 app.include_router(system.router, prefix="/system", tags=["System"])
+
+# Add the new model management router
+app.include_router(
+    model_router,
+    prefix="/model",
+    tags=["Model Management"]
+)
 
 
 # Root endpoint

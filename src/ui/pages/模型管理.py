@@ -527,7 +527,7 @@ def get_model_config() -> Optional[Dict[str, Any]]:
     """Get current model configuration from the API."""
     try:
         response = httpx.get(
-            f"{st.session_state.api_url}/system/config",
+            f"{st.session_state.api_url}/model/config",  # Changed from /system/config
             headers={"x-token": st.session_state.api_key},
             timeout=5.0
         )
@@ -544,7 +544,7 @@ def update_model_config(updates: Dict[str, Any]) -> bool:
     """Update model configuration."""
     try:
         response = httpx.post(
-            f"{st.session_state.api_url}/system/update-config",
+            f"{st.session_state.api_url}/model/update-config",  # Changed from /system/update-config
             headers={"x-token": st.session_state.api_key},
             json=updates,
             timeout=5.0
@@ -560,7 +560,7 @@ def reload_model(model_type: str) -> bool:
     """Send command to reload a specific model."""
     try:
         response = httpx.post(
-            f"{st.session_state.api_url}/system/reload-model",
+            f"{st.session_state.api_url}/model/reload-model",  # Changed from /system/reload-model
             headers={"x-token": st.session_state.api_key},
             json={"model_type": model_type},
             timeout=5.0
@@ -572,29 +572,11 @@ def reload_model(model_type: str) -> bool:
         return False
 
 
-def get_model_status(model_type: str) -> Dict[str, Any]:
-    """Get status of a specific model."""
-    try:
-        response = httpx.get(
-            f"{st.session_state.api_url}/system/health/detailed",
-            headers={"x-token": st.session_state.api_key},
-            timeout=3.0
-        )
-
-        if response.status_code == 200:
-            data = response.json()
-            model_status = data.get("model_status", {}).get(model_type, {})
-            return model_status
-        return {}
-    except Exception:
-        return {}
-
-
 def get_model_info() -> Optional[Dict[str, Any]]:
     """Get detailed information about loaded models."""
     try:
         response = httpx.get(
-            f"{st.session_state.api_url}/system/model-info",
+            f"{st.session_state.api_url}/model/model-info",  # Changed from /system/model-info
             headers={"x-token": st.session_state.api_key},
             timeout=3.0
         )
