@@ -16,17 +16,6 @@ from src.ui.session_init import initialize_session_state
 
 initialize_session_state()
 
-
-# 异步查询相关状态
-if "query_job_id" not in st.session_state:
-    st.session_state.query_job_id = None
-if "query_status" not in st.session_state:
-    st.session_state.query_status = None
-if "polling" not in st.session_state:
-    st.session_state.polling = False
-if "poll_count" not in st.session_state:
-    st.session_state.poll_count = 0
-
 def process_async_query(query: str, metadata_filter, top_k: int = 5):
     """处理异步查询并启动轮询"""
     # 首先检查 worker 依赖（更加健壮的错误处理）

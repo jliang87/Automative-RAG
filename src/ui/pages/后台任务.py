@@ -24,10 +24,6 @@ from src.ui.session_init import initialize_session_state
 
 initialize_session_state()
 
-# API 配置
-API_URL = os.environ.get("API_URL", "http://localhost:8000")
-API_KEY = os.environ.get("API_KEY", "default-api-key")
-
 # 任务状态颜色和图标定义
 JOB_STATUS_COLORS = {
     "pending": "🟡",

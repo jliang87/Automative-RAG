@@ -14,7 +14,6 @@ from src.ui.session_init import initialize_session_state
 initialize_session_state()
 
 
-
 def render_model_management():
     """Render a UI for managing models."""
     st.title("模型管理")

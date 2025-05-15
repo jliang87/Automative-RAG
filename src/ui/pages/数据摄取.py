@@ -31,34 +31,25 @@ if api_available:
         "从多个来源添加新的汽车规格数据。"
     )
 
-    # 如果需要重定向到任务页面
-    if st.session_state.redirect_to_jobs:
-        st.success(f"已创建后台任务，任务ID: {st.session_state.job_id}")
-        st.info("正在跳转到任务管理页面...")
+    # 处理任务创建后的跳转
+    if st.session_state.job_created:
+        success_container = st.container()
+        with success_container:
+            st.success(f"已创建后台任务，任务ID: {st.session_state.job_id}")
+            st.info("您可以在任务管理页面跟踪处理进度")
 
-        # 添加倒计时定时器，而不是无限期等待
-        import time
-
-        for i in range(3, 0, -1):
-            st.text(f"将在 {i} 秒后跳转...")
-            time.sleep(1)
-            st.rerun()
-
-        # 倒计时完成后，使用相对路径重定向
-        st.switch_page("pages/后台任务.py")
-
-        # 添加立即重定向按钮
-        if st.button("立即跳转到任务页面"):
-            st.switch_page("pages/后台任务.py")
-
-        # 在此停止页面执行
-        st.stop()
+            # 添加跳转按钮
+            if st.button("跳转到任务管理页面"):
+                # 先清除当前状态，避免循环
+                st.session_state.job_created = False
+                # 然后跳转
+                st.switch_page("pages/后台任务.py")
 
     st.info("""
     ### 所有数据处理均在后台进行
     
     所有数据处理（包括视频转录、PDF解析和文本处理）均在后台异步执行。
-    提交后，您将被自动重定向到任务管理页面，以便跟踪处理进度。
+    提交后，您可以点击"跳转到任务管理页面"按钮查看任务进度。
     """)
 
     # 不同数据导入方式的选项卡
@@ -158,10 +149,9 @@ if api_available:
                 )
 
             if result:
-                # 显示任务创建成功，并准备跳转到任务页面
+                # 设置任务创建状态，触发页面上方的提示
                 st.session_state.job_created = True
                 st.session_state.job_id = result.get("job_id")
-                st.session_state.redirect_to_jobs = True
                 st.rerun()
 
     def render_pdf_tab():
@@ -249,10 +239,9 @@ if api_available:
                 )
 
             if result:
-                # 显示任务创建成功，并准备跳转到任务页面
+                # 设置任务创建状态，触发页面上方的提示
                 st.session_state.job_created = True
                 st.session_state.job_id = result.get("job_id")
-                st.session_state.redirect_to_jobs = True
                 st.rerun()
 
     def render_manual_tab():
@@ -335,10 +324,9 @@ if api_available:
                 )
 
             if result:
-                # 显示任务创建成功，并准备跳转到任务页面
+                # 设置任务创建状态，触发页面上方的提示
                 st.session_state.job_created = True
                 st.session_state.job_id = result.get("job_id")
-                st.session_state.redirect_to_jobs = True
                 st.rerun()
 
     # 渲染各个选项卡
