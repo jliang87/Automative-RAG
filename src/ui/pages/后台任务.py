@@ -458,7 +458,7 @@ def render_task_status_page():
                 job_df = pd.DataFrame(job_table_data)
 
                 # 使用st.dataframe显示，添加点击查看详情功能
-                selected_indices = st.dataframe(
+                st.dataframe(
                     job_df[["任务ID", "类型", "子类型", "状态", "处理阶段", "创建时间", "更新时间", "描述"]],
                     hide_index=True,
                     use_container_width=True,
@@ -474,12 +474,24 @@ def render_task_status_page():
                     }
                 )
 
-                # 如果选择了行，显示详情
-                if selected_indices is not None and len(selected_indices) > 0:
-                    selected_index = selected_indices[0]
-                    selected_job_id = job_df.iloc[selected_index]["完整ID"]
-                    st.session_state.selected_job_id = selected_job_id
-                    st.rerun()
+                # Add a dropdown to select tasks
+                if not job_df.empty:
+                    # Create a list of task IDs with descriptions for the selectbox
+                    task_options = [f"{row['任务ID']} - {row['子类型']} ({row['状态']})" for _, row in
+                                    job_df.iterrows()]
+                    selected_option = st.selectbox("选择任务查看详情", options=task_options)
+
+                    if st.button("查看详情", key="view_task_button"):
+                        if selected_option:
+                            # Extract the task ID from the selected option (it's the part before the first space)
+                            selected_task_id = selected_option.split(" ")[0]
+
+                            # Find the corresponding row in the dataframe
+                            selected_row = job_df[job_df["任务ID"] == selected_task_id]
+                            if not selected_row.empty:
+                                selected_job_id = selected_row.iloc[0]["完整ID"]
+                                st.session_state.selected_job_id = selected_job_id
+                                st.rerun()
             else:
                 st.info("没有找到符合筛选条件的任务")
 
