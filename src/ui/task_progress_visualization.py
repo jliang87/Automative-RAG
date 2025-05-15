@@ -242,7 +242,7 @@ def display_stage_timeline(job_data: Dict[str, Any]):
 
             # 显示带有适当宽度的阶段条
             if stage["width"] > 0:
-                col2.progress(min(100, stage["width"]), text=f"{stage['stage']} ({stage['duration_str']})")
+                col2.progress(min(100, stage["width"]) / 100, text=f"{stage['stage']} ({stage['duration_str']})")
 
     # 同时显示为表格
     timeline_table = pd.DataFrame([

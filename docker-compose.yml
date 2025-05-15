@@ -22,6 +22,7 @@ services:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
     volumes:
+      - ./src:/app/src
       - ./data:/app/data
       - ./models:/app/models
       - ./logs:/app/logs
@@ -60,6 +61,7 @@ services:
       - LOG_LEVEL=INFO
       - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
     volumes:
+      - ./src:/app/src
       - ./data:/app/data
       - ./models:/app/models
       - ./logs:/app/logs
@@ -98,6 +100,7 @@ services:
       - LOG_LEVEL=INFO
       - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
     volumes:
+      - ./src:/app/src
       - ./data:/app/data
       - ./models:/app/models
       - ./logs:/app/logs
@@ -140,6 +143,7 @@ services:
       - LOG_LEVEL=INFO
       - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
     volumes:
+      - ./src:/app/src
       - ./data:/app/data
       - ./models:/app/models
       - ./logs:/app/logs
@@ -175,6 +179,7 @@ services:
       - REDIS_PORT=6379
       - LOG_LEVEL=INFO
     volumes:
+      - ./src:/app/src
       - ./data:/app/data
       - ./models:/app/models
       - ./logs:/app/logs
@@ -212,6 +217,7 @@ services:
       - CONTAINER_RUNTIME=docker
       - LOG_LEVEL=INFO
     volumes:
+      - ./src:/app/src
       - ./logs:/app/logs
     depends_on:
       - redis
@@ -235,6 +241,7 @@ services:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
     volumes:
+      - ./src:/app/src
       - ./data:/app/data
       - ./models:/app/models
       - ./logs:/app/logs
