@@ -17,7 +17,7 @@ from src.core.worker_status import get_worker_heartbeats, get_worker_status, get
 from src.config.settings import settings
 
 router = APIRouter()
-
+logger = logging.getLogger(__name__)
 
 @router.get("/health/detailed")
 async def detailed_health_check():
@@ -467,6 +467,34 @@ async def terminate_task(request: Dict[str, str], redis_client: redis.Redis = De
         }
     except Exception as e:
         raise HTTPException(500, f"Error terminating task: {str(e)}")
+
+
+@router.post("/prioritize-job", dependencies=[Depends(get_token_header)])
+async def prioritize_job(request: Dict[str, str]):
+    """
+    Boost priority of a specific job in the priority queue.
+    """
+    job_id = request.get("job_id")
+    if not job_id:
+        raise HTTPException(400, "Job ID is required")
+
+    redis_client = get_redis_client()
+
+    try:
+        # Import priority queue
+        from src.core.background.priority_queue import priority_queue
+
+        # Call the boost_job_priority method
+        result = priority_queue.boost_job_priority(job_id)
+
+        return {
+            "status": "success",
+            "message": f"Job {job_id} priority boosted",
+            "details": result
+        }
+    except Exception as e:
+        logger.error(f"Error prioritizing job: {str(e)}")
+        raise HTTPException(500, f"Error prioritizing job: {str(e)}")
 
 
 # Helper functions
