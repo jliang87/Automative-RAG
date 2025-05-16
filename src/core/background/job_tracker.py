@@ -133,24 +133,28 @@ class JobTracker:
 
         logger.debug(f"Updated job {job_id} progress to {progress}%: {message}")
 
-    def get_job_progress(self, job_id: str) -> Dict[str, Any]:
+    def get_job_progress(self, job_id: str, _recursion_guard: bool = False) -> Dict[str, Any]:
         """Get the current progress of a job."""
         progress_key = f"{self.progress_key}:{job_id}"
         progress_data_json = self.redis.get(progress_key)
 
         if not progress_data_json:
-            # If no specific progress, check job status
-            job_data = self.get_job(job_id)
-            if not job_data:
-                return {"progress": 0, "message": "Job not found", "timestamp": time.time()}
+            # If no specific progress, check job status - but avoid recursion
+            if not _recursion_guard:
+                job_data = self.get_job(job_id, include_estimate=False, _recursion_guard=True)
+                if not job_data:
+                    return {"progress": 0, "message": "Job not found", "timestamp": time.time()}
 
-            status = job_data.get("status", "")
-            if status == JobStatus.COMPLETED:
-                return {"progress": 100, "message": "Job completed", "timestamp": time.time()}
-            elif status in [JobStatus.FAILED, JobStatus.TIMEOUT]:
-                return {"progress": 0, "message": "Job failed", "timestamp": time.time()}
+                status = job_data.get("status", "")
+                if status == JobStatus.COMPLETED:
+                    return {"progress": 100, "message": "Job completed", "timestamp": time.time()}
+                elif status in [JobStatus.FAILED, JobStatus.TIMEOUT]:
+                    return {"progress": 0, "message": "Job failed", "timestamp": time.time()}
+                else:
+                    return {"progress": 0, "message": f"Status: {status}", "timestamp": time.time()}
             else:
-                return {"progress": 0, "message": f"Status: {status}", "timestamp": time.time()}
+                # We're in a recursive call, return a default response
+                return {"progress": 0, "message": "Status unknown", "timestamp": time.time()}
 
         try:
             return json.loads(progress_data_json)
@@ -217,7 +221,8 @@ class JobTracker:
         job_data = json.loads(job_data_json)
         return job_data.get("status") == JobStatus.COMPLETED
 
-    def get_job(self, job_id: str, include_estimate: bool = True) -> Optional[Dict[str, Any]]:
+    def get_job(self, job_id: str, include_estimate: bool = True, _recursion_guard: bool = False) -> Optional[
+        Dict[str, Any]]:
         """Get job information by ID with progress."""
         job_data_json = self.redis.hget(self.job_key, job_id)
         if not job_data_json:
@@ -240,12 +245,13 @@ class JobTracker:
             except:
                 pass  # Keep as string if it's not valid JSON
 
-        # Add progress information
-        progress_data = self.get_job_progress(job_id)
-        job_data["progress_info"] = progress_data
+        # Add progress information - but only if we're not already in a recursive call
+        if not _recursion_guard:
+            progress_data = self.get_job_progress(job_id, _recursion_guard=True)
+            job_data["progress_info"] = progress_data
 
         # Add estimated completion time if applicable and requested
-        if include_estimate and job_data.get("status") == "processing":
+        if include_estimate and not _recursion_guard and job_data.get("status") == "processing":
             remaining_time = self._calculate_remaining_time(job_data)
             if remaining_time is not None:
                 job_data["estimated_remaining_seconds"] = remaining_time
