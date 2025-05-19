@@ -1,5 +1,4 @@
-# Use NVIDIA CUDA image as the base image for GPU support
-FROM nvidia/cuda:12.1.1-cudnn8-runtime-ubuntu22.04
+FROM nvidia/cuda:12.1.1-cudnn8-devel-ubuntu22.04
 
 # Set environment variables for better performance and caching
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -17,6 +16,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 # Install system dependencies (kept in a separate cached layer)
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    libcudnn8=8.9.2.* \
+    libcudnn8-dev=8.9.2.* \
+    libcudnn8-samples=8.9.2.* \
     python3.10 \
     python3.10-dev \
     python3-pip \
@@ -35,6 +37,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libleptonica-dev \
     pkg-config \
     && rm -rf /var/lib/apt/lists/*
+
+# Lock cuDNN versions
+RUN apt-mark hold libcudnn8 libcudnn8-dev libcudnn8-samples
 
 # Alias python to python3.10
 RUN ln -sf /usr/bin/python3.10 /usr/bin/python3 && ln -sf /usr/bin/python3 /usr/bin/python
