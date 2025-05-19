@@ -35,6 +35,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libtesseract-dev \
     libleptonica-dev \
     pkg-config \
+    --allow-change-held-packages \
     && rm -rf /var/lib/apt/lists/*
 
 # Alias python to python3.10
