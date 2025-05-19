@@ -38,9 +38,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
-# Lock cuDNN versions
-RUN apt-mark hold libcudnn8 libcudnn8-dev libcudnn8-samples
-
 # Alias python to python3.10
 RUN ln -sf /usr/bin/python3.10 /usr/bin/python3 && ln -sf /usr/bin/python3 /usr/bin/python
 
