@@ -1,4 +1,4 @@
-FROM nvidia/cuda:12.1.1-cudnn8-runtime-ubuntu22.04
+FROM nvidia/cuda:12.1.1-cudnn8-devel-ubuntu22.04
 
 # Set environment variables for better performance and caching
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -16,8 +16,6 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 # Install system dependencies (kept in a separate cached layer)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libcudnn8 \
-    libcudnn8-dev \
     python3.10 \
     python3.10-dev \
     python3-pip \
@@ -35,7 +33,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libtesseract-dev \
     libleptonica-dev \
     pkg-config \
-    --allow-change-held-packages \
     && rm -rf /var/lib/apt/lists/*
 
 # Alias python to python3.10
