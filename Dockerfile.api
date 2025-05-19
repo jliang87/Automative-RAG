@@ -1,4 +1,4 @@
-FROM nvidia/cuda:12.1.1-cudnn8-devel-ubuntu22.04
+FROM nvidia/cuda:12.1.1-cudnn8-runtime-ubuntu22.04
 
 # Set environment variables for better performance and caching
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -16,9 +16,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 # Install system dependencies (kept in a separate cached layer)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libcudnn8=8.9.2.* \
-    libcudnn8-dev=8.9.2.* \
-    libcudnn8-samples=8.9.2.* \
+    libcudnn8 \
+    libcudnn8-dev \
     python3.10 \
     python3.10-dev \
     python3-pip \
