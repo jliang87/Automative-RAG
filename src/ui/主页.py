@@ -13,10 +13,10 @@ from src.ui.enhanced_error_handling import robust_api_status_indicator, handle_w
 
 # 配置应用
 st.set_page_config(
-    page_title="汽车规格 RAG 系统",
-    page_icon="🚗",
-    layout="wide",
-    initial_sidebar_state="expanded",
+   page_title="汽车规格 RAG 系统",
+   page_icon="🚗",
+   layout="wide",
+   initial_sidebar_state="expanded",
 )
 
 # API 配置
@@ -25,29 +25,29 @@ API_KEY = os.environ.get("API_KEY", "default-api-key")
 
 # 会话状态初始化
 if "api_url" not in st.session_state:
-    st.session_state.api_url = API_URL
+   st.session_state.api_url = API_URL
 if "api_key" not in st.session_state:
-    st.session_state.api_key = API_KEY
+   st.session_state.api_key = API_KEY
 if "authenticated" not in st.session_state:
-    st.session_state.authenticated = False
+   st.session_state.authenticated = False
 if "system_notifications" not in st.session_state:
-    st.session_state.system_notifications = []
+   st.session_state.system_notifications = []
 if "last_notification_check" not in st.session_state:
-    st.session_state.last_notification_check = 0
+   st.session_state.last_notification_check = 0
 
 # 在侧边栏显示通知
 display_notifications_sidebar(st.session_state.api_url, st.session_state.api_key)
 
 # 使用增强的 API 状态指示器代替简单的状态检查
 with st.sidebar:
-    api_available = robust_api_status_indicator(show_detail=True)
+   api_available = robust_api_status_indicator(show_detail=True)
 
 # 仅在 API 可用时显示主要内容
 if api_available:
-    header(
-        "汽车规格 RAG 系统",
-        "一个基于 GPU 加速的系统，用于使用延迟交互检索 (Late Interaction Retrieval) 和混合重排序进行汽车规格信息检索。"
-    )
+   header(
+       "汽车规格 RAG 系统",
+       "一个基于 GPU 加速的系统，用于使用延迟交互检索 (Late Interaction Retrieval) 和混合重排序进行汽车规格信息检索。"
+   )
 
 # 系统概述
 st.markdown("""
@@ -57,8 +57,8 @@ st.markdown("""
 
 - **多语言支持**：使用 BAAI/bge-m3 嵌入模型，同时支持中文和英文内容
 - **两阶段混合重排序**：结合 ColBERT 和 BGE-Reranker-Large 实现高质量检索
-  - ColBERT 提供令牌级别的精确交互分析（占比 80%）
-  - BGE-Reranker 增强双语理解能力（占比 20%）
+ - ColBERT 提供令牌级别的精确交互分析（占比 80%）
+ - BGE-Reranker 增强双语理解能力（占比 20%）
 - **延迟交互检索**（ColBERT）实现更精准的语义匹配
 - **本地 DeepSeek LLM** 提供无 API 依赖的答案生成
 - **统一视频处理**：使用 Whisper AI 高质量转录 YouTube、Bilibili 等平台视频
@@ -68,7 +68,46 @@ st.markdown("""
 - **后台处理系统**：资源密集型任务（如视频转录和PDF处理）在后台运行，提高系统响应能力
 """)
 
-# 添加新的部分：后台处理系统介绍
+# 关键痛点与平台价值
+st.markdown("""
+## 关键痛点与平台价值
+
+### 行业痛点
+
+* **竞争情报系统性缺失**：无法系统性获取来自外部的竞品分析与用户反馈信息，竞争情报体系不完善
+* **知识检索低效**：售后、研发、设计等团队在多个系统中查找PDF、日志、历史记录时效率低下，知识复用困难
+* **经验依赖问题**：问题排查过程中重复依赖资深人员经验，文档与视频内容结构化程度低，无法快速定位关键信息
+* **多模态障碍**：多语言、跨模态的数据查询不统一，导致查询链路冗长、理解成本高，无法发挥数据最大价值
+
+### 平台价值
+
+* **统一语义入口**：提供统一语义检索入口，支持中英文、视频、文档、日志等内容的多模态智能问答
+* **视频内容智能化**：视频内容处理成为核心能力，可快速提取竞品发布会、KOL评价、用户反馈等关键信息
+* **降低信息门槛**：大幅降低信息获取门槛，支撑研发、售后、品牌、策略团队做出更快、更有依据的判断
+* **智能引擎能力**：作为底层智能引擎嵌入平台系统，为AI Agent、客服机器人等智能工具提供语义理解能力
+""")
+
+# 前景展望与发展目标
+st.markdown("""
+## 前景展望与发展目标
+
+### 📈 能力复制与平台化发展
+* RAG 知识引擎可作为 AI Agent 构建平台的核心底座，向更多部门复制智能知识应用模式
+* 视频情报提取能力可扩展为品牌市场、策略、竞品分析等跨部门智能输入系统
+* 通过标准化接口与服务，实现技术能力在不同业务场景的快速部署与定制
+
+### 👥 人才赋能与组织转型
+* **产品经理**：快速掌握用户洞察与系统化设计能力，结合 AI 能力增强"从业务中提炼规则"的判断力
+* **企业内训**：批量培养具备产品思维与系统理解的业务负责人，推动"AI in workflow"的组织演进
+* **售后与工厂**：结合规则引擎与语义系统，构建"自解释型数据闭环"，减轻人工查验负担
+
+### 🔄 持续迭代与优化路线
+* 不断扩充更多汽车领域专业数据源，提升系统回答的专业性与准确度
+* 增强跨语言理解能力，支持更多语种的汽车技术文档处理
+* 探索与现有业务系统的深度集成，实现从信息检索到业务决策的闭环
+""")
+
+# 后台处理系统介绍
 st.markdown("""
 ## 后台处理系统
 
@@ -98,82 +137,82 @@ st.markdown("""
 
 # 获取系统状态信息
 try:
-    status_info = api_request(
-        endpoint="/ingest/status",
-        method="GET"
-    )
+   status_info = api_request(
+       endpoint="/ingest/status",
+       method="GET"
+   )
 
-    if status_info:
-        col1, col2 = st.columns(2)
+   if status_info:
+       col1, col2 = st.columns(2)
 
-        with col1:
-            st.subheader("系统状态")
-            st.write(f"状态: {status_info.get('status', '未知')}")
-            document_count = status_info.get('document_count') or 0
-            st.write(f"文档数量: {document_count}")
+       with col1:
+           st.subheader("系统状态")
+           st.write(f"状态: {status_info.get('status', '未知')}")
+           document_count = status_info.get('document_count') or 0
+           st.write(f"文档数量: {document_count}")
 
-            # 显示集合信息
-            collection = status_info.get("collection") or '未定义'
-            st.write(f"集合: {collection}")
+           # 显示集合信息
+           collection = status_info.get("collection") or '未定义'
+           st.write(f"集合: {collection}")
 
-            # 显示任务统计
-            if "job_stats" in status_info:
-                job_stats = status_info.get("job_stats", {})
-                st.subheader("后台任务")
+           # 显示任务统计
+           if "job_stats" in status_info:
+               job_stats = status_info.get("job_stats", {})
+               st.subheader("后台任务")
 
-                col1a, col1b, col1c, col1d = st.columns(4)
-                with col1a:
-                    st.metric("等待中", job_stats.get("pending_jobs", 0))
-                with col1b:
-                    st.metric("处理中", job_stats.get("processing_jobs", 0))
-                with col1c:
-                    st.metric("已完成", job_stats.get("completed_jobs", 0))
-                with col1d:
-                    st.metric("失败", job_stats.get("failed_jobs", 0))
+               col1a, col1b, col1c, col1d = st.columns(4)
+               with col1a:
+                   st.metric("等待中", job_stats.get("pending_jobs", 0))
+               with col1b:
+                   st.metric("处理中", job_stats.get("processing_jobs", 0))
+               with col1c:
+                   st.metric("已完成", job_stats.get("completed_jobs", 0))
+               with col1d:
+                   st.metric("失败", job_stats.get("failed_jobs", 0))
 
-        with col2:
-            st.subheader("服务状态")
+       with col2:
+           st.subheader("服务状态")
 
-            # 获取简单的服务状态信息
-            service_status = api_request(
-                endpoint="/system/health/detailed",
-                method="GET",
-                silent=True
-            )
+           # 获取简单的服务状态信息
+           service_status = api_request(
+               endpoint="/system/health/detailed",
+               method="GET",
+               silent=True
+           )
 
-            if service_status:
-                # 创建一个简洁的服务状态摘要
-                services = {
-                    "API 服务": "✅ 正常",
-                    "LLM 服务": "⚠️ 未知",
-                    "嵌入服务": "⚠️ 未知",
-                    "转录服务": "⚠️ 未知",
-                    "文本处理服务": "⚠️ 未知"
-                }
+           if service_status:
+               # 创建一个简洁的服务状态摘要
+               services = {
+                   "API 服务": "✅ 正常",
+                   "LLM 服务": "⚠️ 未知",
+                   "嵌入服务": "⚠️ 未知",
+                   "转录服务": "⚠️ 未知",
+                   "文本处理服务": "⚠️ 未知"
+               }
 
-                # 从健康检查更新服务状态
-                workers = service_status.get("workers", {})
-                for worker_id, info in workers.items():
-                    worker_type = info.get("type", "unknown")
-                    status = info.get("status", "unknown")
+               # 从健康检查更新服务状态
+               workers = service_status.get("workers", {})
+               for worker_id, info in workers.items():
+                   worker_type = info.get("type", "unknown")
+                   status = info.get("status", "unknown")
 
-                    if "gpu-inference" in worker_type:
-                        services["LLM 服务"] = "✅ 正常" if status == "healthy" else "❌ 异常"
-                    elif "gpu-embedding" in worker_type:
-                        services["嵌入服务"] = "✅ 正常" if status == "healthy" else "❌ 异常"
-                    elif "gpu-whisper" in worker_type:
-                        services["转录服务"] = "✅ 正常" if status == "healthy" else "❌ 异常"
-                    elif "cpu" in worker_type:
-                        services["文本处理服务"] = "✅ 正常" if status == "healthy" else "❌ 异常"
+                   if "gpu-inference" in worker_type:
+                       services["LLM 服务"] = "✅ 正常" if status == "healthy" else "❌ 异常"
+                   elif "gpu-embedding" in worker_type:
+                       services["嵌入服务"] = "✅ 正常" if status == "healthy" else "❌ 异常"
+                   elif "gpu-whisper" in worker_type:
+                       services["转录服务"] = "✅ 正常" if status == "healthy" else "❌ 异常"
+                   elif "cpu" in worker_type:
+                       services["文本处理服务"] = "✅ 正常" if status == "healthy" else "❌ 异常"
 
-                # 显示服务状态表格
-                for service, status in services.items():
-                    st.text(f"{service}: {status}")
+               # 显示服务状态表格
+               for service, status in services.items():
+                   st.text(f"{service}: {status}")
 
-                # 添加查看详情链接
-                st.markdown("[查看详细状态](/系统管理)")
+               # 添加查看详情链接
+               st.markdown("[查看详细状态](/系统管理)")
 
 except Exception as e:
-    st.error(f"获取系统状态时出错: {str(e)}")
+   st.error(f"获取系统状态时出错: {str(e)}")
 else:
-    st.info("API服务可用，但未能获取系统状态。请检查系统配置。")
+   st.info("API服务可用，但未能获取系统状态。请检查系统配置。")
