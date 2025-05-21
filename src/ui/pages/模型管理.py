@@ -10,6 +10,7 @@ from typing import Dict, List, Any, Optional
 import json
 import httpx
 from src.ui.session_init import initialize_session_state
+from src.ui.api_client import api_request
 
 initialize_session_state()
 
@@ -521,6 +522,24 @@ def render_whisper_config(model_config: Dict[str, Any]):
         - **medium**: 大多数情况下的推荐选择
         - **large**: 最高准确度但需要更多资源
         """)
+
+
+def get_model_status(model_type: str):
+    """Get status of a specific model type."""
+    try:
+        health_data = api_request(
+            endpoint="/system/health/detailed",
+            method="GET",
+            silent=True
+        )
+
+        if not health_data or "model_status" not in health_data:
+            return {"loaded": False}
+
+        model_status = health_data.get("model_status", {})
+        return model_status.get(model_type, {"loaded": False})
+    except Exception:
+        return {"loaded": False}
 
 
 def get_model_config() -> Optional[Dict[str, Any]]:
