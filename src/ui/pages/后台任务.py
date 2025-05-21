@@ -17,26 +17,11 @@ from src.ui.api_client import api_request
 from src.ui.components import header, display_document
 
 # 导入增强组件
-# 确保这些导入正确存在
-try:
-    from src.ui.system_notifications import display_notifications_sidebar
-    from src.ui.enhanced_error_handling import robust_api_status_indicator, handle_worker_dependency
-    from src.ui.task_progress_visualization import display_task_progress, display_stage_timeline
-    from src.ui.session_init import initialize_session_state
-except ImportError as e:
-    st.error(f"导入模块失败: {str(e)}")
-    st.info("请确保所有依赖模块已正确安装")
-    # 提供备用初始化以防模块导入失败
-    if "initialize_session_state" not in locals():
-        def initialize_session_state():
-            if "api_url" not in st.session_state:
-                st.session_state.api_url = os.environ.get("API_URL", "http://localhost:8000")
-            if "api_key" not in st.session_state:
-                st.session_state.api_key = os.environ.get("API_KEY", "default-api-key")
-            if "selected_job_id" not in st.session_state:
-                st.session_state.selected_job_id = None
+from src.ui.system_notifications import display_notifications_sidebar
+from src.ui.enhanced_error_handling import robust_api_status_indicator, handle_worker_dependency
+from src.ui.task_progress_visualization import display_task_progress, display_stage_timeline
+from src.ui.session_init import initialize_session_state
 
-# 初始化会话状态
 initialize_session_state()
 
 # 任务状态颜色和图标定义
@@ -279,18 +264,11 @@ def render_task_status_page():
     )
 
     # 在侧边栏显示通知
-    try:
-        display_notifications_sidebar(st.session_state.api_url, st.session_state.api_key)
-    except Exception as e:
-        st.sidebar.warning(f"无法加载通知组件: {str(e)}")
+    display_notifications_sidebar(st.session_state.api_url, st.session_state.api_key)
 
     # 在侧边栏检查 API 状态
     with st.sidebar:
-        try:
-            api_available = robust_api_status_indicator(show_detail=True)
-        except Exception as e:
-            st.sidebar.error(f"API状态检查失败: {str(e)}")
-            api_available = False
+        api_available = robust_api_status_indicator(show_detail=True)
 
     # 仅在 API 可用时继续
     if api_available:
@@ -539,50 +517,43 @@ def render_task_status_page():
                     return
 
                 # 使用 task_progress_visualization 来显示任务状态和进度
-                try:
-                    action = display_task_progress(job_data)
+                action = display_task_progress(job_data)
 
-                    # 处理用户操作（如重试、取消等）
-                    if action["action"] == "retry":
-                        # 执行重试
-                        retry_result = retry_job(
-                            job_id=selected_id,
-                            job_type=job_data.get("job_type", ""),
-                            metadata=job_data.get("metadata", {})
-                        )
+                # 处理用户操作（如重试、取消等）
+                if action["action"] == "retry":
+                    # 执行重试
+                    retry_result = retry_job(
+                        job_id=selected_id,
+                        job_type=job_data.get("job_type", ""),
+                        metadata=job_data.get("metadata", {})
+                    )
 
-                        if retry_result["success"]:
-                            st.success(f"{retry_result['message']}: {retry_result.get('new_job_id', '')}")
-                            # 清除当前选择并重新加载页面以显示新任务
-                            st.session_state.selected_job_id = retry_result.get("new_job_id", "")
-                            time.sleep(1)
-                            st.rerun()
-                        else:
-                            st.error(f"重试失败: {retry_result['message']}")
+                    if retry_result["success"]:
+                        st.success(f"{retry_result['message']}: {retry_result.get('new_job_id', '')}")
+                        # 清除当前选择并重新加载页面以显示新任务
+                        st.session_state.selected_job_id = retry_result.get("new_job_id", "")
+                        time.sleep(1)
+                        st.rerun()
+                    else:
+                        st.error(f"重试失败: {retry_result['message']}")
 
-                    elif action["action"] == "cancel":
-                        # 取消任务
-                        cancel_response = api_request(
-                            endpoint=f"/ingest/jobs/cancel/{selected_id}",
-                            method="POST"
-                        )
-                        if cancel_response:
-                            st.success(f"已发送取消请求。任务将在安全状态下终止。")
-                            time.sleep(1)
-                            st.rerun()
-                        else:
-                            st.error("取消任务失败")
+                elif action["action"] == "cancel":
+                    # 取消任务
+                    cancel_response = api_request(
+                        endpoint=f"/ingest/jobs/cancel/{selected_id}",
+                        method="POST"
+                    )
+                    if cancel_response:
+                        st.success(f"已发送取消请求。任务将在安全状态下终止。")
+                        time.sleep(1)
+                        st.rerun()
+                    else:
+                        st.error("取消任务失败")
 
-                    # 显示任务阶段时间线
-                    if "stage_history" in job_data:
-                        st.subheader("处理阶段时间线")
-                        try:
-                            display_stage_timeline(job_data)
-                        except Exception as e:
-                            st.error(f"显示任务时间线失败: {str(e)}")
-                except Exception as e:
-                    st.error(f"显示任务进度失败: {str(e)}")
-                    st.json(job_data)  # 显示原始数据作为备用
+                # 显示任务阶段时间线
+                if "stage_history" in job_data:
+                    st.subheader("处理阶段时间线")
+                    display_stage_timeline(job_data)
 
                 # 显示子任务信息（如果有）
                 result = job_data.get("result", {})
@@ -610,11 +581,7 @@ def render_task_status_page():
                     documents = result.get("documents", [])
                     if documents:
                         for i, doc in enumerate(documents):
-                            try:
-                                display_document(doc, i)
-                            except Exception as e:
-                                st.error(f"显示文档 {i+1} 失败: {str(e)}")
-                                st.json(doc)  # 显示原始文档数据
+                            display_document(doc, i)
                     else:
                         st.info("没有找到相关文档")
 
@@ -626,16 +593,11 @@ def render_task_status_page():
             queue_status = check_priority_queue_status()
 
             if queue_status:
-                try:
-                    # 导入优先队列可视化组件
-                    from src.ui.interactive_priority_queue_visualization import render_interactive_queue_visualization
+                # 导入优先队列可视化组件
+                from src.ui.interactive_priority_queue_visualization import render_interactive_queue_visualization
 
-                    # 使用交互式队列可视化组件
-                    render_interactive_queue_visualization(st.session_state.api_url, st.session_state.api_key)
-                except Exception as e:
-                    st.error(f"加载队列可视化组件失败: {str(e)}")
-                    # 显示基本队列信息作为备用
-                    st.json(queue_status)
+                # 使用交互式队列可视化组件
+                render_interactive_queue_visualization(st.session_state.api_url, st.session_state.api_key)
             else:
                 st.warning("无法获取优先队列状态")
 
@@ -691,10 +653,5 @@ def render_task_status_page():
         if st.button("刷新", key="refresh_error"):
             st.rerun()
 
-
 # 渲染页面
-try:
-    render_task_status_page()
-except Exception as e:
-    st.error(f"页面渲染失败: {str(e)}")
-    st.info("请检查日志以获取更多详细信息")
+render_task_status_page()
