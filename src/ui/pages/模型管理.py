@@ -100,7 +100,7 @@ def render_llm_config(model_config: Dict[str, Any]):
     new_model = st.selectbox("选择模型", available_models, index=available_models.index(current_model))
 
     # Custom model path
-    custom_path = st.text_input("自定义模型路径 (可选)", "",
+    custom_path = st.text_input("自定义模型路径 (可选)", "", key="llm_custom_path",
                                 help="如果您有自定义模型路径，请在此输入。否则将使用默认路径。")
 
     # Inference settings
@@ -175,7 +175,7 @@ def render_llm_config(model_config: Dict[str, Any]):
             info_data = []
 
             for key, value in llm_info.items():
-                info_data.append({"属性": key, "值": value})
+                info_data.append({"属性": key, "值": str(value) if isinstance(value, bool) else value})
 
             if info_data:
                 st.dataframe(pd.DataFrame(info_data), hide_index=True)
@@ -230,7 +230,7 @@ def render_embedding_config(model_config: Dict[str, Any]):
     new_model = st.selectbox("选择模型", available_models, index=available_models.index(current_model))
 
     # Custom model path
-    custom_path = st.text_input("自定义模型路径 (可选)", "",
+    custom_path = st.text_input("自定义模型路径 (可选)", "", key="embedding_custom_path",
                                 help="如果您有自定义模型路径，请在此输入。否则将使用默认路径。")
 
     # Batch size setting
@@ -280,7 +280,7 @@ def render_embedding_config(model_config: Dict[str, Any]):
             info_data = []
 
             for key, value in embedding_info.items():
-                info_data.append({"属性": key, "值": value})
+                info_data.append({"属性": key, "值": str(value) if isinstance(value, bool) else value})
 
             if info_data:
                 st.dataframe(pd.DataFrame(info_data), hide_index=True)
@@ -444,7 +444,7 @@ def render_whisper_config(model_config: Dict[str, Any]):
                              index=model_sizes.index(current_model))
 
     # Custom model path
-    custom_path = st.text_input("自定义模型路径 (可选)", model_path,
+    custom_path = st.text_input("自定义模型路径 (可选)", model_path, key="whisper_custom_path",
                                 help="如果您有自定义模型路径，请在此输入。否则将使用默认模型。")
 
     # Transcription settings
