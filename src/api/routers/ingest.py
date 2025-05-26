@@ -2,7 +2,7 @@
 
 import os
 import uuid
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional, Union, Any
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, Query
 from pydantic import HttpUrl, BaseModel
@@ -274,8 +274,8 @@ async def ingest_text(manual_request: ManualIngestRequest) -> BackgroundJobRespo
         )
 
 
-@router.get("/jobs/{job_id}", response_model=Dict[str, any])
-async def get_job_status(job_id: str) -> Dict[str, any]:
+@router.get("/jobs/{job_id}", response_model=Dict[str, Any])
+async def get_job_status(job_id: str) -> Dict[str, Any]:
     """
     Get the status of a background job, including job chain information.
     """
@@ -295,8 +295,8 @@ async def get_job_status(job_id: str) -> Dict[str, any]:
     return job_data
 
 
-@router.get("/jobs/{job_id}/chain", response_model=Dict[str, any])
-async def get_job_chain_status(job_id: str) -> Dict[str, any]:
+@router.get("/jobs/{job_id}/chain", response_model=Dict[str, Any])
+async def get_job_chain_status(job_id: str) -> Dict[str, Any]:
     """
     Get detailed job chain status for a specific job.
     """
@@ -310,11 +310,11 @@ async def get_job_chain_status(job_id: str) -> Dict[str, any]:
     return chain_status
 
 
-@router.get("/jobs", response_model=List[Dict[str, any]])
+@router.get("/jobs", response_model=List[Dict[str, Any]])
 async def get_all_jobs(
         limit: int = Query(50, ge=1, le=100),
         job_type: Optional[str] = Query(None)
-) -> List[Dict[str, any]]:
+) -> List[Dict[str, Any]]:
     """
     Get all background jobs, optionally filtered by type.
     """
@@ -337,8 +337,8 @@ async def delete_job(job_id: str) -> Dict[str, str]:
     return {"message": f"Successfully deleted job: {job_id}"}
 
 
-@router.get("/status", response_model=Dict[str, any])
-async def get_ingest_status() -> Dict[str, any]:
+@router.get("/status", response_model=Dict[str, Any])
+async def get_ingest_status() -> Dict[str, Any]:
     """
     Get ingestion system status including job chain queue information.
     """

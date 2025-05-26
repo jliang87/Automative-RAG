@@ -1,7 +1,7 @@
-# docker-compose.yml (Simplified for Job Chain)
+# docker-compose.yml (Updated for Option 1 - Dedicated GPU Workers)
 
 services:
-  # FastAPI Backend (CPU-only, no models loaded)
+  # FastAPI Backend (unchanged)
   api:
     build:
       context: .
@@ -39,32 +39,36 @@ services:
       retries: 3
       start_period: 40s
 
-  # GPU Worker - handles all GPU tasks (inference, embedding, transcription)
-  worker-gpu:
+  # === REPLACE the single worker-gpu with these 3 dedicated workers ===
+
+  # GPU Worker 1: Whisper Transcription (2GB allocation)
+  worker-gpu-whisper:
     build:
       context: .
       dockerfile: Dockerfile.api
     runtime: nvidia
-    command: python -m dramatiq src.core.background --processes 1 --threads 1 --queues inference_tasks,embedding_tasks,transcription_tasks
+    command: python -m dramatiq src.core.background --processes 1 --threads 1 --queues transcription_tasks
     environment:
-      - WORKER_TYPE=gpu
+      - WORKER_TYPE=gpu-whisper
       - DEVICE=cuda
       - USE_FP16=true
-      - LOAD_EMBEDDING_MODEL=true
-      - LOAD_LLM_MODEL=true
-      - LOAD_COLBERT_MODEL=true
+      - LOAD_EMBEDDING_MODEL=false
+      - LOAD_LLM_MODEL=false
+      - LOAD_COLBERT_MODEL=false
       - LOAD_WHISPER_MODEL=true
       - CONTAINER_RUNTIME=docker
       - NVIDIA_VISIBLE_DEVICES=all
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - LOG_LEVEL=INFO
-      - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+      - PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:2048,expandable_segments:False
     volumes:
       - ./src:/app/src
       - ./data:/app/data
       - ./models:/app/models
       - ./logs:/app/logs
+    env_file:
+      - .env
     depends_on:
       - redis
       - qdrant
@@ -74,9 +78,87 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 30s
+      start_period: 60s
 
-  # CPU Worker - handles document processing, PDF parsing, OCR
+  # GPU Worker 2: Embedding Tasks (3GB allocation)
+  worker-gpu-embedding:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    runtime: nvidia
+    command: python -m dramatiq src.core.background --processes 1 --threads 1 --queues embedding_tasks
+    environment:
+      - WORKER_TYPE=gpu-embedding
+      - DEVICE=cuda
+      - USE_FP16=true
+      - LOAD_EMBEDDING_MODEL=true
+      - LOAD_LLM_MODEL=false
+      - LOAD_COLBERT_MODEL=false
+      - LOAD_WHISPER_MODEL=false
+      - CONTAINER_RUNTIME=docker
+      - NVIDIA_VISIBLE_DEVICES=all
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - LOG_LEVEL=INFO
+      - PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:3072,expandable_segments:False
+    volumes:
+      - ./src:/app/src
+      - ./data:/app/data
+      - ./models:/app/models
+      - ./logs:/app/logs
+    env_file:
+      - .env
+    depends_on:
+      - redis
+      - qdrant
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "bash", "-c", "ps aux | grep dramatiq | grep -v grep"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # GPU Worker 3: LLM Inference (6GB allocation)
+  worker-gpu-inference:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    runtime: nvidia
+    command: python -m dramatiq src.core.background --processes 1 --threads 1 --queues inference_tasks
+    environment:
+      - WORKER_TYPE=gpu-inference
+      - DEVICE=cuda
+      - USE_FP16=true
+      - LOAD_EMBEDDING_MODEL=false
+      - LOAD_LLM_MODEL=true
+      - LOAD_COLBERT_MODEL=true
+      - LOAD_WHISPER_MODEL=false
+      - CONTAINER_RUNTIME=docker
+      - NVIDIA_VISIBLE_DEVICES=all
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - LOG_LEVEL=INFO
+      - PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:6144,expandable_segments:False
+    volumes:
+      - ./src:/app/src
+      - ./data:/app/data
+      - ./models:/app/models
+      - ./logs:/app/logs
+    env_file:
+      - .env
+    depends_on:
+      - redis
+      - qdrant
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "bash", "-c", "ps aux | grep dramatiq | grep -v grep"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # CPU Worker (unchanged)
   worker-cpu:
     build:
       context: .
@@ -93,8 +175,24 @@ services:
       - USE_PDF_OCR=true
       - CONTAINER_RUNTIME=docker
       - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    volumes:
+      - ./src:/app/src
+      - ./data:/app/data
+      - ./models:/app/models
+      - ./logs:/app/logs
+    env_file:
+      - .env
+    depends_on:
+      - redis
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "bash", "-c", "ps aux | grep dramatiq | grep -v grep"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
-  # Streamlit UI
+  # Streamlit UI (unchanged)
   ui:
     build:
       context: .
@@ -123,7 +221,7 @@ services:
       retries: 3
       start_period: 40s
 
-  # Qdrant Vector Database
+  # Qdrant Vector Database (unchanged)
   qdrant:
     image: qdrant/qdrant:latest
     ports:
@@ -141,7 +239,7 @@ services:
       retries: 5
       start_period: 40s
 
-  # Redis for Background Task Queue
+  # Redis for Background Task Queue (unchanged)
   redis:
     image: redis:7.0-alpine
     ports:

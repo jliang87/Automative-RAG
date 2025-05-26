@@ -1,8 +1,6 @@
 """
-Model management for background workers.
-
-This module handles preloading and managing ML models for workers,
-optimizing GPU memory usage and ensuring models are loaded efficiently.
+Updated model management for dedicated GPU workers.
+This replaces your existing src/core/background/models.py
 """
 
 import os
@@ -17,6 +15,36 @@ _PRELOADED_EMBEDDING_MODEL = None
 _PRELOADED_LLM_MODEL = None
 _PRELOADED_COLBERT_RERANKER = None
 _PRELOADED_WHISPER_MODEL = None
+
+
+def get_worker_type() -> str:
+    """Get the current worker type from environment."""
+    return os.environ.get("WORKER_TYPE", "")
+
+
+def should_load_model(model_env_var: str) -> bool:
+    """Check if this worker should load a specific model."""
+    return os.environ.get(model_env_var, "false").lower() == "true"
+
+
+def set_memory_fraction_for_worker():
+    """Set appropriate GPU memory fraction based on worker type."""
+    if not torch.cuda.is_available():
+        return
+
+    worker_type = get_worker_type()
+
+    # Set memory fractions based on our 16GB allocation strategy
+    memory_fractions = {
+        "gpu-whisper": 0.125,    # 2GB out of 16GB
+        "gpu-embedding": 0.1875, # 3GB out of 16GB
+        "gpu-inference": 0.375,  # 6GB out of 16GB
+    }
+
+    if worker_type in memory_fractions:
+        fraction = memory_fractions[worker_type]
+        torch.cuda.set_per_process_memory_fraction(fraction)
+        logger.info(f"Set GPU memory fraction to {fraction} for {worker_type}")
 
 
 def preload_embedding_model():
@@ -41,6 +69,9 @@ def preload_embedding_model():
     logger.info(f"Preloading embedding model {settings.default_embedding_model} on {settings.device}")
 
     try:
+        # Set memory fraction
+        set_memory_fraction_for_worker()
+
         # Clear CUDA cache before loading
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
@@ -105,6 +136,9 @@ def preload_llm_model():
     logger.info(f"Preloading LLM model {settings.default_llm_model} on {settings.device}")
 
     try:
+        # Set memory fraction
+        set_memory_fraction_for_worker()
+
         # Clear CUDA cache before loading
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
@@ -243,6 +277,9 @@ def preload_whisper_model():
     logger.info(f"Preloading Whisper model {settings.whisper_model_size} on {settings.device}")
 
     try:
+        # Set memory fraction
+        set_memory_fraction_for_worker()
+
         # Clear CUDA cache before loading
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
@@ -422,6 +459,37 @@ def get_whisper_model():
     )
 
 
+# Add preload_models function that's called at worker startup
+def preload_models():
+    """Preload only the models this worker needs based on environment variables."""
+    worker_type = get_worker_type()
+    logger.info(f"Preloading models for worker type: {worker_type}")
+
+    # Load models based on environment flags
+    if should_load_model("LOAD_WHISPER_MODEL"):
+        logger.info("Preloading Whisper model...")
+        preload_whisper_model()
+
+    if should_load_model("LOAD_EMBEDDING_MODEL"):
+        logger.info("Preloading embedding model...")
+        preload_embedding_model()
+
+    if should_load_model("LOAD_LLM_MODEL"):
+        logger.info("Preloading LLM model...")
+        preload_llm_model()
+
+    if should_load_model("LOAD_COLBERT_MODEL"):
+        logger.info("Preloading ColBERT model...")
+        preload_colbert_reranker()
+
+    # Log total GPU memory usage
+    if torch.cuda.is_available():
+        total_allocated = torch.cuda.memory_allocated(0) / (1024**3)
+        total_available = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+        logger.info(f"Total GPU memory: {total_allocated:.2f}GB / {total_available:.2f}GB")
+
+
+# Backward compatibility for reload_models function
 def reload_models():
     """Reload all models to free up memory and avoid memory leaks."""
     global _PRELOADED_EMBEDDING_MODEL, _PRELOADED_LLM_MODEL, _PRELOADED_COLBERT_RERANKER, _PRELOADED_WHISPER_MODEL
@@ -439,32 +507,14 @@ def reload_models():
     import gc
     gc.collect()
 
-    # Reload appropriate models based on worker type
-    if worker_type == "gpu-inference":
-        # Free memory
-        del _PRELOADED_LLM_MODEL
-        del _PRELOADED_COLBERT_RERANKER
-        _PRELOADED_LLM_MODEL = None
-        _PRELOADED_COLBERT_RERANKER = None
+    # Clear the preloaded models
+    _PRELOADED_EMBEDDING_MODEL = None
+    _PRELOADED_LLM_MODEL = None
+    _PRELOADED_COLBERT_RERANKER = None
+    _PRELOADED_WHISPER_MODEL = None
 
-        # Force garbage collection again
-        gc.collect()
-
-        # Reload models
-        preload_llm_model()
-        preload_colbert_reranker()
-
-    elif worker_type == "gpu-embedding":
-        del _PRELOADED_EMBEDDING_MODEL
-        _PRELOADED_EMBEDDING_MODEL = None
-        gc.collect()
-        preload_embedding_model()
-
-    elif worker_type == "gpu-whisper":
-        del _PRELOADED_WHISPER_MODEL
-        _PRELOADED_WHISPER_MODEL = None
-        gc.collect()
-        preload_whisper_model()
+    # Reload models based on worker type
+    preload_models()
 
     # Log GPU memory after reload
     if torch.cuda.is_available():

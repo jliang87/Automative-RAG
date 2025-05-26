@@ -1,4 +1,4 @@
-# src/core/background/job_chain.py
+# The job_chain.py file stays mostly the same, but here are the key updates needed:
 
 import json
 import time
@@ -12,13 +12,11 @@ from .common import get_redis_client
 
 logger = logging.getLogger(__name__)
 
-
 class JobType(Enum):
     VIDEO_PROCESSING = "video_processing"
     PDF_PROCESSING = "pdf_processing"
     TEXT_PROCESSING = "text_processing"
     LLM_INFERENCE = "llm_inference"
-
 
 class TaskStatus(Enum):
     PENDING = "pending"
@@ -26,34 +24,33 @@ class TaskStatus(Enum):
     COMPLETED = "completed"
     FAILED = "failed"
 
-
 class JobChain:
     """
-    Event-driven job chain that automatically triggers the next task when one completes.
-    No polling, no waiting, no deadlocks - just pure event-driven execution.
+    Event-driven job chain with dedicated workers.
     """
 
     def __init__(self):
         self.redis = get_redis_client()
 
         # Define job workflows - each job type has a sequence of tasks
+        # UPDATED: Ensure correct queue routing for dedicated workers
         self.workflows = {
             JobType.VIDEO_PROCESSING: [
-                ("download_video", "cpu_tasks"),
-                ("transcribe_video", "transcription_tasks"),
-                ("generate_embeddings", "embedding_tasks")
+                ("download_video", "cpu_tasks"),           # CPU worker
+                ("transcribe_video", "transcription_tasks"), # Whisper worker
+                ("generate_embeddings", "embedding_tasks")   # Embedding worker
             ],
             JobType.PDF_PROCESSING: [
-                ("process_pdf", "cpu_tasks"),
-                ("generate_embeddings", "embedding_tasks")
+                ("process_pdf", "cpu_tasks"),              # CPU worker
+                ("generate_embeddings", "embedding_tasks")   # Embedding worker
             ],
             JobType.TEXT_PROCESSING: [
-                ("process_text", "cpu_tasks"),
-                ("generate_embeddings", "embedding_tasks")
+                ("process_text", "cpu_tasks"),             # CPU worker
+                ("generate_embeddings", "embedding_tasks")   # Embedding worker
             ],
             JobType.LLM_INFERENCE: [
-                ("retrieve_documents", "embedding_tasks"),
-                ("llm_inference", "inference_tasks")
+                ("retrieve_documents", "embedding_tasks"),   # Embedding worker
+                ("llm_inference", "inference_tasks")         # Inference worker
             ]
         }
 
@@ -407,6 +404,10 @@ job_chain = JobChain()
 
 # Task actor definitions - each one calls job_chain.task_completed() or job_chain.task_failed()
 
+# ==============================================================================
+# UPDATED TASK DEFINITIONS WITH DEDICATED WORKER SUPPORT
+# ==============================================================================
+
 @dramatiq.actor(queue_name="cpu_tasks", store_results=True, max_retries=2)
 def download_video_task(job_id: str, url: str, metadata: Optional[Dict] = None):
     """Download video and trigger next task."""
@@ -435,23 +436,22 @@ def download_video_task(job_id: str, url: str, metadata: Optional[Dict] = None):
 
     except Exception as e:
         logger.error(f"Video download failed for job {job_id}: {str(e)}")
-        # On failure, stop the chain
         job_chain.task_failed(job_id, f"Video download failed: {str(e)}")
 
 
 @dramatiq.actor(queue_name="transcription_tasks", store_results=True, max_retries=2)
 def transcribe_video_task(job_id: str, media_path: str):
-    """Transcribe video and trigger next task."""
+    """Transcribe video using preloaded Whisper model."""
     try:
         logger.info(f"Transcribing video for job {job_id}: {media_path}")
 
         # Import here to avoid circular imports
-        from src.core.background.models import get_whisper_model
+        from .models import get_whisper_model
         from langchain_core.documents import Document
         from langchain_text_splitters import RecursiveCharacterTextSplitter
         from src.config.settings import settings
 
-        # Get the Whisper model
+        # Get the preloaded Whisper model
         whisper_model = get_whisper_model()
 
         # Perform transcription
@@ -620,12 +620,12 @@ def process_text_task(job_id: str, text: str, metadata: Optional[Dict] = None):
 
 @dramatiq.actor(queue_name="embedding_tasks", store_results=True, max_retries=2)
 def generate_embeddings_task(job_id: str, documents: List[Dict]):
-    """Generate embeddings and complete the job."""
+    """Generate embeddings using preloaded embedding model."""
     try:
         logger.info(f"Generating embeddings for job {job_id}: {len(documents)} documents")
 
         # Import here to avoid circular imports
-        from src.core.background.models import get_vector_store
+        from .models import get_vector_store
         from langchain_core.documents import Document
 
         # Convert back to Document objects
@@ -643,7 +643,7 @@ def generate_embeddings_task(job_id: str, documents: List[Dict]):
             doc.metadata["ingestion_time"] = current_time
             doc.metadata["job_id"] = job_id
 
-        # Add to vector store
+        # Add to vector store using preloaded embedding model
         vector_store = get_vector_store()
         doc_ids = vector_store.add_documents(doc_objects)
 
@@ -663,15 +663,15 @@ def generate_embeddings_task(job_id: str, documents: List[Dict]):
 
 @dramatiq.actor(queue_name="embedding_tasks", store_results=True, max_retries=2)
 def retrieve_documents_task(job_id: str, query: str, metadata_filter: Optional[Dict] = None):
-    """Retrieve documents for LLM inference."""
+    """Retrieve documents using preloaded embedding model."""
     try:
         logger.info(f"Retrieving documents for job {job_id}: {query}")
 
         # Import here to avoid circular imports
-        from src.core.background.models import get_vector_store
+        from .models import get_vector_store
         from src.config.settings import settings
 
-        # Get vector store
+        # Get vector store with preloaded embedding model
         vector_store = get_vector_store()
 
         # Perform retrieval
@@ -706,12 +706,12 @@ def retrieve_documents_task(job_id: str, query: str, metadata_filter: Optional[D
 
 @dramatiq.actor(queue_name="inference_tasks", store_results=True, max_retries=2)
 def llm_inference_task(job_id: str, query: str, documents: List[Dict]):
-    """Perform LLM inference and complete the job."""
+    """Perform LLM inference using preloaded models."""
     try:
         logger.info(f"Performing LLM inference for job {job_id}: {query}")
 
         # Import here to avoid circular imports
-        from src.core.background.models import get_llm_model, get_colbert_reranker
+        from .models import get_llm_model, get_colbert_reranker
         from langchain_core.documents import Document
         from src.config.settings import settings
 
@@ -725,7 +725,7 @@ def llm_inference_task(job_id: str, query: str, documents: List[Dict]):
             score = doc_dict.get("relevance_score", 0)
             doc_objects.append((doc, score))
 
-        # Perform reranking if available
+        # Perform reranking using preloaded ColBERT model
         reranker = get_colbert_reranker()
         if reranker is not None:
             logger.info(f"Reranking {len(doc_objects)} documents for job {job_id}")
@@ -734,7 +734,7 @@ def llm_inference_task(job_id: str, query: str, documents: List[Dict]):
             logger.warning("Reranker not available, using original document order")
             reranked_docs = doc_objects[:settings.reranker_top_k]
 
-        # Get LLM model and perform inference
+        # Get preloaded LLM model and perform inference
         llm = get_llm_model()
         answer = llm.answer_query(
             query=query,

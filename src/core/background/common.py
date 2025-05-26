@@ -1,9 +1,7 @@
-# src/core/background/common.py (Simplified)
+# src/core/background/common.py (Updated for dedicated workers)
 
 """
-Simplified common components for the background processing system.
-
-This module sets up the Redis broker and basic utilities for the job chain system.
+Updated common components for the background processing system with dedicated workers.
 """
 
 import os
@@ -76,7 +74,7 @@ from dramatiq.middleware import Middleware
 
 
 class SimpleWorkerSetup(Middleware):
-    """Simplified worker setup middleware."""
+    """Simplified worker setup middleware for dedicated workers."""
 
     def before_worker_boot(self, broker, worker):
         """Run setup code before the worker boots."""
@@ -84,35 +82,21 @@ class SimpleWorkerSetup(Middleware):
         logger.info(f"Initializing worker {worker_id} of type {worker_type}")
 
         # Import here to avoid circular imports
-        from .models import (
-            preload_embedding_model,
-            preload_llm_model,
-            preload_colbert_reranker,
-            preload_whisper_model
-        )
+        from .models import preload_models
 
         # Preload appropriate models based on worker type
-        if worker_type == "gpu-inference":
-            logger.info("Preloading LLM and reranking models for gpu-inference worker")
-            preload_llm_model()
-            preload_colbert_reranker()
+        if worker_type.startswith("gpu-"):
+            logger.info(f"GPU worker detected: {worker_type}, preloading models...")
+            preload_models()
 
-        elif worker_type == "gpu-embedding":
-            logger.info("Preloading embedding model for gpu-embedding worker")
-            preload_embedding_model()
-
-        elif worker_type == "gpu-whisper":
-            logger.info("Preloading Whisper model for gpu-whisper worker")
-            preload_whisper_model()
-
-        # Log GPU memory after preloading
-        if torch.cuda.is_available() and worker_type.startswith("gpu-"):
-            for i in range(torch.cuda.device_count()):
-                device_name = torch.cuda.get_device_name(i)
-                allocated = torch.cuda.memory_allocated(i) / (1024 ** 3)
-                reserved = torch.cuda.memory_reserved(i) / (1024 ** 3)
-                logger.info(
-                    f"GPU {i} ({device_name}) after init: Allocated: {allocated:.2f} GB, Reserved: {reserved:.2f} GB")
+            # Log GPU memory after preloading
+            if torch.cuda.is_available():
+                for i in range(torch.cuda.device_count()):
+                    device_name = torch.cuda.get_device_name(i)
+                    allocated = torch.cuda.memory_allocated(i) / (1024 ** 3)
+                    reserved = torch.cuda.memory_reserved(i) / (1024 ** 3)
+                    logger.info(
+                        f"GPU {i} ({device_name}) after init: Allocated: {allocated:.2f} GB, Reserved: {reserved:.2f} GB")
 
         # Start simplified heartbeat
         start_worker_heartbeat(worker_id)
