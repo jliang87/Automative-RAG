@@ -1,7 +1,8 @@
 """
-Streamlit 界面 UI 组件
+Streamlit 界面 UI 组件 - 简化版本用于自触发作业链架构
 
 该模块包含 Streamlit 应用程序中的可复用 UI 组件。
+专为自触发作业链和专用Worker架构优化。
 """
 
 import streamlit as st
@@ -39,80 +40,6 @@ def api_status_indicator():
     except Exception as e:
         st.sidebar.error(f"❌ 连接失败: {str(e)}")
         return False
-
-
-def worker_status_indicator():
-    """在侧边栏显示worker状态。"""
-    try:
-        # 从API获取worker信息
-        response = api_request(
-            endpoint="/query/llm-info",
-            method="GET",
-            timeout=2.0  # 短超时以避免UI阻塞
-        )
-
-        if not response:
-            st.sidebar.warning("⚠️ 无法获取worker状态")
-            return
-
-        # 显示活动workers
-        active_workers = response.get("active_workers", {})
-        if active_workers:
-            with st.sidebar.expander("Worker状态"):
-                for worker_type, info in active_workers.items():
-                    count = info.get("count", 0)
-                    description = info.get("description", worker_type)
-                    st.success(f"✅ {description} ({count} 个活动)")
-
-                # 如果有队列信息，显示队列信息
-                queue_stats = response.get("queue_stats", {})
-                if queue_stats:
-                    st.subheader("任务队列")
-                    for queue, count in queue_stats.items():
-                        if count > 0:
-                            st.text(f"{queue}: {count} 个任务")
-        else:
-            st.sidebar.warning("⚠️ 未检测到活动的workers")
-
-    except Exception as e:
-        st.sidebar.warning(f"⚠️ 检查worker状态时出错: {str(e)}")
-
-
-def llm_status_indicator():
-    """显示 LLM（大语言模型）状态信息"""
-    try:
-        with httpx.Client() as client:
-            response = client.get(
-                f"{st.session_state.api_url}/query/llm-info",
-                headers={"x-token": st.session_state.api_key},
-                timeout=3.0
-            )
-
-        if response.status_code == 200:
-            llm_info = response.json()
-
-            with st.sidebar.expander("LLM 状态"):
-                # 模型名称 - 若名称过长，则显示缩短版本
-                model_name = llm_info.get("model_name", "未知")
-                if len(model_name) > 30:
-                    display_name = f"{model_name.split('/')[-1]}"
-                else:
-                    display_name = model_name
-                st.info(f"模型: {display_name}")
-
-                # 量化信息
-                quant = llm_info.get("quantization", "无")
-                st.text(f"量化方式: {quant}")
-
-                # 显存占用信息
-                if "vram_usage" in llm_info:
-                    st.metric("显存占用", llm_info["vram_usage"])
-
-                # 设备信息
-                device = llm_info.get("device", "未知")
-                st.text(f"运行设备: {device}")
-    except Exception:
-        pass  # 忽略错误
 
 
 def metadata_filters():
@@ -205,3 +132,83 @@ def display_document(doc: Dict, index: int):
 def loading_spinner(text: str = "处理中..."):
     """创建加载动画"""
     return st.spinner(text)
+
+
+def job_chain_status_card(job_data: Dict[str, Any]):
+    """显示作业链状态卡片"""
+    job_id = job_data.get("job_id", "")
+    status = job_data.get("status", "")
+    job_type = job_data.get("job_type", "")
+
+    # 状态颜色映射
+    status_colors = {
+        "pending": "🟡",
+        "processing": "🔵",
+        "completed": "🟢",
+        "failed": "🔴"
+    }
+
+    status_icon = status_colors.get(status, "⚪")
+
+    with st.container():
+        col1, col2, col3 = st.columns([2, 1, 1])
+
+        with col1:
+            st.markdown(f"**{status_icon} {job_id[:8]}...**")
+            st.caption(f"类型: {job_type}")
+
+        with col2:
+            st.markdown(f"**状态**")
+            st.caption(status)
+
+        with col3:
+            if st.button("详情", key=f"details_{job_id}"):
+                st.session_state.selected_job_id = job_id
+                st.rerun()
+
+
+def worker_health_indicator():
+    """显示专用Worker健康状态指示器"""
+    health_data = api_request(
+        endpoint="/system/health/detailed",
+        method="GET",
+        silent=True
+    )
+
+    if not health_data:
+        st.warning("⚠️ 无法获取Worker状态")
+        return
+
+    workers = health_data.get("workers", {})
+
+    # 按Worker类型分组
+    worker_types = {
+        "gpu-whisper": {"name": "🎵 语音转录", "workers": []},
+        "gpu-embedding": {"name": "🔢 向量嵌入", "workers": []},
+        "gpu-inference": {"name": "🧠 LLM推理", "workers": []},
+        "cpu": {"name": "💻 CPU处理", "workers": []}
+    }
+
+    # 分类Worker
+    for worker_id, info in workers.items():
+        worker_type = info.get("type", "unknown")
+        if worker_type in worker_types:
+            worker_types[worker_type]["workers"].append((worker_id, info))
+
+    # 显示每种Worker类型的状态
+    cols = st.columns(4)
+    for i, (worker_type, type_info) in enumerate(worker_types.items()):
+        with cols[i]:
+            workers_of_type = type_info["workers"]
+            healthy_count = sum(1 for _, info in workers_of_type if info.get("status") == "healthy")
+            total_count = len(workers_of_type)
+
+            if healthy_count == total_count and total_count > 0:
+                st.success(f"✅ {type_info['name']}")
+                st.caption(f"{healthy_count}/{total_count} 健康")
+            elif healthy_count > 0:
+                st.warning(f"⚠️ {type_info['name']}")
+                st.caption(f"{healthy_count}/{total_count} 健康")
+            else:
+                st.error(f"❌ {type_info['name']}")
+                st.caption("不可用")

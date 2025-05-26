@@ -1,6 +1,5 @@
 """
-Enhanced API client with specific support for the new job chain architecture.
-This updates src/ui/api_client.py with job chain specific methods.
+简化的API客户端，专为自触发作业链架构优化
 """
 
 import streamlit as st
@@ -21,21 +20,7 @@ def api_request(
         handle_error: Optional[Callable] = None,
 ) -> Optional[Dict]:
     """
-    Enhanced API request function with improved error handling for job chains.
-
-    Args:
-        endpoint: API endpoint path
-        method: HTTP method (GET, POST, DELETE)
-        data: Request body data
-        files: Files to upload
-        params: Query parameters
-        timeout: Request timeout in seconds
-        retries: Number of retries on failure
-        silent: Whether to suppress error messages
-        handle_error: Custom error handling function
-
-    Returns:
-        Response data or None on failure
+    API请求函数，针对自触发架构优化
     """
     if "api_url" not in st.session_state or "api_key" not in st.session_state:
         if not silent:
@@ -62,44 +47,31 @@ def api_request(
                         st.error(f"不支持的请求方法: {method}")
                     return None
 
-                # Handle HTTP errors (4xx, 5xx)
+                # 处理HTTP错误
                 if response.status_code >= 400:
                     error_msg = f"API 错误 ({response.status_code}): {response.text}"
 
-                    # Check if we should retry
-                    should_retry = attempt < retries and (
-                        # Retry server errors (5xx)
-                            response.status_code >= 500 or
-                            # Retry rate limit errors
-                            response.status_code == 429
-                    )
+                    # 检查是否需要重试
+                    should_retry = attempt < retries and response.status_code >= 500
 
                     if should_retry:
-                        # Exponential backoff
                         wait_time = (2 ** attempt) * 0.5
                         time.sleep(wait_time)
                         continue
 
-                    # Handle error
                     if handle_error:
                         return handle_error(error_msg)
                     elif not silent:
                         st.error(error_msg)
                     return None
 
-                # Success
                 return response.json()
 
         except httpx.TimeoutException:
             error_msg = f"请求超时 ({timeout} 秒)"
-
-            # Check if we should retry
             if attempt < retries:
-                wait_time = (2 ** attempt) * 0.5
-                time.sleep(wait_time)
+                time.sleep(2 ** attempt * 0.5)
                 continue
-
-            # Handle error
             if handle_error:
                 return handle_error(error_msg)
             elif not silent:
@@ -108,14 +80,9 @@ def api_request(
 
         except httpx.ConnectError:
             error_msg = "无法连接到 API 服务器"
-
-            # Check if we should retry
             if attempt < retries:
-                wait_time = (2 ** attempt) * 0.5
-                time.sleep(wait_time)
+                time.sleep(2 ** attempt * 0.5)
                 continue
-
-            # Handle error
             if handle_error:
                 return handle_error(error_msg)
             elif not silent:
@@ -124,35 +91,22 @@ def api_request(
 
         except Exception as e:
             error_msg = f"连接错误: {str(e)}"
-
-            # Check if we should retry for some errors
             if attempt < retries:
-                wait_time = (2 ** attempt) * 0.5
-                time.sleep(wait_time)
+                time.sleep(2 ** attempt * 0.5)
                 continue
-
-            # Handle error
             if handle_error:
                 return handle_error(error_msg)
             elif not silent:
                 st.error(error_msg)
             return None
 
-    # If we get here, all retries failed
     return None
 
 
 def check_worker_availability(worker_type: str) -> bool:
     """
-    Check if a specific type of worker is available in the new architecture.
-
-    Args:
-        worker_type: Worker type to check (gpu-inference, gpu-embedding, gpu-whisper, cpu)
-
-    Returns:
-        True if worker is available, False otherwise
+    检查专用Worker是否可用
     """
-    # Get detailed health information
     health_info = api_request(
         endpoint="/system/health/detailed",
         method="GET",
@@ -163,7 +117,6 @@ def check_worker_availability(worker_type: str) -> bool:
     if not health_info:
         return False
 
-    # Check workers
     workers = health_info.get("workers", {})
     for worker_id, info in workers.items():
         if worker_type in worker_id and info.get("status") == "healthy":
@@ -174,13 +127,7 @@ def check_worker_availability(worker_type: str) -> bool:
 
 def check_job_chain_status(job_id: str) -> Optional[Dict[str, Any]]:
     """
-    Check the status of a specific job chain.
-
-    Args:
-        job_id: Job chain identifier
-
-    Returns:
-        Job chain status data or None if not found
+    检查作业链状态
     """
     return api_request(
         endpoint=f"/job-chains/{job_id}",
@@ -191,10 +138,7 @@ def check_job_chain_status(job_id: str) -> Optional[Dict[str, Any]]:
 
 def get_queue_status() -> Optional[Dict[str, Any]]:
     """
-    Get the status of all job chain queues.
-
-    Returns:
-        Queue status data or None on error
+    获取队列状态
     """
     return api_request(
         endpoint="/query/queue-status",
@@ -205,10 +149,7 @@ def get_queue_status() -> Optional[Dict[str, Any]]:
 
 def get_system_overview() -> Optional[Dict[str, Any]]:
     """
-    Get system overview including job chains and workers.
-
-    Returns:
-        System overview data or None on error
+    获取系统概览
     """
     return api_request(
         endpoint="/job-chains",
@@ -219,14 +160,7 @@ def get_system_overview() -> Optional[Dict[str, Any]]:
 
 def submit_job_chain(job_type: str, data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """
-    Submit a new job to the job chain system.
-
-    Args:
-        job_type: Type of job (video, pdf, text, query)
-        data: Job data
-
-    Returns:
-        Job submission response or None on error
+    提交新的作业链
     """
     endpoint_mapping = {
         "video": "/ingest/video",
@@ -249,61 +183,18 @@ def submit_job_chain(job_type: str, data: Dict[str, Any]) -> Optional[Dict[str, 
 
 def cancel_job_chain(job_id: str) -> bool:
     """
-    Cancel a running job chain.
-
-    Args:
-        job_id: Job chain identifier
-
-    Returns:
-        True if cancellation was successful
+    取消运行中的作业链
     """
     response = api_request(
         endpoint=f"/ingest/jobs/{job_id}",
         method="DELETE"
     )
-
-    return response is not None
-
-
-def get_worker_performance_metrics() -> Optional[Dict[str, Any]]:
-    """
-    Get performance metrics for dedicated workers.
-
-    Returns:
-        Performance metrics or None on error
-    """
-    return api_request(
-        endpoint="/system/worker-metrics",
-        method="GET",
-        silent=True
-    )
-
-
-def restart_worker(worker_type: str) -> bool:
-    """
-    Restart a specific type of worker.
-
-    Args:
-        worker_type: Type of worker to restart
-
-    Returns:
-        True if restart signal was sent successfully
-    """
-    response = api_request(
-        endpoint="/system/restart-workers",
-        method="POST",
-        data={"worker_type": worker_type}
-    )
-
     return response is not None
 
 
 def get_gpu_allocation_status() -> Optional[Dict[str, Any]]:
     """
-    Get GPU memory allocation status for dedicated workers.
-
-    Returns:
-        GPU allocation data or None on error
+    获取GPU分配状态
     """
     health_data = api_request(
         endpoint="/system/health/detailed",
@@ -317,7 +208,7 @@ def get_gpu_allocation_status() -> Optional[Dict[str, Any]]:
     gpu_health = health_data.get("gpu_health", {})
     workers = health_data.get("workers", {})
 
-    # Combine GPU and worker information
+    # 专用Worker分配映射
     allocation_data = {
         "gpu_health": gpu_health,
         "workers": workers,
@@ -334,15 +225,7 @@ def get_gpu_allocation_status() -> Optional[Dict[str, Any]]:
 
 def poll_job_completion(job_id: str, max_polls: int = 120, poll_interval: float = 1.0) -> Optional[Dict[str, Any]]:
     """
-    Poll for job completion with built-in timeout.
-
-    Args:
-        job_id: Job identifier to poll
-        max_polls: Maximum number of polls before timeout
-        poll_interval: Time between polls in seconds
-
-    Returns:
-        Final job status or None on timeout
+    轮询作业完成状态
     """
     for i in range(max_polls):
         job_status = api_request(
@@ -361,16 +244,12 @@ def poll_job_completion(job_id: str, max_polls: int = 120, poll_interval: float 
 
         time.sleep(poll_interval)
 
-    # Timeout reached
     return None
 
 
 def check_architecture_health() -> Dict[str, Any]:
     """
-    Comprehensive health check for the new job chain architecture.
-
-    Returns:
-        Health check results
+    自触发作业链架构健康检查
     """
     health_results = {
         "overall_healthy": True,
@@ -380,7 +259,7 @@ def check_architecture_health() -> Dict[str, Any]:
         "gpu_status": {}
     }
 
-    # Check workers
+    # 检查系统健康
     health_data = api_request(
         endpoint="/system/health/detailed",
         method="GET",
@@ -390,7 +269,7 @@ def check_architecture_health() -> Dict[str, Any]:
     if health_data:
         workers = health_data.get("workers", {})
 
-        # Required worker types for the new architecture
+        # 检查专用Worker类型
         required_workers = ["gpu-whisper", "gpu-embedding", "gpu-inference", "cpu"]
 
         for worker_type in required_workers:
@@ -405,9 +284,9 @@ def check_architecture_health() -> Dict[str, Any]:
 
             if len(healthy_workers) == 0:
                 health_results["overall_healthy"] = False
-                health_results["issues"].append(f"没有健康的{worker_type}工作器")
+                health_results["issues"].append(f"没有健康的{worker_type}Worker")
 
-        # Check GPU health
+        # 检查GPU状态
         gpu_health = health_data.get("gpu_health", {})
         health_results["gpu_status"] = gpu_health
 
@@ -419,11 +298,23 @@ def check_architecture_health() -> Dict[str, Any]:
         health_results["overall_healthy"] = False
         health_results["issues"].append("无法获取系统健康数据")
 
-    # Check queue status
+    # 检查队列状态
     queue_data = get_queue_status()
     if queue_data:
-        health_results["queue_status"] = queue_data.get("queue_status", {})
+        health_results["queue_status"] = queue_data
     else:
         health_results["issues"].append("无法获取队列状态")
 
     return health_results
+
+
+def restart_worker(worker_type: str) -> bool:
+    """
+    重启指定类型的Worker
+    """
+    response = api_request(
+        endpoint="/system/restart-workers",
+        method="POST",
+        data={"worker_type": worker_type}
+    )
+    return response is not None

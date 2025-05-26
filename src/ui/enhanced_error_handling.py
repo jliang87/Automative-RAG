@@ -1,212 +1,298 @@
 """
-Enhanced worker status component for dedicated GPU workers architecture.
-This replaces src/ui/enhanced_worker_status.py with better support for the new worker types.
+简化的错误处理组件，专为自触发作业链架构优化
 """
 
 import streamlit as st
 import time
-import pandas as pd
 from typing import Dict, List, Optional, Any
 
-# Import unified API client
+# 导入统一的 API 客户端
 from src.ui.api_client import api_request
 
-def enhanced_worker_status():
+def robust_api_status_indicator(show_detail: bool = False) -> bool:
     """
-    Display enhanced worker status and health information in the sidebar,
-    optimized for the new dedicated GPU worker architecture.
+    强化的API状态指示器，专为自触发架构优化
+
+    Args:
+        show_detail: 是否显示详细信息
+
+    Returns:
+        True if API is available and workers are healthy
     """
     try:
-        # Get detailed health information from API
-        response = api_request(
-            endpoint="/system/health/detailed",
+        # 基本API连接检查
+        health_response = api_request(
+            endpoint="/health",
             method="GET",
-            timeout=3.0
+            timeout=3.0,
+            silent=True
         )
 
-        if not response:
-            st.sidebar.warning("⚠️ 无法获取系统健康信息")
-            return
+        if not health_response:
+            if show_detail:
+                st.error("❌ API服务不可用")
+            return False
 
-        # Display overall system status
-        status = response.get("status", "unknown")
-        if status == "healthy":
-            st.sidebar.success("✅ 系统正常")
-        else:
-            st.sidebar.warning("⚠️ 系统状态: " + status)
+        # 检查自触发架构状态
+        detailed_health = api_request(
+            endpoint="/system/health/detailed",
+            method="GET",
+            timeout=5.0,
+            silent=True
+        )
 
-        # Display active workers with dedicated GPU worker focus
-        workers = response.get("workers", {})
-        if workers:
-            with st.sidebar.expander("专用GPU Worker状态", expanded=True):
-                # Group workers by type for the new architecture
-                worker_types = {
-                    "gpu-whisper": {"name": "语音转录", "color": "blue", "workers": []},
-                    "gpu-embedding": {"name": "向量嵌入", "color": "green", "workers": []},
-                    "gpu-inference": {"name": "LLM推理", "color": "purple", "workers": []},
-                    "cpu": {"name": "CPU处理", "color": "orange", "workers": []},
-                    "api": {"name": "API服务", "color": "gray", "workers": []}
+        if not detailed_health:
+            if show_detail:
+                st.warning("⚠️ 无法获取系统详细状态")
+            return True  # API可用，但无详细信息
+
+        # 检查专用Worker状态
+        workers = detailed_health.get("workers", {})
+        required_workers = ["gpu-whisper", "gpu-embedding", "gpu-inference", "cpu"]
+
+        healthy_workers = {}
+        for worker_type in required_workers:
+            matching_workers = [w for w in workers.keys() if worker_type in w]
+            healthy_count = sum(1 for w in matching_workers if workers[w].get("status") == "healthy")
+            healthy_workers[worker_type] = {
+                "healthy": healthy_count,
+                "total": len(matching_workers),
+                "available": healthy_count > 0
+            }
+
+        # 显示详细状态
+        if show_detail:
+            st.success("✅ API服务连接正常")
+
+            # 显示专用Worker状态
+            with st.expander("专用Worker状态", expanded=False):
+                worker_names = {
+                    "gpu-whisper": "🎵 语音转录Worker",
+                    "gpu-embedding": "🔢 向量嵌入Worker",
+                    "gpu-inference": "🧠 LLM推理Worker",
+                    "cpu": "💻 CPU处理Worker"
                 }
 
-                # Categorize workers
-                for worker_id, info in workers.items():
-                    worker_type = info.get("type", "unknown")
-                    if worker_type in worker_types:
-                        worker_types[worker_type]["workers"].append((worker_id, info))
-
-                # Display each worker type with GPU memory allocation info
-                for worker_type, type_info in worker_types.items():
-                    workers_of_type = type_info["workers"]
-                    if not workers_of_type:
-                        continue
-
-                    healthy_count = sum(1 for _, info in workers_of_type if info.get("status") == "healthy")
-                    total_count = len(workers_of_type)
-
-                    display_name = type_info["name"]
-
-                    # Show status with memory allocation info for GPU workers
-                    if worker_type.startswith("gpu-"):
-                        memory_allocation = {
-                            "gpu-whisper": "2GB",
-                            "gpu-embedding": "3GB",
-                            "gpu-inference": "6GB"
-                        }.get(worker_type, "未知")
-
-                        if healthy_count == total_count:
-                            st.success(f"✅ {display_name} ({memory_allocation}): {healthy_count}/{total_count} 正常")
-                        elif healthy_count > 0:
-                            st.warning(f"⚠️ {display_name} ({memory_allocation}): {healthy_count}/{total_count} 正常")
-                        else:
-                            st.error(f"❌ {display_name} ({memory_allocation}): 0/{total_count} 正常")
+                for worker_type, status in healthy_workers.items():
+                    display_name = worker_names.get(worker_type, worker_type)
+                    if status["available"]:
+                        st.success(f"✅ {display_name} ({status['healthy']}/{status['total']})")
                     else:
-                        # Non-GPU workers
-                        if healthy_count == total_count:
-                            st.success(f"✅ {display_name}: {healthy_count}/{total_count} 正常")
-                        elif healthy_count > 0:
-                            st.warning(f"⚠️ {display_name}: {healthy_count}/{total_count} 正常")
-                        else:
-                            st.error(f"❌ {display_name}: 0/{total_count} 正常")
+                        st.error(f"❌ {display_name} (不可用)")
 
-                    # Add restart button for problematic workers
-                    if healthy_count < total_count and worker_type != "api":
-                        if st.button(f"重启{display_name}Workers", key=f"restart_{worker_type}"):
-                            restart_response = api_request(
-                                endpoint="/system/restart-workers",
-                                method="POST",
-                                data={"worker_type": worker_type}
-                            )
-                            if restart_response:
-                                st.success(f"已发送重启信号到{display_name}workers")
+            # 显示作业链状态
+            job_chains = api_request(
+                endpoint="/job-chains",
+                method="GET",
+                timeout=3.0,
+                silent=True
+            )
 
-        # Display job chain queue information
-        queue_stats = response.get("job_chains", {})
-        if queue_stats:
-            with st.sidebar.expander("任务队列状态", expanded=False):
-                # Get queue status from the job chain system
-                queue_response = api_request(
-                    endpoint="/query/queue-status",
-                    method="GET",
-                    timeout=2.0
-                )
+            if job_chains:
+                active_chains = len(job_chains.get("active_chains", []))
+                queue_status = job_chains.get("queue_status", {})
+                busy_queues = sum(1 for q in queue_status.values() if q.get("status") == "busy")
 
-                if queue_response:
-                    queue_data = []
-                    queue_mapping = {
-                        "transcription_tasks": "语音转录",
-                        "embedding_tasks": "向量嵌入",
-                        "inference_tasks": "LLM推理",
-                        "cpu_tasks": "CPU处理"
-                    }
+                st.info(f"🔄 活跃作业链: {active_chains} | 忙碌队列: {busy_queues}")
 
-                    for queue, display_name in queue_mapping.items():
-                        # Check if queue is busy
-                        queue_info = queue_response.get("queue_status", {}).get(queue, {})
-                        status = queue_info.get("status", "free")
-                        waiting_tasks = queue_info.get("waiting_tasks", 0)
-
-                        if status == "busy":
-                            current_job = queue_info.get("current_job", "unknown")
-                            st.info(f"🔄 {display_name}: 处理中 (作业: {current_job[:8]}...)")
-                        elif waiting_tasks > 0:
-                            st.warning(f"⏳ {display_name}: {waiting_tasks}个任务等待")
-                        else:
-                            st.success(f"✅ {display_name}: 空闲")
-
-        # Display GPU health if available
-        gpu_health = response.get("gpu_health", {})
-        if gpu_health:
-            with st.sidebar.expander("GPU状态", expanded=False):
-                for gpu_id, gpu_info in gpu_health.items():
-                    device_name = gpu_info.get("device_name", gpu_id)
-                    is_healthy = gpu_info.get("is_healthy", False)
-
-                    if is_healthy:
-                        st.success(f"✅ {device_name}")
-                    else:
-                        st.error(f"❌ {device_name}: {gpu_info.get('health_message', '不健康')}")
-
-                    # Memory usage with dedicated worker allocation context
-                    free_pct = gpu_info.get("free_percentage", 0)
-                    allocated_gb = gpu_info.get("allocated_memory_gb", 0)
-                    total_gb = gpu_info.get("total_memory_gb", 0)
-
-                    # Show memory bar
-                    st.progress(min(100 - free_pct, 100) / 100,
-                              text=f"显存: {100 - free_pct:.1f}% ({allocated_gb:.1f}GB/{total_gb:.1f}GB)")
-
-                    # Show which workers are using this GPU
-                    st.caption("专用Worker分配:")
-                    st.caption("• Whisper: 2GB • 嵌入: 3GB • 推理: 6GB")
-
-        # Simple refresh button
-        if st.sidebar.button("刷新状态", key="refresh_worker_status"):
-            st.rerun()
+        # 返回整体健康状态
+        all_workers_available = all(status["available"] for status in healthy_workers.values())
+        return all_workers_available
 
     except Exception as e:
-        st.sidebar.warning(f"⚠️ 检查worker状态时出错: {str(e)}")
-        if st.sidebar.button("重试", key="try_worker_status_again"):
-            st.rerun()
+        if show_detail:
+            st.error(f"❌ 系统状态检查失败: {str(e)}")
+        return False
+
+
+def handle_worker_dependency(task_type: str) -> bool:
+    """
+    检查特定任务类型所需的Worker依赖
+
+    Args:
+        task_type: 任务类型 ("video", "pdf", "text", "query")
+
+    Returns:
+        True if required workers are available
+    """
+    # 任务类型到Worker的映射
+    task_worker_mapping = {
+        "video": ["cpu", "gpu-whisper", "gpu-embedding"],
+        "pdf": ["cpu", "gpu-embedding"],
+        "text": ["cpu", "gpu-embedding"],
+        "query": ["gpu-embedding", "gpu-inference"]
+    }
+
+    required_workers = task_worker_mapping.get(task_type, [])
+
+    if not required_workers:
+        st.warning(f"⚠️ 未知任务类型: {task_type}")
+        return False
+
+    # 检查Worker可用性
+    health_data = api_request(
+        endpoint="/system/health/detailed",
+        method="GET",
+        timeout=5.0,
+        silent=True
+    )
+
+    if not health_data:
+        st.error("❌ 无法检查Worker状态")
+        return False
+
+    workers = health_data.get("workers", {})
+
+    # 检查每个必需的Worker类型
+    missing_workers = []
+    for worker_type in required_workers:
+        matching_workers = [w for w in workers.keys() if worker_type in w]
+        healthy_count = sum(1 for w in matching_workers if workers[w].get("status") == "healthy")
+
+        if healthy_count == 0:
+            worker_names = {
+                "cpu": "CPU处理Worker",
+                "gpu-whisper": "语音转录Worker",
+                "gpu-embedding": "向量嵌入Worker",
+                "gpu-inference": "LLM推理Worker"
+            }
+            missing_workers.append(worker_names.get(worker_type, worker_type))
+
+    if missing_workers:
+        st.error(f"❌ 缺少必需的Worker: {', '.join(missing_workers)}")
+
+        # 提供启动建议
+        worker_commands = {
+            "CPU处理Worker": "docker-compose up -d worker-cpu",
+            "语音转录Worker": "docker-compose up -d worker-gpu-whisper",
+            "向量嵌入Worker": "docker-compose up -d worker-gpu-embedding",
+            "LLM推理Worker": "docker-compose up -d worker-gpu-inference"
+        }
+
+        st.info("请启动以下Worker服务:")
+        for worker in missing_workers:
+            if worker in worker_commands:
+                st.code(worker_commands[worker])
+
+        return False
+
+    return True
 
 
 def display_worker_allocation_chart():
     """
-    Display a visual chart showing GPU memory allocation across dedicated workers.
+    显示专用Worker分配图表 (简化版)
     """
-    st.subheader("GPU内存分配策略")
+    st.subheader("专用Worker GPU分配")
 
-    # Create allocation data
+    # 获取GPU状态
+    health_data = api_request(
+        endpoint="/system/health/detailed",
+        method="GET",
+        silent=True
+    )
+
+    if not health_data:
+        st.warning("无法获取GPU分配数据")
+        return
+
+    gpu_health = health_data.get("gpu_health", {})
+
+    # 显示分配策略
     allocation_data = [
-        {"Worker类型": "Whisper转录", "分配内存(GB)": 2, "用途": "faster-whisper模型", "队列": "transcription_tasks"},
-        {"Worker类型": "向量嵌入", "分配内存(GB)": 3, "用途": "BGE-M3嵌入模型", "队列": "embedding_tasks"},
-        {"Worker类型": "LLM推理", "分配内存(GB)": 6, "用途": "DeepSeek-R1 + ColBERT", "队列": "inference_tasks"},
-        {"Worker类型": "预留空间", "分配内存(GB)": 5, "用途": "系统开销和缓冲", "队列": "N/A"}
+        {"Worker类型": "🎵 Whisper转录", "GPU分配": "2GB", "队列": "transcription_tasks"},
+        {"Worker类型": "🔢 向量嵌入", "GPU分配": "3GB", "队列": "embedding_tasks"},
+        {"Worker类型": "🧠 LLM推理", "GPU分配": "6GB", "队列": "inference_tasks"},
+        {"Worker类型": "💻 CPU处理", "GPU分配": "0GB", "队列": "cpu_tasks"}
     ]
 
+    import pandas as pd
     df = pd.DataFrame(allocation_data)
-
-    # Display as a table
     st.dataframe(df, hide_index=True, use_container_width=True)
 
-    # Show total allocation
-    total_allocated = sum(row["分配内存(GB)"] for row in allocation_data if row["Worker类型"] != "预留空间")
-    st.metric("总GPU内存分配", f"{total_allocated}GB / 16GB", f"{(total_allocated/16)*100:.1f}%")
+    # 显示实际GPU使用情况
+    if gpu_health:
+        for gpu_id, gpu_info in gpu_health.items():
+            device_name = gpu_info.get("device_name", gpu_id)
+            total_memory = gpu_info.get("total_memory_gb", 0)
+            allocated_memory = gpu_info.get("allocated_memory_gb", 0)
 
-    # Benefits explanation
-    with st.expander("专用Worker架构优势", expanded=False):
-        st.markdown("""
-        **消除模型颠簸(Model Thrashing):**
-        - 每个GPU worker只加载和使用特定模型
-        - 避免频繁的模型加载/卸载操作
-        - 显著减少GPU内存碎片
+            if total_memory > 0:
+                usage_pct = (allocated_memory / total_memory) * 100
 
-        **并行任务处理:**
-        - 同时进行视频转录、文档嵌入和查询推理
-        - 每个任务类型有专门的处理队列
-        - 提高整体系统吞吐量
+                st.markdown(f"**{device_name}**")
+                st.progress(
+                    usage_pct / 100,
+                    text=f"使用率: {usage_pct:.1f}% ({allocated_memory:.1f}GB/{total_memory:.1f}GB)"
+                )
 
-        **资源优化:**
-        - 精确的内存分配避免OOM错误
-        - 更好的GPU利用率
-        - 降低系统延迟
-        """)
+                # 显示分配详情
+                st.caption("• Whisper: 2GB | 嵌入: 3GB | 推理: 6GB | 预留: 5GB")
+
+
+def check_system_readiness(task_type: Optional[str] = None) -> Dict[str, Any]:
+    """
+    检查系统就绪状态
+
+    Args:
+        task_type: 可选的特定任务类型检查
+
+    Returns:
+        系统就绪状态字典
+    """
+    readiness = {
+        "api_available": False,
+        "workers_healthy": False,
+        "gpu_available": False,
+        "task_ready": False,
+        "issues": []
+    }
+
+    try:
+        # 检查API
+        health_response = api_request("/health", "GET", timeout=3.0, silent=True)
+        readiness["api_available"] = bool(health_response)
+
+        if not readiness["api_available"]:
+            readiness["issues"].append("API服务不可用")
+            return readiness
+
+        # 检查详细状态
+        detailed_health = api_request("/system/health/detailed", "GET", timeout=5.0, silent=True)
+
+        if detailed_health:
+            # 检查Worker
+            workers = detailed_health.get("workers", {})
+            required_workers = ["gpu-whisper", "gpu-embedding", "gpu-inference", "cpu"]
+
+            healthy_workers = []
+            for worker_type in required_workers:
+                matching = [w for w in workers.keys() if worker_type in w]
+                healthy = sum(1 for w in matching if workers[w].get("status") == "healthy")
+                if healthy > 0:
+                    healthy_workers.append(worker_type)
+
+            readiness["workers_healthy"] = len(healthy_workers) >= 3  # 至少3种Worker
+
+            if len(healthy_workers) < 4:
+                missing = set(required_workers) - set(healthy_workers)
+                readiness["issues"].extend([f"缺少{w}Worker" for w in missing])
+
+            # 检查GPU
+            gpu_health = detailed_health.get("gpu_health", {})
+            healthy_gpus = sum(1 for gpu in gpu_health.values() if gpu.get("is_healthy", False))
+            readiness["gpu_available"] = healthy_gpus > 0
+
+            if healthy_gpus == 0:
+                readiness["issues"].append("无可用GPU")
+
+        # 检查特定任务就绪性
+        if task_type:
+            readiness["task_ready"] = handle_worker_dependency(task_type)
+        else:
+            readiness["task_ready"] = readiness["workers_healthy"]
+
+    except Exception as e:
+        readiness["issues"].append(f"系统检查失败: {str(e)}")
+
+    return readiness
