@@ -1,3 +1,5 @@
+# src/api/dependencies.py (SIMPLIFIED - Remove Priority Queue References)
+
 from typing import Dict, Optional
 import logging
 import os
@@ -163,6 +165,5 @@ def api_mode_only_handler(model_name: str):
     if IS_API_MODE:
         raise HTTPException(
             status_code=501,
-            detail=f"{model_name} is not available in API-only mode. Use worker services for processing."
+            detail=f"{model_name} is not available in API-only mode. Use job chain system for processing."
         )
-    # If we're in worker mode, this won't be called as the models will be initialized

@@ -1,24 +1,18 @@
+# src/api/routers/ingest.py (Updated for Job Chain)
+
 import os
 import uuid
 from typing import Dict, List, Optional, Union
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, Query
 from pydantic import HttpUrl, BaseModel
-from typing import Dict, Any
-import torch
 import logging
-import traceback
-import redis
-from src.core.background.job_tracker import JobTracker
-from src.api.dependencies import get_vector_store, get_redis_client, get_job_tracker
-from src.core.worker_status import get_worker_status_for_ui
 
-# Create a logger
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)  # Set to DEBUG level
-
-from src.core.vectorstore import QdrantStore
+from src.core.background.job_chain import job_chain, JobType
+from src.core.background.job_tracker import job_tracker
 from src.models.schema import IngestResponse, ManualIngestRequest, BackgroundJobResponse
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -35,20 +29,13 @@ class BatchVideoIngestRequest(BaseModel):
     metadata: Optional[List[Dict[str, str]]] = None
 
 
-from src.core.background import (
-    process_video_gpu,
-    process_pdf_cpu,
-    process_text,
-    batch_process_videos,
-    job_tracker
-)
 @router.post("/video", response_model=BackgroundJobResponse)
 async def ingest_video(
         video_request: VideoIngestRequest,
 ) -> BackgroundJobResponse:
     """
     Ingest a video from any supported platform with GPU-accelerated Whisper transcription.
-    All processing happens asynchronously in the background.
+    All processing happens asynchronously using the job chain system.
     """
     try:
         url_str = str(video_request.url)
@@ -74,18 +61,25 @@ async def ingest_video(
             }
         )
 
-        # Start the background job
-        process_video_gpu.send(job_id, url_str, video_request.metadata)
+        # Start the job chain - this executes immediately
+        job_chain.start_job_chain(
+            job_id=job_id,
+            job_type=JobType.VIDEO_PROCESSING,
+            initial_data={
+                "url": url_str,
+                "metadata": video_request.metadata
+            }
+        )
 
         # Return the job ID immediately
         return BackgroundJobResponse(
             message=f"Processing {platform} video in the background",
             job_id=job_id,
             job_type="video_processing",
-            status="pending",
+            status="processing",
         )
     except Exception as e:
-        # Return detailed error information
+        logger.error(f"Error starting video ingestion: {str(e)}")
         raise HTTPException(
             status_code=500,
             detail=f"Error ingesting video: {str(e)}",
@@ -97,49 +91,75 @@ async def ingest_batch_videos(
         batch_request: BatchVideoIngestRequest,
 ) -> BackgroundJobResponse:
     """
-    Ingest multiple videos in batch with GPU acceleration.
-    All processing happens asynchronously in the background.
+    Ingest multiple videos in batch.
+    Each video gets its own job chain for parallel processing.
     """
     try:
-        # Convert URLs to strings
         urls = [str(url) for url in batch_request.urls]
+        batch_job_id = str(uuid.uuid4())
 
-        # Generate a unique job ID
-        job_id = str(uuid.uuid4())
-
-        # Create a job record
+        # Create a batch job record
         job_tracker.create_job(
-            job_id=job_id,
+            job_id=batch_job_id,
             job_type="batch_video_processing",
             metadata={
                 "urls": urls,
+                "video_count": len(urls),
                 "custom_metadata": batch_request.metadata
             }
         )
 
-        # Call the batch processing function directly
-        # Import the regular function (not an actor)
-        from src.core.background import batch_process_videos
+        # Start individual job chains for each video
+        individual_jobs = []
+        for i, url in enumerate(urls):
+            video_job_id = f"{batch_job_id}_video_{i}"
+            metadata = batch_request.metadata[i] if batch_request.metadata and i < len(batch_request.metadata) else None
 
-        # Call it directly - this will internally queue each video to the GPU worker
-        batch_process_videos(job_id, urls, batch_request.metadata)
+            # Create individual job
+            job_tracker.create_job(
+                job_id=video_job_id,
+                job_type="video_processing",
+                metadata={
+                    "url": url,
+                    "batch_job_id": batch_job_id,
+                    "video_index": i,
+                    "custom_metadata": metadata
+                }
+            )
 
-        # Return the job ID immediately
+            # Start job chain
+            job_chain.start_job_chain(
+                job_id=video_job_id,
+                job_type=JobType.VIDEO_PROCESSING,
+                initial_data={
+                    "url": url,
+                    "metadata": metadata
+                }
+            )
+
+            individual_jobs.append(video_job_id)
+
+        # Update batch job with individual job IDs
+        job_tracker.update_job_status(
+            batch_job_id,
+            "processing",
+            result={
+                "message": f"Started processing {len(urls)} videos",
+                "individual_jobs": individual_jobs
+            }
+        )
+
         return BackgroundJobResponse(
             message=f"Processing {len(urls)} videos in the background",
-            job_id=job_id,
+            job_id=batch_job_id,
             job_type="batch_video_processing",
             status="processing",
         )
     except Exception as e:
-        # Log the full traceback
-        error_detail = f"Error in batch processing: {str(e)}\n{traceback.format_exc()}"
-        logger.error(error_detail)
-
-        # Return detailed error information
+        logger.error(f"Error in batch video processing: {str(e)}")
         raise HTTPException(
             status_code=500,
-            detail=error_detail,
+            detail=f"Error in batch processing: {str(e)}",
         )
 
 
@@ -152,7 +172,7 @@ async def ingest_pdf(
 ) -> BackgroundJobResponse:
     """
     Ingest a PDF file with GPU-accelerated OCR and table extraction.
-    All processing happens asynchronously in the background.
+    All processing happens asynchronously using the job chain system.
     """
     try:
         # Parse metadata
@@ -186,25 +206,27 @@ async def ingest_pdf(
             }
         )
 
-        # Start the background job
-        process_pdf_cpu().send(job_id, file_path, custom_metadata)
+        # Start the job chain
+        job_chain.start_job_chain(
+            job_id=job_id,
+            job_type=JobType.PDF_PROCESSING,
+            initial_data={
+                "file_path": file_path,
+                "metadata": custom_metadata
+            }
+        )
 
-        # Return the job ID immediately
         return BackgroundJobResponse(
             message=f"Processing PDF in the background: {file.filename}",
             job_id=job_id,
             job_type="pdf_processing",
-            status="pending",
+            status="processing",
         )
     except Exception as e:
-        # Log the full traceback
-        error_detail = f"Error ingesting PDF: {str(e)}\n{traceback.format_exc()}"
-        logger.error(error_detail)
-
-        # Return detailed error information
+        logger.error(f"Error starting PDF processing: {str(e)}")
         raise HTTPException(
             status_code=500,
-            detail=error_detail,
+            detail=f"Error ingesting PDF: {str(e)}",
         )
 
 
@@ -212,7 +234,7 @@ async def ingest_pdf(
 async def ingest_text(manual_request: ManualIngestRequest) -> BackgroundJobResponse:
     """
     Ingest manually entered text.
-    All processing happens asynchronously in the background.
+    All processing happens asynchronously using the job chain system.
     """
     try:
         # Generate a unique job ID
@@ -221,72 +243,80 @@ async def ingest_text(manual_request: ManualIngestRequest) -> BackgroundJobRespo
         # Create a job record
         job_tracker.create_job(
             job_id=job_id,
-            job_type="manual_text",
+            job_type="text_processing",
             metadata={
                 "title": manual_request.metadata.title if manual_request.metadata.title else "Manual Text Input",
                 "content_length": len(manual_request.content)
             }
         )
 
-        # Start the background job
-        from src.core.background import process_text
-        process_text.send(job_id, manual_request.content, manual_request.metadata.dict())
+        # Start the job chain
+        job_chain.start_job_chain(
+            job_id=job_id,
+            job_type=JobType.TEXT_PROCESSING,
+            initial_data={
+                "text": manual_request.content,
+                "metadata": manual_request.metadata.dict()
+            }
+        )
 
-        # Return the job ID immediately
         return BackgroundJobResponse(
             message="Processing text input in the background",
             job_id=job_id,
-            job_type="manual_text",
-            status="pending",
+            job_type="text_processing",
+            status="processing",
         )
     except Exception as e:
-        # Log the full traceback
-        error_detail = f"Error ingesting text: {str(e)}\n{traceback.format_exc()}"
-        logger.error(error_detail)
-
-        # Return detailed error information
+        logger.error(f"Error starting text processing: {str(e)}")
         raise HTTPException(
             status_code=500,
-            detail=error_detail,
+            detail=f"Error ingesting text: {str(e)}",
         )
 
 
-@router.get("/jobs/{job_id}", response_model=Dict[str, Any])
-async def get_job_status(job_id: str) -> Dict[str, Any]:
+@router.get("/jobs/{job_id}", response_model=Dict[str, any])
+async def get_job_status(job_id: str) -> Dict[str, any]:
     """
-    Get the status of a background job.
-
-    Args:
-        job_id: ID of the job to check
-
-    Returns:
-        Job information including status, result, and error if any
+    Get the status of a background job, including job chain information.
     """
+    # Get basic job data
     job_data = job_tracker.get_job(job_id)
-
     if not job_data:
         raise HTTPException(
             status_code=404,
             detail=f"Job with ID {job_id} not found"
         )
 
+    # Get job chain status if available
+    chain_status = job_chain.get_job_chain_status(job_id)
+    if chain_status:
+        job_data["job_chain"] = chain_status
+
     return job_data
 
 
-@router.get("/jobs", response_model=List[Dict[str, Any]])
+@router.get("/jobs/{job_id}/chain", response_model=Dict[str, any])
+async def get_job_chain_status(job_id: str) -> Dict[str, any]:
+    """
+    Get detailed job chain status for a specific job.
+    """
+    chain_status = job_chain.get_job_chain_status(job_id)
+    if not chain_status:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Job chain for ID {job_id} not found"
+        )
+
+    return chain_status
+
+
+@router.get("/jobs", response_model=List[Dict[str, any]])
 async def get_all_jobs(
         limit: int = Query(50, ge=1, le=100),
         job_type: Optional[str] = Query(None)
-) -> List[Dict[str, Any]]:
+) -> List[Dict[str, any]]:
     """
     Get all background jobs, optionally filtered by type.
-
-    Args:
-        limit: Maximum number of jobs to return (default: 50)
-        job_type: Filter jobs by type (e.g., 'video_processing', 'pdf_processing')
-
-    Returns:
-        List of job information
     """
     return job_tracker.get_all_jobs(limit=limit, job_type=job_type)
 
@@ -295,12 +325,6 @@ async def get_all_jobs(
 async def delete_job(job_id: str) -> Dict[str, str]:
     """
     Delete a job by ID.
-
-    Args:
-        job_id: ID of the job to delete
-
-    Returns:
-        Success message
     """
     deleted = job_tracker.delete_job(job_id)
 
@@ -313,93 +337,44 @@ async def delete_job(job_id: str) -> Dict[str, str]:
     return {"message": f"Successfully deleted job: {job_id}"}
 
 
-@router.delete("/documents/{doc_id}", response_model=BackgroundJobResponse)
-async def delete_document(
-        doc_id: str,
-        job_tracker: JobTracker = Depends(get_job_tracker),
-) -> BackgroundJobResponse:
+@router.get("/status", response_model=Dict[str, any])
+async def get_ingest_status() -> Dict[str, any]:
     """
-    Delete a document by ID as a background task.
+    Get ingestion system status including job chain queue information.
     """
     try:
-        # Generate a unique job ID
-        job_id = str(uuid.uuid4())
+        # Get job stats
+        job_stats = job_tracker.count_jobs_by_status()
 
-        # Create a job record
-        job_tracker.create_job(
-            job_id=job_id,
-            job_type="document_deletion",
-            metadata={
-                "document_id": doc_id
-            }
-        )
+        # Get queue status from job chain
+        queue_status = job_chain.get_queue_status()
 
-        # Start the background job - use the embedding_tasks queue for GPU access
-        from src.core.background import delete_document_gpu
-        delete_document_gpu.send(job_id, doc_id)
-
-        # Return the job ID immediately
-        return BackgroundJobResponse(
-            message=f"Document deletion scheduled in the background",
-            job_id=job_id,
-            job_type="document_deletion",
-            status="pending",
-        )
+        return {
+            "status": "healthy",
+            "mode": "job_chain",
+            "job_stats": job_stats,
+            "queue_status": queue_status,
+            "total_jobs": job_stats.get("total", 0)
+        }
     except Exception as e:
-        # Log the full traceback
-        error_detail = f"Error scheduling document deletion: {str(e)}\n{traceback.format_exc()}"
-        logger.error(error_detail)
-
-        # Return detailed error information
+        logger.error(f"Error getting ingest status: {str(e)}")
         raise HTTPException(
             status_code=500,
-            detail=error_detail,
+            detail=f"Error getting status: {str(e)}",
         )
-
-
-@router.get("/status", response_model=Dict[str, Any])
-async def get_ingest_status(
-        vector_store: QdrantStore = Depends(get_vector_store),
-        redis: redis.Redis = Depends(get_redis_client),
-        job_tracker: JobTracker = Depends(get_job_tracker),
-) -> Dict[str, Any]:
-    # Get basic collection info
-    stats = vector_store.get_stats()
-
-    # Get job stats
-    job_stats = {
-        "pending_jobs": len([j for j in job_tracker.get_all_jobs(limit=1000) if j.get("status") == "pending"]),
-        "processing_jobs": len([j for j in job_tracker.get_all_jobs(limit=1000) if j.get("status") == "processing"]),
-        "completed_jobs": len([j for j in job_tracker.get_all_jobs(limit=1000) if j.get("status") == "completed"]),
-        "failed_jobs": len([j for j in job_tracker.get_all_jobs(limit=1000) if j.get("status") == "failed" or j.get("status") == "timeout"])
-    }
-
-    # Get worker status using the centralized function
-    worker_status = get_worker_status_for_ui(redis)
-    active_workers = worker_status.get("active_workers", {})
-
-    return {
-        "status": "healthy",
-        "mode": "api",
-        "collection": stats.get("name"),
-        "document_count": stats.get("vectors_count", 0),
-        "collection_size": stats.get("disk_data_size", 0),
-        "job_stats": job_stats,
-        "active_workers": active_workers
-    }
 
 
 @router.post("/reset", response_model=Dict[str, str])
-async def reset_vector_store(
-        vector_store: QdrantStore = Depends(get_vector_store),
-) -> Dict[str, str]:
+async def reset_vector_store() -> Dict[str, str]:
     """
     Reset the vector store (dangerous operation).
-
-    Returns:
-        Success message
     """
     try:
+        # Import here to avoid circular imports
+        from src.core.background.models import get_vector_store
+
+        vector_store = get_vector_store()
+
         # Delete the collection
         vector_store.client.delete_collection(vector_store.collection_name)
 
@@ -408,6 +383,7 @@ async def reset_vector_store(
 
         return {"message": f"Successfully reset vector store: {vector_store.collection_name}"}
     except Exception as e:
+        logger.error(f"Error resetting vector store: {str(e)}")
         raise HTTPException(
             status_code=500,
             detail=f"Error resetting vector store: {str(e)}",
