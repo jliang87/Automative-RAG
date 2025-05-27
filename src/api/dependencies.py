@@ -1,4 +1,4 @@
-# src/api/dependencies.py (SIMPLIFIED - Remove Priority Queue References)
+# src/api/dependencies.py - Fixed initialization
 
 from typing import Dict, Optional
 import logging
@@ -55,18 +55,29 @@ def init_vector_store():
         else:
             # Full initialization with embedding model for workers
             from src.core.vectorstore import QdrantStore
-            vector_store = QdrantStore(
-                client=qdrant_client,
-                collection_name=settings.qdrant_collection,
-                embedding_function=settings.embedding_function,
-            )
-            logger.info("✅ Vector Store Initialized with embedding function!")
+            try:
+                vector_store = QdrantStore(
+                    client=qdrant_client,
+                    collection_name=settings.qdrant_collection,
+                    embedding_function=settings.embedding_function,
+                )
+                logger.info("✅ Vector Store Initialized with embedding function!")
+            except Exception as e:
+                logger.warning(f"Failed to initialize with embedding function: {e}")
+                # Fallback to metadata-only mode
+                vector_store = QdrantStore(
+                    client=qdrant_client,
+                    collection_name=settings.qdrant_collection,
+                    embedding_function=None,
+                )
+                logger.info("✅ Vector Store Initialized in fallback metadata-only mode!")
 
 
 def init_redis_client():
     """Initialize Redis client."""
     global redis_client
     if redis_client is None:
+        logger.info("🚀 Initializing Redis client...")
         redis_kwargs = {
             "host": redis_host,
             "port": redis_port,
@@ -78,8 +89,15 @@ def init_redis_client():
         if redis_password:
             redis_kwargs["password"] = redis_password
 
-        redis_client = redis.Redis(**redis_kwargs)
-        logger.info("✅ Redis Client Initialized!")
+        try:
+            redis_client = redis.Redis(**redis_kwargs)
+            # Test the connection
+            redis_client.ping()
+            logger.info("✅ Redis Client Initialized!")
+        except Exception as e:
+            logger.error(f"❌ Failed to initialize Redis client: {e}")
+            # Don't raise exception, let the app start but warn about Redis issues
+            redis_client = None
     return redis_client
 
 
@@ -90,8 +108,11 @@ def init_job_tracker():
         logger.info("🚀 Initializing Job Tracker...")
         # Use the existing Redis client
         client = init_redis_client()
-        job_tracker = JobTracker(redis_client=client)
-        logger.info("✅ Job Tracker Initialized!")
+        if client is not None:
+            job_tracker = JobTracker(redis_client=client)
+            logger.info("✅ Job Tracker Initialized!")
+        else:
+            logger.warning("⚠️ Job Tracker not initialized - Redis unavailable")
     return job_tracker
 
 
@@ -99,7 +120,10 @@ def init_job_tracker():
 def get_redis_client() -> redis.Redis:
     """Get the cached Redis client instance."""
     if redis_client is None:
-        raise HTTPException(status_code=500, detail="Redis client not initialized yet.")
+        # Try to initialize on-demand
+        client = init_redis_client()
+        if client is None:
+            raise HTTPException(status_code=500, detail="Redis client not available")
     return redis_client
 
 
@@ -107,32 +131,33 @@ def get_redis_client() -> redis.Redis:
 def get_job_tracker() -> JobTracker:
     """Get the cached JobTracker instance."""
     if job_tracker is None:
-        raise HTTPException(status_code=500, detail="Job tracker not initialized yet.")
+        # Try to initialize on-demand
+        tracker = init_job_tracker()
+        if tracker is None:
+            raise HTTPException(status_code=500, detail="Job tracker not available")
     return job_tracker
 
 
 def load_all_components():
     """Initialize only necessary components at application startup."""
-    if IS_API_MODE:
-        logger.info("🔄 Initializing API service with minimal components...")
+    logger.info("🔄 Initializing API service components...")
 
-        # Only initialize necessary components for API service
+    try:
+        # Initialize vector store (this handles metadata-only mode automatically)
         init_vector_store()
+
+        # Initialize Redis client
         init_redis_client()
+
+        # Initialize job tracker
         init_job_tracker()
 
-        logger.info("✅ API service initialized with minimal components")
-    else:
-        # For worker services, load required components based on worker type
-        worker_type = os.environ.get("WORKER_TYPE", "unknown")
-        logger.info(f"🔄 Initializing worker service: {worker_type}")
+        logger.info("✅ API service initialization complete")
 
-        # All worker types need these
-        init_vector_store()
-        init_redis_client()
-        init_job_tracker()
-
-        logger.info(f"✅ Base components initialized for worker: {worker_type}")
+    except Exception as e:
+        logger.error(f"❌ Error during API initialization: {str(e)}")
+        # Don't re-raise - let the API start even if some components fail
+        logger.warning("⚠️ API starting with limited functionality")
 
 
 # Authentication dependency
