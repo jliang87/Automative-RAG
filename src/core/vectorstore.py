@@ -69,6 +69,11 @@ class QdrantStore:
         collection_names = [collection.name for collection in collections]
 
         if self.collection_name not in collection_names:
+            # Check if we're in metadata-only mode
+            if self.metadata_only_mode or self.embedding_function is None:
+                logger.info(f"Skipping collection creation in metadata-only mode for '{self.collection_name}'")
+                return
+
             # Get embedding dimension
             # Create a sample embedding to determine dimension
             sample_embedding = self.embedding_function.embed_query("sample text")

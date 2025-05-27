@@ -42,35 +42,15 @@ def init_vector_store():
 
     if vector_store is None:
         logger.info("🚀 Initializing Vector Store...")
+        from src.core.vectorstore import QdrantStore
 
-        # API service only needs metadata-only mode
-        if IS_API_MODE:
-            from src.core.vectorstore import QdrantStore
-            vector_store = QdrantStore(
-                client=qdrant_client,
-                collection_name=settings.qdrant_collection,
-                embedding_function=None,  # No embedding function needed for API
-            )
-            logger.info("✅ Vector Store Initialized (metadata-only mode)!")
-        else:
-            # Full initialization with embedding model for workers
-            from src.core.vectorstore import QdrantStore
-            try:
-                vector_store = QdrantStore(
-                    client=qdrant_client,
-                    collection_name=settings.qdrant_collection,
-                    embedding_function=settings.embedding_function,
-                )
-                logger.info("✅ Vector Store Initialized with embedding function!")
-            except Exception as e:
-                logger.warning(f"Failed to initialize with embedding function: {e}")
-                # Fallback to metadata-only mode
-                vector_store = QdrantStore(
-                    client=qdrant_client,
-                    collection_name=settings.qdrant_collection,
-                    embedding_function=None,
-                )
-                logger.info("✅ Vector Store Initialized in fallback metadata-only mode!")
+        # Always use metadata-only mode for API
+        vector_store = QdrantStore(
+            client=qdrant_client,
+            collection_name=settings.qdrant_collection,
+            embedding_function=None,  # No embedding function needed for API
+        )
+        logger.info("✅ Vector Store Initialized (metadata-only mode)!")
 
 
 def init_redis_client():
@@ -143,14 +123,14 @@ def load_all_components():
     logger.info("🔄 Initializing API service components...")
 
     try:
-        # Initialize vector store (this handles metadata-only mode automatically)
-        init_vector_store()
-
-        # Initialize Redis client
+        # Initialize Redis client FIRST
         init_redis_client()
 
-        # Initialize job tracker
+        # Initialize job tracker (depends on Redis)
         init_job_tracker()
+
+        # Initialize vector store last (can fail without breaking Redis)
+        init_vector_store()
 
         logger.info("✅ API service initialization complete")
 
