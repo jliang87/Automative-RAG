@@ -1,4 +1,4 @@
-# src/api/routers/system.py (Fixed imports after cleanup)
+# src/api/routers/system.py - Updated with improved worker status
 
 import os
 import time
@@ -12,7 +12,7 @@ import redis
 from src.core.background.job_tracker import job_tracker
 from src.core.background.job_chain import job_chain
 from src.api.dependencies import get_redis_client, get_token_header
-from src.core.worker_status import get_worker_heartbeats, get_active_worker_counts, get_worker_summary
+from src.core.worker_status import get_worker_status_for_ui, get_worker_summary, debug_redis_keys
 from src.config.settings import settings
 
 router = APIRouter()
@@ -22,8 +22,7 @@ logger = logging.getLogger(__name__)
 @router.get("/health/detailed")
 async def detailed_health_check():
     """
-    Enhanced health check with clean data structure for UI.
-    Supports both 系统信息.py and 后台任务.py needs.
+    Enhanced health check with improved worker detection.
     """
     redis_client = get_redis_client()
 
@@ -37,8 +36,11 @@ async def detailed_health_check():
             "status": "healthy"
         }
 
-        # Worker health information (clean format for UI)
-        worker_info = get_clean_worker_status(redis_client)
+        # Get improved worker status
+        worker_status_result = get_worker_status_for_ui(redis_client)
+        worker_info = worker_status_result.get("summary", {})
+        workers_detail = worker_status_result.get("workers", {})
+        debug_info = worker_status_result.get("debug_info")
 
         # GPU health (formatted for UI consumption)
         gpu_health = get_clean_gpu_status()
@@ -51,19 +53,27 @@ async def detailed_health_check():
 
         # Determine overall system status
         overall_status = "healthy"
-        if worker_info["healthy_workers"] == 0:
+        if worker_info.get("healthy_workers", 0) == 0:
             overall_status = "down"
-        elif worker_info["healthy_workers"] < worker_info["total_workers"] * 0.8:
+        elif worker_info.get("healthy_workers", 0) < worker_info.get("total_workers", 1) * 0.8:
             overall_status = "degraded"
 
-        return {
+        response = {
             "status": overall_status,
             "system": system_info,
-            "workers": worker_info["workers"],
+            "workers": workers_detail,
+            "worker_summary": worker_info,
             "gpu_health": gpu_health,
             "jobs": job_stats,
             "queue_status": queue_status
         }
+
+        # Include debug info if no workers found
+        if worker_info.get("total_workers", 0) == 0 and debug_info:
+            response["debug_info"] = debug_info
+            logger.warning(f"No workers detected. Debug info: {debug_info}")
+
+        return response
 
     except Exception as e:
         logger.error(f"Error in detailed health check: {str(e)}")
@@ -78,27 +88,37 @@ async def detailed_health_check():
         }
 
 
-def get_clean_worker_status(redis_client: redis.Redis) -> Dict[str, Any]:
-    """Get worker status in clean format for UI using simplified functions"""
+@router.get("/workers")
+async def get_workers_status(redis_client: redis.Redis = Depends(get_redis_client)):
+    """Get improved worker status for UI"""
+    return get_worker_status_for_ui(redis_client)
+
+
+@router.get("/workers/debug")
+async def debug_worker_status(redis_client: redis.Redis = Depends(get_redis_client)):
+    """Debug endpoint to help diagnose worker detection issues"""
     try:
-        # Use the simplified worker status functions
-        worker_heartbeats = get_worker_heartbeats(redis_client)
-        worker_summary = get_worker_summary(redis_client)
+        debug_info = debug_redis_keys(redis_client)
+        worker_status = get_worker_status_for_ui(redis_client)
 
         return {
-            "workers": worker_heartbeats,
-            "total_workers": worker_summary["total_workers"],
-            "healthy_workers": worker_summary["healthy_workers"],
-            "worker_type_counts": worker_summary["worker_type_counts"]
+            "redis_debug": debug_info,
+            "worker_status": worker_status,
+            "redis_info": {
+                "host": os.environ.get("REDIS_HOST", "localhost"),
+                "port": os.environ.get("REDIS_PORT", "6379"),
+                "connected": True
+            }
         }
-
     except Exception as e:
-        logger.error(f"Error getting worker status: {str(e)}")
+        logger.error(f"Error in debug endpoint: {e}")
         return {
-            "workers": {},
-            "total_workers": 0,
-            "healthy_workers": 0,
-            "worker_type_counts": {}
+            "error": str(e),
+            "redis_info": {
+                "host": os.environ.get("REDIS_HOST", "localhost"),
+                "port": os.environ.get("REDIS_PORT", "6379"),
+                "connected": False
+            }
         }
 
 
@@ -135,12 +155,6 @@ def get_clean_queue_status() -> Dict[str, Any]:
     except Exception as e:
         logger.error(f"Error getting queue status: {str(e)}")
         return {}
-
-
-@router.get("/workers")
-async def get_workers_status(redis_client: redis.Redis = Depends(get_redis_client)):
-    """Get simplified worker status for UI"""
-    return get_clean_worker_status(redis_client)
 
 
 @router.get("/queue-stats")

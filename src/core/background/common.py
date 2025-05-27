@@ -1,8 +1,4 @@
-# src/core/background/common.py (Updated for dedicated workers)
-
-"""
-Updated common components for the background processing system with dedicated workers.
-"""
+# src/core/background/common.py - Fixed heartbeat section
 
 import os
 import time
@@ -18,6 +14,7 @@ from dramatiq.middleware.retries import Retries
 from dramatiq.results import Results
 from dramatiq.results.backends import RedisBackend as ResultsRedisBackend
 from datetime import datetime
+import threading
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -69,6 +66,81 @@ redis_broker.add_middleware(Results(backend=results_backend))
 # Set the broker as default
 dramatiq.set_broker(redis_broker)
 
+# Global variables for heartbeat management
+_heartbeat_thread = None
+_heartbeat_stop_event = None
+
+
+def get_redis_client():
+    """Get the Redis client from the broker."""
+    return redis_broker.client
+
+
+def start_worker_heartbeat(worker_id: str):
+    """Start an improved worker heartbeat system."""
+    global _heartbeat_thread, _heartbeat_stop_event
+
+    try:
+        redis_client = get_redis_client()
+
+        # Use the standard dramatiq heartbeat key pattern
+        heartbeat_key = f"dramatiq:__heartbeats__:{worker_id}"
+
+        logger.info(f"Starting heartbeat for {worker_id} with key: {heartbeat_key}")
+
+        # Create stop event
+        _heartbeat_stop_event = threading.Event()
+
+        def update_heartbeat():
+            """Heartbeat update function"""
+            heartbeat_interval = 15  # Update every 15 seconds
+
+            while not _heartbeat_stop_event.is_set():
+                try:
+                    current_time = time.time()
+
+                    # Set heartbeat with expiration
+                    redis_client.set(heartbeat_key, str(current_time), ex=60)
+
+                    logger.debug(f"Updated heartbeat for {worker_id}: {current_time}")
+
+                    # Wait for next update or stop event
+                    if _heartbeat_stop_event.wait(timeout=heartbeat_interval):
+                        break  # Stop event was set
+
+                except Exception as e:
+                    logger.error(f"Failed to update heartbeat for {worker_id}: {e}")
+                    # Wait a bit before retrying
+                    if _heartbeat_stop_event.wait(timeout=5):
+                        break
+
+            logger.info(f"Heartbeat stopped for {worker_id}")
+
+        # Start heartbeat thread
+        _heartbeat_thread = threading.Thread(target=update_heartbeat, daemon=True)
+        _heartbeat_thread.start()
+
+        logger.info(f"Heartbeat thread started for {worker_id}")
+
+        # Test the heartbeat immediately
+        test_heartbeat = redis_client.get(heartbeat_key)
+        logger.info(f"Initial heartbeat test for {worker_id}: {test_heartbeat}")
+
+    except Exception as e:
+        logger.error(f"Failed to set up worker heartbeat for {worker_id}: {e}")
+
+
+def stop_worker_heartbeat():
+    """Stop the worker heartbeat."""
+    global _heartbeat_thread, _heartbeat_stop_event
+
+    if _heartbeat_stop_event:
+        _heartbeat_stop_event.set()
+
+    if _heartbeat_thread and _heartbeat_thread.is_alive():
+        _heartbeat_thread.join(timeout=5)
+
+
 # Simplified worker setup
 from dramatiq.middleware import Middleware
 
@@ -98,38 +170,14 @@ class SimpleWorkerSetup(Middleware):
                     logger.info(
                         f"GPU {i} ({device_name}) after init: Allocated: {allocated:.2f} GB, Reserved: {reserved:.2f} GB")
 
-        # Start simplified heartbeat
+        # Start improved heartbeat
         start_worker_heartbeat(worker_id)
+
+    def after_worker_shutdown(self, broker, worker):
+        """Clean up after worker shutdown."""
+        logger.info("Worker shutting down, stopping heartbeat...")
+        stop_worker_heartbeat()
 
 
 # Add the worker setup middleware
 redis_broker.add_middleware(SimpleWorkerSetup())
-
-
-def get_redis_client():
-    """Get the Redis client from the broker."""
-    return redis_broker.client
-
-
-def start_worker_heartbeat(worker_id: str):
-    """Start a simple worker heartbeat."""
-    try:
-        redis_client = get_redis_client()
-        heartbeat_key = f"dramatiq:__heartbeats__:{worker_id}"
-
-        def update_heartbeat():
-            while True:
-                try:
-                    redis_client.set(heartbeat_key, str(time.time()), ex=60)
-                    time.sleep(15)  # Update every 15 seconds
-                except Exception as e:
-                    logger.error(f"Failed to update heartbeat: {str(e)}")
-                    time.sleep(5)
-
-        # Start heartbeat thread
-        import threading
-        heartbeat_thread = threading.Thread(target=update_heartbeat, daemon=True)
-        heartbeat_thread.start()
-        logger.info(f"Started heartbeat for {worker_id}")
-    except Exception as e:
-        logger.error(f"Failed to set up worker heartbeat: {str(e)}")
