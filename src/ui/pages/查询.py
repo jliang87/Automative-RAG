@@ -1,170 +1,167 @@
 """
-汽车规格查询页面（Streamlit UI）
-支持异步查询，避免前端超时
-已更新为使用增强的错误处理
+Clean query page - src/ui/pages/查询.py
 """
 
 import streamlit as st
 import time
-import os
-import json
-from src.ui.components import header, metadata_filters, display_document, loading_spinner
-from src.ui.system_notifications import display_notifications_sidebar
-from src.ui.enhanced_error_handling import robust_api_status_indicator, handle_worker_dependency
 from src.ui.api_client import api_request
 from src.ui.session_init import initialize_session_state
 
 initialize_session_state()
 
-def process_async_query(query: str, metadata_filter, top_k: int = 5):
-    """处理异步查询并启动轮询"""
-    # 首先检查 worker 依赖（更加健壮的错误处理）
-    if not handle_worker_dependency("query"):
-        return
+st.title("🔍 汽车信息查询")
 
-    # 准备请求数据
-    request_data = {
-        "query": query,
-        "metadata_filter": metadata_filter,
-        "top_k": top_k
-    }
-
-    # 使用加载动画发送 API 请求
-    with st.spinner("正在提交您的查询..."):
+def submit_query(query_text, filters):
+    """Submit query and return job ID"""
+    try:
         result = api_request(
             endpoint="/query",
             method="POST",
-            data=request_data
+            data={
+                "query": query_text,
+                "metadata_filter": filters,
+                "top_k": 5
+            }
+        )
+        return result.get("job_id") if result else None
+    except:
+        return None
+
+def get_query_result(job_id):
+    """Get query results"""
+    try:
+        return api_request(f"/query/results/{job_id}", method="GET")
+    except:
+        return None
+
+# Query input
+query = st.text_area(
+    "请输入您的问题",
+    placeholder="例如：2023年宝马X5的发动机参数是什么？",
+    height=100
+)
+
+# Simple filters
+with st.expander("筛选条件（可选）"):
+    col1, col2 = st.columns(2)
+
+    with col1:
+        manufacturer = st.selectbox(
+            "品牌",
+            ["", "宝马", "奔驰", "奥迪", "丰田", "本田", "大众", "福特", "特斯拉"],
+            key="manufacturer"
         )
 
-    if not result:
-        st.error("提交查询失败，请稍后重试")
-        return
+        year = st.selectbox(
+            "年份",
+            [""] + [str(y) for y in range(2024, 2015, -1)],
+            key="year"
+        )
 
-    # 获取任务ID并开始轮询
-    st.session_state.query_job_id = result.get("job_id")
-    st.session_state.query_status = result.get("status", "pending")
-    st.session_state.polling = True
-    st.session_state.poll_count = 0
+    with col2:
+        category = st.selectbox(
+            "车型",
+            ["", "轿车", "SUV", "跑车", "MPV"],
+            key="category"
+        )
 
-    # 刷新页面开始轮询
-    st.rerun()
+# Build filters
+filters = {}
+if manufacturer:
+    filters["manufacturer"] = manufacturer
+if year:
+    filters["year"] = int(year)
+if category:
+    filters["category"] = category
 
-def poll_for_results():
-    """轮询查询结果"""
-    if not st.session_state.query_job_id or not st.session_state.polling:
-        return
+# Submit button
+if st.button("查询", type="primary", disabled=not query.strip()):
+    if query.strip():
+        with st.spinner("正在查询中..."):
+            job_id = submit_query(query.strip(), filters if filters else None)
 
-    job_id = st.session_state.query_job_id
-
-    # 创建占位容器
-    status_container = st.empty()
-    answer_container = st.empty()
-    docs_container = st.empty()
-
-    # 更新状态
-    st.session_state.poll_count += 1
-    status_container.info(f"查询正在处理中... (已等待 {st.session_state.poll_count} 秒)")
-
-    # 获取查询结果
-    result = api_request(
-        endpoint=f"/query/results/{job_id}",
-        method="GET"
-    )
-
-    if not result:
-        status_container.error("获取查询状态失败")
-        st.session_state.polling = False
-        return
-
-    # 处理结果
-    status = result.get("status", "")
-
-    if status == "completed":
-        # 查询完成
-        status_container.success("✅ 查询完成！")
-        answer_container.markdown(f"### 回答\n{result.get('answer', '')}")
-
-        # 显示文档来源
-        docs_container.subheader("数据来源")
-        documents = result.get("documents", [])
-        if documents:
-            for i, doc in enumerate(documents):
-                display_document(doc, i)
-        else:
-            docs_container.info("没有找到相关文档")
-
-        # 停止轮询
-        st.session_state.polling = False
-
-    elif status == "failed":
-        # 查询失败
-        status_container.error(f"❌ 查询失败: {result.get('answer', '')}")
-        st.session_state.polling = False
-
-    elif st.session_state.poll_count >= 120:  # 2分钟超时
-        # 轮询超时
-        status_container.warning("⚠️ 查询处理时间过长，但仍在后台运行")
-        status_container.info("您可以稍后在任务管理页面查看结果")
-        st.session_state.polling = False
-
-    else:
-        # 继续轮询
-        time.sleep(1)
-        st.rerun()
-
-def render_query_page():
-    """渲染查询页面"""
-    header(
-        "查询汽车规格",
-        "输入问题，获取汽车规格的精准答案。"
-    )
-
-    # 在侧边栏显示通知
-    display_notifications_sidebar(st.session_state.api_url, st.session_state.api_key)
-
-    # 检查 API 状态
-    with st.sidebar:
-        api_available = robust_api_status_indicator(show_detail=True)
-
-    # 仅在 API 可用时继续
-    if api_available:
-        # 查询输入框
-        query = st.text_area("输入您的问题", height=100)
-
-        # 元数据筛选（可展开）
-        with st.expander("高级筛选"):
-            filter_data = metadata_filters()
-
-        # Top-K 选择器
-        top_k = st.slider("最多检索文档数量", min_value=1, max_value=20, value=5)
-
-        # 提交按钮
-        if st.button("提交查询", type="primary"):
-            if not query:
-                st.warning("请输入查询内容")
+            if job_id:
+                st.session_state.current_job_id = job_id
+                st.session_state.query_text = query.strip()
+                st.rerun()
             else:
-                process_async_query(query, filter_data, top_k)
+                st.error("查询提交失败，请重试")
 
-        # 如果正在轮询，显示取消按钮
-        if st.session_state.polling:
-            if st.button("取消等待"):
-                st.session_state.polling = False
-                st.info("查询仍在后台处理中，您可以稍后在任务管理页面查看结果")
-                st.session_state.query_job_id = None
+# Show results if we have a job
+if hasattr(st.session_state, 'current_job_id') and st.session_state.current_job_id:
+    job_id = st.session_state.current_job_id
 
-        # 如果有任务ID但未在轮询，显示检查结果按钮
-        elif st.session_state.query_job_id and not st.session_state.polling:
-            if st.button("检查查询结果"):
-                st.session_state.polling = True
+    # Poll for results
+    result = get_query_result(job_id)
+
+    if result:
+        status = result.get("status", "")
+
+        if status == "completed":
+            # Show answer
+            st.subheader("📋 查询结果")
+            st.write(result.get("answer", ""))
+
+            # Show sources
+            documents = result.get("documents", [])
+            if documents:
+                st.subheader("📚 信息来源")
+
+                for i, doc in enumerate(documents[:3]):  # Show top 3 sources
+                    with st.expander(f"来源 {i+1}: {doc.get('metadata', {}).get('title', '文档')}"):
+                        st.write(doc.get("content", ""))
+
+                        # Simple metadata
+                        metadata = doc.get("metadata", {})
+                        if metadata.get("manufacturer") or metadata.get("model"):
+                            info = []
+                            if metadata.get("manufacturer"):
+                                info.append(metadata["manufacturer"])
+                            if metadata.get("model"):
+                                info.append(metadata["model"])
+                            if metadata.get("year"):
+                                info.append(str(metadata["year"]))
+
+                            if info:
+                                st.caption(" • ".join(info))
+
+            # Clear job state
+            if st.button("新建查询"):
+                del st.session_state.current_job_id
+                del st.session_state.query_text
                 st.rerun()
 
-        # 轮询结果
-        if st.session_state.polling:
-            poll_for_results()
-    else:
-        st.error("无法连接到API服务或所需的Worker未运行。")
-        st.info("请确保API服务和GPU-Inference Worker正在运行。")
+        elif status == "failed":
+            st.error("查询失败，请重试")
+            if st.button("重试"):
+                del st.session_state.current_job_id
+                st.rerun()
+        else:
+            # Still processing
+            st.info("正在处理您的查询，请稍候...")
+            time.sleep(2)
+            st.rerun()
 
-# 渲染页面
-render_query_page()
+# Recent queries (simple)
+if st.checkbox("显示查询示例"):
+    st.subheader("💡 查询示例")
+    examples = [
+        "2023年奔驰E级的安全配置有哪些？",
+        "特斯拉Model 3的续航里程是多少？",
+        "宝马X5和奥迪Q7哪个更省油？",
+        "丰田卡罗拉的维修保养费用如何？"
+    ]
+
+    for example in examples:
+        if st.button(example, key=f"example_{example[:10]}"):
+            st.session_state.example_query = example
+            st.rerun()
+
+    # Use example query
+    if hasattr(st.session_state, 'example_query'):
+        st.text_area("选中的示例", st.session_state.example_query, key="example_display")
+        if st.button("使用此查询"):
+            # Set the query and clear example
+            st.session_state.query_text = st.session_state.example_query
+            del st.session_state.example_query
+            st.rerun()

@@ -1,351 +1,173 @@
 """
-汽车数据导入页面（Streamlit UI）- 支持后台处理
-已更新为使用增强的错误处理
+Clean upload page - src/ui/pages/数据摄取.py
 """
 
-import json
-import os
-import datetime
 import streamlit as st
-import time
-from src.ui.components import header, loading_spinner
-from src.ui.system_notifications import display_notifications_sidebar
-from src.ui.enhanced_error_handling import robust_api_status_indicator, handle_worker_dependency
+import json
 from src.ui.api_client import api_request
 from src.ui.session_init import initialize_session_state
 
 initialize_session_state()
 
+st.title("📤 上传汽车资料")
+st.markdown("支持视频链接和PDF文档上传")
 
-# 在侧边栏显示通知
-display_notifications_sidebar(st.session_state.api_url, st.session_state.api_key)
+def submit_upload(upload_type, data):
+    """Submit upload job"""
+    try:
+        endpoints = {
+            "video": "/ingest/video",
+            "pdf": "/ingest/pdf",
+            "text": "/ingest/text"
+        }
 
-# 在侧边栏检查 API 状态
-with st.sidebar:
-    api_available = robust_api_status_indicator(show_detail=True)
+        result = api_request(
+            endpoint=endpoints[upload_type],
+            method="POST",
+            data=data.get("data"),
+            files=data.get("files")
+        )
+        return result.get("job_id") if result else None
+    except:
+        return None
 
-# 仅在 API 可用时继续主要内容
-if api_available:
-    header(
-        "导入汽车数据",
-        "从多个来源添加新的汽车规格数据。"
+# Upload tabs
+tab1, tab2, tab3 = st.tabs(["🎬 视频链接", "📄 PDF文档", "✍️ 文字内容"])
+
+with tab1:
+    st.subheader("视频链接上传")
+    st.markdown("支持YouTube、Bilibili等平台")
+
+    video_url = st.text_input(
+        "视频链接",
+        placeholder="https://www.youtube.com/watch?v=..."
     )
 
-    # 处理任务创建后的跳转
-    if st.session_state.job_created:
-        success_container = st.container()
-        with success_container:
-            st.success(f"已创建后台任务，任务ID: {st.session_state.job_id}")
-            st.info("您可以在任务管理页面跟踪处理进度")
+    # Simple metadata
+    with st.expander("补充信息（可选）"):
+        v_manufacturer = st.text_input("品牌", key="v_manufacturer")
+        v_model = st.text_input("车型", key="v_model")
+        v_year = st.text_input("年份", key="v_year")
 
-            # 添加跳转按钮
-            if st.button("跳转到任务管理页面"):
-                # 先清除当前状态，避免循环
-                st.session_state.job_created = False
-                # 然后跳转
-                st.switch_page("pages/后台任务.py")
+    if st.button("上传视频", disabled=not video_url, key="upload_video"):
+        metadata = {}
+        if v_manufacturer:
+            metadata["manufacturer"] = v_manufacturer
+        if v_model:
+            metadata["model"] = v_model
+        if v_year:
+            metadata["year"] = v_year
 
-    st.info("""
-    ### 所有数据处理均在后台进行
+        job_id = submit_upload("video", {
+            "data": {
+                "url": video_url,
+                "metadata": metadata if metadata else None
+            }
+        })
+
+        if job_id:
+            st.success(f"✅ 视频已提交处理，任务ID: {job_id[:8]}...")
+            st.info("您可以在\"查看状态\"页面跟踪处理进度")
+        else:
+            st.error("上传失败，请检查链接格式")
+
+with tab2:
+    st.subheader("PDF文档上传")
+
+    pdf_file = st.file_uploader("选择PDF文件", type=["pdf"])
+
+    # Simple metadata
+    with st.expander("补充信息（可选）"):
+        p_manufacturer = st.text_input("品牌", key="p_manufacturer")
+        p_model = st.text_input("车型", key="p_model")
+        p_year = st.text_input("年份", key="p_year")
+
+    if st.button("上传PDF", disabled=not pdf_file, key="upload_pdf"):
+        metadata = {}
+        if p_manufacturer:
+            metadata["manufacturer"] = p_manufacturer
+        if p_model:
+            metadata["model"] = p_model
+        if p_year:
+            metadata["year"] = p_year
+
+        job_id = submit_upload("pdf", {
+            "data": {
+                "metadata": json.dumps(metadata) if metadata else None,
+                "use_ocr": "true",
+                "extract_tables": "true"
+            },
+            "files": {"file": (pdf_file.name, pdf_file, "application/pdf")}
+        })
+
+        if job_id:
+            st.success(f"✅ PDF已提交处理，任务ID: {job_id[:8]}...")
+            st.info("您可以在\"查看状态\"页面跟踪处理进度")
+        else:
+            st.error("上传失败，请重试")
+
+with tab3:
+    st.subheader("文字内容输入")
+
+    text_content = st.text_area(
+        "输入文字内容",
+        height=200,
+        placeholder="请输入汽车相关的文字信息..."
+    )
+
+    # Simple metadata
+    with st.expander("补充信息（可选）"):
+        t_title = st.text_input("标题", key="t_title")
+        t_manufacturer = st.text_input("品牌", key="t_manufacturer")
+        t_model = st.text_input("车型", key="t_model")
+        t_year = st.text_input("年份", key="t_year")
+
+    if st.button("提交文字", disabled=not text_content.strip(), key="upload_text"):
+        metadata = {
+            "source": "manual",
+            "title": t_title or "手动输入"
+        }
+        if t_manufacturer:
+            metadata["manufacturer"] = t_manufacturer
+        if t_model:
+            metadata["model"] = t_model
+        if t_year:
+            try:
+                metadata["year"] = int(t_year)
+            except:
+                pass
+
+        job_id = submit_upload("text", {
+            "data": {
+                "content": text_content.strip(),
+                "metadata": metadata
+            }
+        })
+
+        if job_id:
+            st.success(f"✅ 文字已提交处理，任务ID: {job_id[:8]}...")
+            st.info("您可以在\"查看状态\"页面跟踪处理进度")
+        else:
+            st.error("提交失败，请重试")
+
+# Simple tips
+st.markdown("---")
+with st.expander("💡 上传建议"):
+    st.markdown("""
+    **视频上传：**
+    - 确保视频包含汽车相关内容
+    - 支持中文和英文语音
     
-    所有数据处理（包括视频转录、PDF解析和文本处理）均在后台异步执行。
-    提交后，您可以点击"跳转到任务管理页面"按钮查看任务进度。
+    **PDF上传：**
+    - 支持扫描版PDF（自动OCR识别）
+    - 建议上传清晰的文档
+    
+    **文字输入：**
+    - 适合输入规格参数、配置信息等
+    - 建议提供详细的车型信息
     """)
 
-    # 不同数据导入方式的选项卡
-    tab1, tab2, tab3 = st.tabs(["视频", "PDF", "手动输入"])
-
-    def detect_platform(url):
-        """检测视频平台"""
-        if "youtube.com" in url or "youtu.be" in url:
-            return "YouTube"
-        elif "bilibili.com" in url:
-            return "Bilibili"
-        else:
-            return "未知平台"
-
-    def render_video_tab():
-        """渲染统一的视频数据导入选项卡"""
-        st.header("导入视频")
-
-        video_url = st.text_input("视频链接", placeholder="https://www.youtube.com/watch?v=... 或 https://www.bilibili.com/video/...")
-
-        # 检测视频平台
-        platform = "未知平台"
-        if video_url:
-            platform = detect_platform(video_url)
-            st.info(f"检测到 {platform} 平台")
-
-        with st.expander("附加元数据"):
-            video_manufacturer = st.text_input("制造商", key="video_manufacturer")
-            video_model = st.text_input("车型", key="video_model")
-            video_year = st.text_input("年份", key="video_year")
-            # 验证年份格式（如果需要）
-            if video_year:
-                try:
-                    year_value = int(video_year)
-                    if year_value < 1900 or year_value > 2100:
-                        st.warning("年份应该在1900-2100之间")
-                    elif year_value > datetime.datetime.now().year + 1:
-                        st.warning(f"年份超出合理范围 (当前年份: {datetime.datetime.now().year})")
-                except ValueError:
-                    st.warning("请输入有效的数字年份")
-
-            video_categories = ["", "轿车", "SUV", "卡车", "跑车", "MPV", "双门轿车", "敞篷车", "掀背车", "旅行车"]
-            video_category = st.selectbox("类别", video_categories, key="video_category")
-
-            video_engine_types = ["", "汽油", "柴油", "电动", "混合动力", "氢能"]
-            video_engine_type = st.selectbox("发动机类型", video_engine_types, key="video_engine_type")
-
-            video_transmission = ["", "自动挡", "手动挡", "CVT", "DCT"]
-            video_transmission_type = st.selectbox("变速箱", video_transmission, key="video_transmission")
-
-        if st.button("导入视频", type="primary", key="video_btn"):
-            if not video_url:
-                st.warning("请输入视频链接")
-                return
-
-            # 检查视频处理的 worker 依赖
-            if not handle_worker_dependency("video"):
-                return
-
-            # 构建元数据
-            custom_metadata = {}
-            if video_manufacturer:
-                custom_metadata["manufacturer"] = video_manufacturer
-            if video_model:
-                custom_metadata["model"] = video_model
-            if video_year:
-                try:
-                    year_value = int(video_year)
-                    if year_value < 1900 or year_value > 2100:
-                        st.warning("年份应该在1900-2100之间")
-                        return
-                    elif year_value > datetime.datetime.now().year + 1:
-                        st.warning(f"年份超出合理范围 (当前年份: {datetime.datetime.now().year})")
-                        return
-                    custom_metadata["year"] = str(year_value)
-                except ValueError:
-                    st.warning("请输入有效的数字年份")
-                    return
-            if video_category:
-                custom_metadata["category"] = video_category
-            if video_engine_type:
-                custom_metadata["engine_type"] = video_engine_type
-            if video_transmission_type:
-                custom_metadata["transmission"] = video_transmission_type
-
-            # 发送 API 请求
-            with loading_spinner("正在提交处理任务... 这可能需要一些时间。"):
-                endpoint = "/ingest/video"
-
-                result = api_request(
-                    endpoint=endpoint,
-                    method="POST",
-                    data={
-                        "url": video_url,
-                        "metadata": custom_metadata if custom_metadata else None
-                    },
-                )
-
-            if result:
-                # 设置任务创建状态，触发页面上方的提示
-                st.session_state.job_created = True
-                st.session_state.job_id = result.get("job_id")
-                st.rerun()
-
-    def render_pdf_tab():
-        """渲染 PDF 数据导入选项卡"""
-        st.header("导入 PDF 文件")
-
-        with st.expander("附加元数据"):
-            pdf_manufacturer = st.text_input("制造商", key="pdf_manufacturer")
-            pdf_model = st.text_input("车型", key="pdf_model")
-            pdf_year = st.text_input("年份", key="pdf_year")
-            # 验证年份格式（如果需要）
-            if pdf_year:
-                try:
-                    year_value = int(pdf_year)
-                    if year_value < 1900 or year_value > 2100:
-                        st.warning("年份应该在1900-2100之间")
-                    elif year_value > datetime.datetime.now().year + 1:
-                        st.warning(f"年份超出合理范围 (当前年份: {datetime.datetime.now().year})")
-                except ValueError:
-                    st.warning("请输入有效的数字年份")
-
-            pdf_categories = ["", "轿车", "SUV", "卡车", "跑车", "MPV", "双门轿车", "敞篷车", "掀背车", "旅行车"]
-            pdf_category = st.selectbox("类别", pdf_categories, key="pdf_category")
-
-            pdf_engine_types = ["", "汽油", "柴油", "电动", "混合动力", "氢能"]
-            pdf_engine_type = st.selectbox("发动机类型", pdf_engine_types, key="pdf_engine_type")
-
-            pdf_transmission = ["", "自动挡", "手动挡", "CVT", "DCT"]
-            pdf_transmission_type = st.selectbox("变速箱", pdf_transmission, key="pdf_transmission")
-
-        # OCR选项
-        use_ocr = st.checkbox("启用OCR（识别扫描PDF中的文字）", value=True)
-        extract_tables = st.checkbox("提取表格", value=True)
-
-        pdf_file = st.file_uploader("上传 PDF 文件", type=["pdf"])
-
-        if st.button("导入 PDF", type="primary", key="pdf_btn"):
-            if not pdf_file:
-                st.warning("请上传 PDF 文件")
-                return
-
-            # 检查 PDF 处理的 worker 依赖
-            if not handle_worker_dependency("pdf"):
-                return
-
-            # 构建元数据
-            custom_metadata = {}
-            if pdf_manufacturer:
-                custom_metadata["manufacturer"] = pdf_manufacturer
-            if pdf_model:
-                custom_metadata["model"] = pdf_model
-            if pdf_year:
-                try:
-                    year_value = int(pdf_year)
-                    if year_value < 1900 or year_value > 2100:
-                        st.warning("年份应该在1900-2100之间")
-                        return
-                    elif year_value > datetime.datetime.now().year + 1:
-                        st.warning(f"年份超出合理范围 (当前年份: {datetime.datetime.now().year})")
-                        return
-                    custom_metadata["year"] = str(year_value)
-                except ValueError:
-                    st.warning("请输入有效的数字年份")
-                    return
-            if pdf_category:
-                custom_metadata["category"] = pdf_category
-            if pdf_engine_type:
-                custom_metadata["engine_type"] = pdf_engine_type
-            if pdf_transmission_type:
-                custom_metadata["transmission"] = pdf_transmission_type
-
-            with loading_spinner("正在提交PDF处理任务..."):
-                files = {"file": (pdf_file.name, pdf_file, "application/pdf")}
-                data = {
-                    "metadata": json.dumps(custom_metadata) if custom_metadata else None,
-                    "use_ocr": str(use_ocr).lower(),
-                    "extract_tables": str(extract_tables).lower()
-                }
-
-                result = api_request(
-                    endpoint="/ingest/pdf",
-                    method="POST",
-                    data=data,
-                    files=files,
-                )
-
-            if result:
-                # 设置任务创建状态，触发页面上方的提示
-                st.session_state.job_created = True
-                st.session_state.job_id = result.get("job_id")
-                st.rerun()
-
-    def render_manual_tab():
-        """渲染手动输入选项卡"""
-        st.header("手动输入数据")
-
-        with st.expander("元数据"):
-            manual_manufacturer = st.text_input("制造商", key="manual_manufacturer")
-            manual_model = st.text_input("车型", key="manual_model")
-            manual_year = st.text_input("年份", key="manual_year")
-            # 验证年份格式（如果需要）
-            if manual_year:
-                try:
-                    year_value = int(manual_year)
-                    if year_value < 1900 or year_value > 2100:
-                        st.warning("年份应该在1900-2100之间")
-                    elif year_value > datetime.datetime.now().year + 1:
-                        st.warning(f"年份超出合理范围 (当前年份: {datetime.datetime.now().year})")
-                except ValueError:
-                    st.warning("请输入有效的数字年份")
-
-            manual_categories = ["", "轿车", "SUV", "卡车", "跑车", "MPV", "双门轿车", "敞篷车", "掀背车", "旅行车"]
-            manual_category = st.selectbox("类别", manual_categories, key="manual_category")
-
-            manual_engine_types = ["", "汽油", "柴油", "电动", "混合动力", "氢能"]
-            manual_engine_type = st.selectbox("发动机类型", manual_engine_types, key="manual_engine_type")
-
-            manual_transmission = ["", "自动挡", "手动挡", "CVT", "DCT"]
-            manual_transmission_type = st.selectbox("变速箱", manual_transmission, key="manual_transmission")
-
-        manual_content = st.text_area("输入内容", height=300)
-
-        if st.button("导入手动输入数据", type="primary", key="manual_btn"):
-            if not manual_content:
-                st.warning("请输入内容")
-                return
-
-            # 检查文本处理的 worker 依赖
-            if not handle_worker_dependency("text"):
-                return
-
-            # 构建元数据
-            metadata = {
-                "source": "manual",
-                "title": f"{manual_manufacturer} {manual_model} 规格",
-            }
-
-            if manual_manufacturer:
-                metadata["manufacturer"] = manual_manufacturer
-            if manual_model:
-                metadata["model"] = manual_model
-            if manual_year:
-                try:
-                    year_value = int(manual_year)
-                    if year_value < 1900 or year_value > 2100:
-                        st.warning("年份应该在1900-2100之间")
-                        return
-                    elif year_value > datetime.datetime.now().year + 1:
-                        st.warning(f"年份超出合理范围 (当前年份: {datetime.datetime.now().year})")
-                        return
-                    metadata["year"] = year_value
-                except ValueError:
-                    st.warning("请输入有效的数字年份")
-                    return
-            if manual_category:
-                metadata["category"] = manual_category
-            if manual_engine_type:
-                metadata["engine_type"] = manual_engine_type
-            if manual_transmission_type:
-                metadata["transmission"] = manual_transmission_type
-
-            with loading_spinner("正在提交文本处理任务..."):
-                result = api_request(
-                    endpoint="/ingest/text",
-                    method="POST",
-                    data={
-                        "content": manual_content,
-                        "metadata": metadata
-                    },
-                )
-
-            if result:
-                # 设置任务创建状态，触发页面上方的提示
-                st.session_state.job_created = True
-                st.session_state.job_id = result.get("job_id")
-                st.rerun()
-
-    # 渲染各个选项卡
-    with tab1:
-        render_video_tab()
-
-    with tab2:
-        render_pdf_tab()
-
-    with tab3:
-        render_manual_tab()
-else:
-    header(
-        "导入汽车数据",
-        "从多个来源添加新的汽车规格数据。"
-    )
-
-    st.error("无法连接到API服务或所需的Worker未运行。")
-    st.info("请确保API服务和相关Worker正在运行，然后刷新页面。")
-
-    if st.button("刷新"):
-        st.rerun()
+# Link to status page
+st.markdown("---")
+if st.button("查看上传状态", use_container_width=True):
+    st.switch_page("pages/后台任务.py")

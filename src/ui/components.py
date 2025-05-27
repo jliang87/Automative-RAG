@@ -8,6 +8,8 @@ Streamlit 界面 UI 组件 - 简化版本用于自触发作业链架构
 import streamlit as st
 import httpx
 from typing import Dict, List, Optional, Union, Callable, Any
+# Fix for Arrow serialization errors - Add this to components.py or create a new utils file
+import pandas as pd
 
 # 导入统一的 API 客户端
 from src.ui.api_client import api_request
@@ -212,3 +214,112 @@ def worker_health_indicator():
             else:
                 st.error(f"❌ {type_info['name']}")
                 st.caption("不可用")
+
+
+def safe_dataframe_display(data: List[Dict[str, Any]], hide_index: bool = True, use_container_width: bool = True):
+    """
+    Safely display a DataFrame with proper type conversion to avoid Arrow serialization errors.
+
+    Args:
+        data: List of dictionaries to convert to DataFrame
+        hide_index: Whether to hide the DataFrame index
+        use_container_width: Whether to use container width
+    """
+    if not data:
+        st.info("没有数据显示")
+        return
+
+    try:
+        # Create DataFrame
+        df = pd.DataFrame(data)
+
+        # Convert problematic columns to strings to avoid Arrow serialization issues
+        for col in df.columns:
+            # Check if column contains mixed types or objects that could cause issues
+            if df[col].dtype == 'object':
+                # Convert all values to strings, handling None/NaN values
+                df[col] = df[col].astype(str).replace(['None', 'nan', 'NaN'], '-')
+            elif df[col].dtype == 'int64':
+                # Ensure integers are properly formatted
+                df[col] = df[col].astype('Int64')  # Pandas nullable integer
+            elif df[col].dtype == 'float64':
+                # Handle float precision issues
+                df[col] = df[col].round(2)
+
+        # Display the DataFrame
+        st.dataframe(df, hide_index=hide_index, use_container_width=use_container_width)
+
+    except Exception as e:
+        st.error(f"显示数据时出错: {str(e)}")
+        # Fallback: display as JSON
+        st.json(data)
+
+
+def clean_dataframe_for_display(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Clean a DataFrame to avoid Arrow serialization issues.
+
+    Args:
+        df: Input DataFrame
+
+    Returns:
+        Cleaned DataFrame safe for Streamlit display
+    """
+    df_clean = df.copy()
+
+    for col in df_clean.columns:
+        if df_clean[col].dtype == 'object':
+            # Convert problematic object columns to strings
+            df_clean[col] = df_clean[col].astype(str).replace(['None', 'nan', 'NaN'], '-')
+        elif pd.api.types.is_numeric_dtype(df_clean[col]):
+            # Handle numeric columns with potential null values
+            if df_clean[col].isna().any():
+                if pd.api.types.is_integer_dtype(df_clean[col]):
+                    df_clean[col] = df_clean[col].astype('Int64')  # Nullable integer
+                else:
+                    df_clean[col] = df_clean[col].astype('float64')
+
+    return df_clean
+
+
+# Example usage in your existing code:
+# Instead of:
+# st.dataframe(pd.DataFrame(data), hide_index=True)
+#
+# Use:
+# safe_dataframe_display(data)
+#
+# Or for existing DataFrames:
+# df_clean = clean_dataframe_for_display(df)
+# st.dataframe(df_clean, hide_index=True)
+
+# For the specific issue in your code, update the queue display in enhanced_worker_status.py:
+def safe_queue_display(queue_data: List[Dict[str, Any]]):
+    """Safely display queue data avoiding Arrow serialization issues."""
+    if not queue_data:
+        st.info("没有队列数据")
+        return
+
+    # Clean the data before creating DataFrame
+    cleaned_data = []
+    for item in queue_data:
+        cleaned_item = {}
+        for key, value in item.items():
+            if value is None:
+                cleaned_item[key] = "-"
+            elif isinstance(value, (int, float)):
+                cleaned_item[key] = value
+            else:
+                cleaned_item[key] = str(value)
+        cleaned_data.append(cleaned_item)
+
+    try:
+        df = pd.DataFrame(cleaned_data)
+        st.dataframe(df, hide_index=True, use_container_width=True)
+    except Exception as e:
+        st.error(f"显示队列数据时出错: {str(e)}")
+        # Fallback to simple display
+        for i, item in enumerate(cleaned_data):
+            with st.expander(f"队列 {i + 1}"):
+                for key, value in item.items():
+                    st.write(f"**{key}**: {value}")
