@@ -1,7 +1,7 @@
-# src/core/worker_status.py - Fixed version
+# src/core/worker_status.py - Fixed to handle Redis key type issues
 
 """
-Fixed worker status management module with improved heartbeat detection.
+Fixed worker status management with proper Redis key type handling.
 """
 
 import time
@@ -13,67 +13,74 @@ logger = logging.getLogger(__name__)
 
 
 def normalize_redis_key(key):
-    """
-    Normalize a Redis key to string format regardless of whether it's bytes or string.
-    """
+    """Normalize a Redis key to string format."""
     if isinstance(key, bytes):
         return key.decode("utf-8")
     return key
 
 
+def safe_redis_get(client: redis.Redis, key) -> Optional[str]:
+    """Safely get a Redis value, handling type errors."""
+    try:
+        value = client.get(key)
+        if value is None:
+            return None
+
+        if isinstance(value, bytes):
+            return value.decode("utf-8")
+        return str(value)
+
+    except redis.ResponseError as e:
+        if "WRONGTYPE" in str(e):
+            # Key exists but is wrong type (hash, list, etc.)
+            logger.debug(f"Key {key} has wrong type, skipping")
+            return None
+        else:
+            logger.error(f"Redis error for key {key}: {e}")
+            return None
+    except Exception as e:
+        logger.error(f"Unexpected error getting key {key}: {e}")
+        return None
+
+
 def get_worker_heartbeats(redis_client: redis.Redis) -> Dict[str, Dict[str, Any]]:
     """
-    Get all worker heartbeats from Redis with improved detection.
+    Get all worker heartbeats from Redis with improved error handling.
     """
     worker_info = {}
 
     try:
-        # Try multiple heartbeat key patterns
-        heartbeat_patterns = [
+        # Get all possible heartbeat keys using SCAN for better performance
+        heartbeat_keys = set()
+
+        # Use SCAN to find keys matching heartbeat patterns
+        patterns = [
             "dramatiq:__heartbeats__:*",
             "dramatiq:heartbeats:*",
-            "worker:heartbeat:*",
-            "*heartbeat*"
+            "worker:heartbeat:*"
         ]
 
-        all_heartbeat_keys = set()
-
-        # Collect all possible heartbeat keys
-        for pattern in heartbeat_patterns:
+        for pattern in patterns:
             try:
-                keys = redis_client.keys(pattern)
-                all_heartbeat_keys.update(keys)
-                logger.debug(f"Found {len(keys)} keys for pattern {pattern}")
+                for key in redis_client.scan_iter(match=pattern, count=100):
+                    heartbeat_keys.add(key)
+                logger.debug(f"Found {len(heartbeat_keys)} keys for pattern {pattern}")
             except Exception as e:
-                logger.debug(f"Error searching pattern {pattern}: {e}")
+                logger.debug(f"Error scanning pattern {pattern}: {e}")
 
-        logger.info(f"Total heartbeat keys found: {len(all_heartbeat_keys)}")
-
-        # If no heartbeat keys found, check if workers are using a different pattern
-        if not all_heartbeat_keys:
-            # Check all keys in Redis that might be heartbeats
-            try:
-                all_keys = redis_client.keys("*")
-                logger.info(f"Total Redis keys: {len(all_keys)}")
-
-                # Look for any keys that might be heartbeats
-                potential_heartbeats = []
-                for key in all_keys:
-                    key_str = normalize_redis_key(key)
-                    if any(word in key_str.lower() for word in ['heartbeat', 'worker', 'dramatiq']):
-                        potential_heartbeats.append(key_str)
-
-                logger.info(f"Potential heartbeat keys: {potential_heartbeats}")
-                all_heartbeat_keys.update(potential_heartbeats)
-            except Exception as e:
-                logger.error(f"Error getting all Redis keys: {e}")
+        logger.info(f"Total heartbeat keys found: {len(heartbeat_keys)}")
 
         # Process heartbeat keys
         current_time = time.time()
 
-        for key in all_heartbeat_keys:
+        for key in heartbeat_keys:
             try:
                 normalized_key = normalize_redis_key(key)
+
+                # Skip keys that don't contain worker IDs (like parent keys)
+                if normalized_key.endswith(":__heartbeats__") or normalized_key.endswith(":heartbeats"):
+                    logger.debug(f"Skipping parent key: {normalized_key}")
+                    continue
 
                 # Extract worker ID from different key patterns
                 worker_id = None
@@ -85,28 +92,34 @@ def get_worker_heartbeats(redis_client: redis.Redis) -> Dict[str, Dict[str, Any]
                     worker_id = normalized_key.split(":heartbeat:")[-1]
                 else:
                     # Extract from end of key
-                    worker_id = normalized_key.split(":")[-1]
+                    parts = normalized_key.split(":")
+                    if len(parts) > 1:
+                        worker_id = parts[-1]
 
-                if not worker_id:
+                if not worker_id or len(worker_id) < 3:  # Skip very short worker IDs
+                    logger.debug(f"Skipping key with invalid worker ID: {normalized_key}")
                     continue
 
-                # Get heartbeat value
-                last_heartbeat = redis_client.get(key)
+                # Get heartbeat value safely
+                last_heartbeat = safe_redis_get(redis_client, key)
 
                 if last_heartbeat is None:
+                    logger.debug(f"No value for heartbeat key: {normalized_key}")
                     continue
 
                 # Parse heartbeat timestamp
                 try:
-                    if isinstance(last_heartbeat, bytes):
-                        heartbeat_value = float(last_heartbeat.decode())
-                    else:
-                        heartbeat_value = float(last_heartbeat)
-                except (ValueError, AttributeError):
+                    heartbeat_value = float(last_heartbeat)
+                except (ValueError, TypeError):
                     logger.warning(f"Invalid heartbeat value for {worker_id}: {last_heartbeat}")
                     continue
 
                 heartbeat_age = current_time - heartbeat_value
+
+                # Skip very old heartbeats (older than 10 minutes)
+                if heartbeat_age > 600:
+                    logger.debug(f"Skipping old heartbeat for {worker_id}: {heartbeat_age:.1f}s")
+                    continue
 
                 # Determine worker type from worker ID
                 worker_type = "unknown"
@@ -115,7 +128,7 @@ def get_worker_heartbeats(redis_client: redis.Redis) -> Dict[str, Dict[str, Any]
                         worker_type = wtype
                         break
 
-                # Determine status (60 second threshold)
+                # Determine status (60 second threshold for healthy)
                 status = "healthy" if heartbeat_age < 60 else "stale"
 
                 worker_info[worker_id] = {
@@ -130,6 +143,7 @@ def get_worker_heartbeats(redis_client: redis.Redis) -> Dict[str, Dict[str, Any]
 
             except Exception as e:
                 logger.error(f"Error processing heartbeat key {key}: {e}")
+                continue
 
     except Exception as e:
         logger.error(f"Error getting worker heartbeats: {e}")
@@ -147,17 +161,39 @@ def debug_redis_keys(redis_client: redis.Redis) -> Dict[str, Any]:
         "dramatiq_keys": [],
         "heartbeat_keys": [],
         "worker_keys": [],
-        "sample_keys": []
+        "sample_keys": [],
+        "key_types": {},
+        "problematic_keys": []
     }
 
     try:
-        # Get all keys
-        all_keys = redis_client.keys("*")
+        # Use SCAN instead of KEYS for better performance
+        all_keys = []
+        for key in redis_client.scan_iter(count=1000):
+            all_keys.append(key)
+
         debug_info["all_keys_count"] = len(all_keys)
 
-        # Categorize keys
+        # Categorize keys and check their types
         for key in all_keys:
             key_str = normalize_redis_key(key)
+
+            # Check key type
+            try:
+                key_type = redis_client.type(key).decode('utf-8') if isinstance(redis_client.type(key),
+                                                                                bytes) else redis_client.type(key)
+                debug_info["key_types"][key_str] = key_type
+
+                # Flag problematic keys
+                if "heartbeat" in key_str.lower() and key_type != "string":
+                    debug_info["problematic_keys"].append({
+                        "key": key_str,
+                        "type": key_type,
+                        "expected": "string"
+                    })
+
+            except Exception as e:
+                debug_info["key_types"][key_str] = f"error: {e}"
 
             if "dramatiq" in key_str.lower():
                 debug_info["dramatiq_keys"].append(key_str)
@@ -171,13 +207,43 @@ def debug_redis_keys(redis_client: redis.Redis) -> Dict[str, Any]:
         # Get sample of all keys
         debug_info["sample_keys"] = [normalize_redis_key(k) for k in all_keys[:20]]
 
-        logger.info(f"Redis debug info: {debug_info}")
+        logger.info(f"Redis debug info: found {len(debug_info['problematic_keys'])} problematic keys")
 
     except Exception as e:
         logger.error(f"Error debugging Redis keys: {e}")
         debug_info["error"] = str(e)
 
     return debug_info
+
+
+def clean_problematic_redis_keys(redis_client: redis.Redis) -> Dict[str, Any]:
+    """
+    Clean up problematic Redis keys that might be interfering with heartbeats.
+    This should be called carefully and only in development/debugging.
+    """
+    debug_info = debug_redis_keys(redis_client)
+    problematic_keys = debug_info.get("problematic_keys", [])
+
+    cleaned_keys = []
+    errors = []
+
+    for problem in problematic_keys:
+        key = problem["key"]
+        try:
+            # Only delete keys that are definitely problematic
+            if key.endswith(":__heartbeats__") or key.endswith(":heartbeats"):
+                redis_client.delete(key)
+                cleaned_keys.append(key)
+                logger.info(f"Deleted problematic key: {key}")
+        except Exception as e:
+            errors.append(f"Error deleting {key}: {e}")
+            logger.error(f"Error deleting {key}: {e}")
+
+    return {
+        "cleaned_keys": cleaned_keys,
+        "errors": errors,
+        "total_cleaned": len(cleaned_keys)
+    }
 
 
 def get_active_worker_counts(redis_client: redis.Redis) -> Dict[str, int]:
@@ -257,7 +323,6 @@ def get_worker_summary(redis_client: redis.Redis) -> Dict[str, Any]:
         }
 
 
-# Additional function for the API to help debug
 def get_worker_status_for_ui(redis_client: redis.Redis) -> Dict[str, Any]:
     """
     Get comprehensive worker status for UI display with debugging info.

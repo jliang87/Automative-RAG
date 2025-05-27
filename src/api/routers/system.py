@@ -329,3 +329,83 @@ def get_directory_size(path: str) -> int:
     except Exception as e:
         logger.error(f"Error calculating directory size for {path}: {str(e)}")
     return total_size
+
+
+@router.post("/redis/cleanup-heartbeats", dependencies=[Depends(get_token_header)])
+async def cleanup_redis_heartbeats(redis_client: redis.Redis = Depends(get_redis_client)):
+    """
+    Clean up problematic Redis keys that interfere with heartbeat detection.
+    This fixes the WRONGTYPE error by removing parent keys with wrong data types.
+    """
+    try:
+        from src.core.worker_status import clean_problematic_redis_keys
+
+        result = clean_problematic_redis_keys(redis_client)
+
+        return {
+            "status": "success",
+            "message": f"Cleaned up {result['total_cleaned']} problematic keys",
+            "details": result
+        }
+    except Exception as e:
+        logger.error(f"Error cleaning up Redis keys: {e}")
+        raise HTTPException(500, f"Error cleaning up Redis keys: {str(e)}")
+
+
+@router.get("/redis/key-analysis")
+async def analyze_redis_keys(redis_client: redis.Redis = Depends(get_redis_client)):
+    """
+    Analyze Redis keys to identify potential issues with heartbeat detection.
+    """
+    try:
+        from src.core.worker_status import debug_redis_keys
+
+        debug_info = debug_redis_keys(redis_client)
+
+        return {
+            "status": "success",
+            "analysis": debug_info,
+            "recommendations": []
+        }
+    except Exception as e:
+        logger.error(f"Error analyzing Redis keys: {e}")
+        raise HTTPException(500, f"Error analyzing Redis keys: {str(e)}")
+
+
+@router.post("/redis/test-heartbeat")
+async def test_heartbeat_system(redis_client: redis.Redis = Depends(get_redis_client)):
+    """
+    Test the heartbeat system by creating and detecting a test heartbeat.
+    """
+    import time
+
+    try:
+        # Create test heartbeat
+        test_worker_id = f"test-api-{int(time.time())}"
+        test_key = f"dramatiq:__heartbeats__:{test_worker_id}"
+        test_value = str(time.time())
+
+        # Set test heartbeat
+        redis_client.set(test_key, test_value, ex=300)
+
+        # Try to detect it
+        from src.core.worker_status import get_worker_heartbeats
+        workers = get_worker_heartbeats(redis_client)
+
+        # Check if our test worker was detected
+        test_detected = test_worker_id in workers
+
+        # Clean up
+        redis_client.delete(test_key)
+
+        return {
+            "status": "success",
+            "test_heartbeat_created": True,
+            "test_heartbeat_detected": test_detected,
+            "detected_workers": len(workers),
+            "worker_details": workers.get(test_worker_id, {}) if test_detected else None
+        }
+
+    except Exception as e:
+        logger.error(f"Error testing heartbeat system: {e}")
+        raise HTTPException(500, f"Error testing heartbeat system: {str(e)}")
