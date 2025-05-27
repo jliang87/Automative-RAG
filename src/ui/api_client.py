@@ -66,3 +66,53 @@ def api_request(
         return None
 
     return None
+
+# Backward compatibility functions (simplified)
+def check_architecture_health():
+    """Simple system health check"""
+    try:
+        health = api_request("/system/health/detailed", silent=True, timeout=3.0)
+        if health:
+            return {
+                "overall_healthy": health.get("status") == "healthy",
+                "issues": [],
+                "worker_status": {},
+                "queue_status": {},
+                "gpu_status": {}
+            }
+    except:
+        pass
+
+    return {
+        "overall_healthy": False,
+        "issues": ["系统状态检查失败"],
+        "worker_status": {},
+        "queue_status": {},
+        "gpu_status": {}
+    }
+
+def get_gpu_allocation_status():
+    """Simple GPU status"""
+    try:
+        health = api_request("/system/health/detailed", silent=True, timeout=3.0)
+        if health:
+            return {
+                "gpu_health": health.get("gpu_health", {}),
+                "allocation_map": {}
+            }
+    except:
+        pass
+    return None
+
+def check_worker_availability(worker_type: str) -> bool:
+    """Simple worker availability check"""
+    try:
+        health = api_request("/system/health/detailed", silent=True, timeout=2.0)
+        if health and "workers" in health:
+            workers = health["workers"]
+            for worker_id, info in workers.items():
+                if worker_type in worker_id and info.get("status") == "healthy":
+                    return True
+    except:
+        pass
+    return False
