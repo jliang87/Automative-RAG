@@ -1,4 +1,4 @@
-# src/api/main.py (Enhanced job-chains endpoints)
+# src/api/main.py - No authentication version
 
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -11,7 +11,7 @@ import logging
 from src.api.routers import auth, ingest, query, system
 from src.api.routers.model import router as model_router
 from src.config.settings import settings
-from src.api.dependencies import get_token_header, load_all_components
+from src.api.dependencies import load_all_components
 
 # Define API metadata
 API_TITLE = "Automotive Specs RAG API"
@@ -57,7 +57,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include routers
+# Include routers WITHOUT authentication dependencies
 app.include_router(
     auth.router,
     prefix="/auth",
@@ -68,14 +68,14 @@ app.include_router(
     ingest.router,
     prefix="/ingest",
     tags=["Ingestion"],
-    dependencies=[Depends(get_token_header)] if settings.api_auth_enabled else [],
+    # NO authentication required
 )
 
 app.include_router(
     query.router,
     prefix="/query",
     tags=["Query"],
-    dependencies=[Depends(get_token_header)] if settings.api_auth_enabled else [],
+    # NO authentication required
 )
 
 app.include_router(system.router, prefix="/system", tags=["System"])
@@ -94,7 +94,8 @@ async def root():
         "message": "Automotive Specs RAG API with Job Chain Processing",
         "version": "0.2.0",
         "docs": "/docs",
-        "architecture": "dedicated_gpu_workers"
+        "architecture": "dedicated_gpu_workers",
+        "authentication": "disabled"
     }
 
 
@@ -151,9 +152,10 @@ async def health_check():
         pass
 
     return {
-        "status": "healthy" if redis_ok and qdrant_ok and job_chain_ok else "degraded",
+        "status": "healthy" if redis_ok and job_chain_ok else "degraded",
         "mode": "dedicated_gpu_workers",
         "architecture": "event_driven",
+        "authentication": "disabled",
         "components": {
             "redis": "connected" if redis_ok else "error",
             "qdrant": "connected" if qdrant_ok else "error",
@@ -165,10 +167,7 @@ async def health_check():
 # Enhanced job chains endpoint for UI support
 @app.get("/job-chains", tags=["Job Chains"])
 async def get_job_chains_overview():
-    """
-    Get comprehensive overview of the job chain system.
-    Supports both 系统信息.py and 后台任务.py UI pages.
-    """
+    """Get comprehensive overview of the job chain system."""
     try:
         from src.core.background.job_chain import job_chain
         from src.core.background.job_tracker import job_tracker
@@ -284,8 +283,8 @@ async def get_worker_status():
         return get_worker_status_for_ui(redis_client)
 
     except Exception as e:
-        logger.error(f"Error getting worker status: {str(e)}")
+        logger.error(f"Error getting worker status: {e}")
         raise HTTPException(
             status_code=500,
-            detail=f"Error getting worker status: {str(e)}"
+            detail=f"Error getting worker status: {e}"
         )

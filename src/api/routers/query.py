@@ -1,4 +1,4 @@
-# src/api/routers/query.py (Updated for Job Chain)
+# src/api/routers/query.py - Handle both slash cases
 
 import uuid
 from typing import Dict, List, Optional, Any
@@ -15,14 +15,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-@router.post("/", response_model=BackgroundJobResponse)
-async def query(
-        request: QueryRequest,
-) -> BackgroundJobResponse:
-    """
-    Asynchronous query that returns a job ID for later polling.
-    All processing happens using the job chain system.
-    """
+async def handle_query_logic(request: QueryRequest) -> BackgroundJobResponse:
+    """Common query handling function"""
     try:
         # Generate a unique job ID
         job_id = str(uuid.uuid4())
@@ -62,11 +56,21 @@ async def query(
         )
 
 
+@router.post("/", response_model=BackgroundJobResponse)
+async def query_with_slash(request: QueryRequest) -> BackgroundJobResponse:
+    """Query endpoint with trailing slash"""
+    return await handle_query_logic(request)
+
+
+@router.post("", response_model=BackgroundJobResponse)
+async def query_without_slash(request: QueryRequest) -> BackgroundJobResponse:
+    """Query endpoint without trailing slash"""
+    return await handle_query_logic(request)
+
+
 @router.get("/results/{job_id}", response_model=Optional[QueryResponse])
 async def get_query_result(job_id: str) -> Optional[QueryResponse]:
-    """
-    Get the result of an asynchronous query.
-    """
+    """Get the result of an asynchronous query."""
     job_data = job_tracker.get_job(job_id)
 
     if not job_data:

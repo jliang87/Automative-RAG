@@ -1,6 +1,5 @@
 """
-Simplified API client - src/ui/api_client.py
-Clean, focused functions for the two-page architecture
+Simplified API client without authentication
 """
 
 import streamlit as st
@@ -17,14 +16,15 @@ def api_request(
     timeout: float = 10.0,
     silent: bool = False,
 ) -> Optional[Dict]:
-    """Core API request function"""
+    """Core API request function - NO AUTHENTICATION"""
 
-    if "api_url" not in st.session_state or "api_key" not in st.session_state:
+    if "api_url" not in st.session_state:
         if not silent:
-            st.error("系统配置错误")
+            st.error("API URL 未配置")
         return None
 
-    headers = {"x-token": st.session_state.api_key}
+    # NO authentication headers
+    headers = {"Content-Type": "application/json"}
     url = f"{st.session_state.api_url}{endpoint}"
 
     try:
@@ -33,7 +33,9 @@ def api_request(
                 response = client.get(url, headers=headers, params=params)
             elif method == "POST":
                 if files:
-                    response = client.post(url, headers=headers, data=data, files=files)
+                    # Remove Content-Type for file uploads
+                    file_headers = {}
+                    response = client.post(url, headers=file_headers, data=data, files=files)
                 else:
                     response = client.post(url, headers=headers, json=data)
             elif method == "DELETE":
@@ -47,8 +49,10 @@ def api_request(
                 if not silent:
                     if response.status_code == 503:
                         st.error("系统暂时不可用，请稍后再试")
+                    elif response.status_code == 422:
+                        st.error(f"请求格式错误: {response.text}")
                     else:
-                        st.error("请求失败，请重试")
+                        st.error(f"请求失败 ({response.status_code}): {response.text}")
                 return None
 
             return response.json()
@@ -63,16 +67,16 @@ def api_request(
         return None
     except Exception as e:
         if not silent:
-            st.error("网络错误，请检查连接")
+            st.error(f"网络错误: {str(e)}")
         return None
 
     return None
 
 
-# === SYSTEM HEALTH FUNCTIONS (for 系统信息.py) ===
+# === SYSTEM HEALTH FUNCTIONS ===
 
 def get_system_health() -> Dict[str, Any]:
-    """Get system health data for 系统信息.py"""
+    """Get system health data"""
     try:
         health = api_request("/system/health/detailed", silent=True, timeout=5.0)
         if health:
@@ -94,7 +98,7 @@ def get_system_health() -> Dict[str, Any]:
 
 
 def get_worker_summary() -> Dict[str, Any]:
-    """Get worker status summary for 系统信息.py"""
+    """Get worker status summary"""
     health_data = get_system_health()
     workers = health_data.get("workers", {})
 
@@ -124,7 +128,7 @@ def get_worker_summary() -> Dict[str, Any]:
 
 
 def get_gpu_status() -> Dict[str, Any]:
-    """Get GPU status for 系统信息.py"""
+    """Get GPU status"""
     health_data = get_system_health()
     gpu_health = health_data.get("gpu_health", {})
 
@@ -187,10 +191,10 @@ def get_system_status_summary() -> Dict[str, str]:
         }
 
 
-# === JOB MANAGEMENT FUNCTIONS (for 后台任务.py) ===
+# === JOB MANAGEMENT FUNCTIONS ===
 
 def get_jobs_list(limit: int = 20) -> List[Dict[str, Any]]:
-    """Get jobs list for 后台任务.py"""
+    """Get jobs list"""
     try:
         return api_request("/ingest/jobs", method="GET", params={"limit": limit}, silent=True) or []
     except:
@@ -198,7 +202,7 @@ def get_jobs_list(limit: int = 20) -> List[Dict[str, Any]]:
 
 
 def get_job_details(job_id: str) -> Optional[Dict[str, Any]]:
-    """Get detailed job information for 后台任务.py"""
+    """Get detailed job information"""
     try:
         return api_request(f"/ingest/jobs/{job_id}", method="GET", silent=True)
     except:
@@ -206,7 +210,7 @@ def get_job_details(job_id: str) -> Optional[Dict[str, Any]]:
 
 
 def get_job_statistics() -> Dict[str, int]:
-    """Get job statistics for 后台任务.py"""
+    """Get job statistics"""
     try:
         overview = api_request("/job-chains", method="GET", silent=True)
         if overview:
@@ -220,7 +224,7 @@ def get_job_statistics() -> Dict[str, int]:
 # === SIMPLE UTILITIES ===
 
 def simple_health_check() -> bool:
-    """Basic health check - returns True if system is responsive"""
+    """Basic health check"""
     try:
         response = api_request("/health", method="GET", silent=True, timeout=3.0)
         return response is not None

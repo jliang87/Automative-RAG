@@ -28,8 +28,15 @@ def submit_upload(upload_type, data):
             data=data.get("data"),
             files=data.get("files")
         )
-        return result.get("job_id") if result else None
-    except:
+
+        if result and "job_id" in result:
+            return result["job_id"]
+        else:
+            st.error("上传失败：服务器未返回有效响应")
+            return None
+
+    except Exception as e:
+        st.error(f"上传时发生错误: {str(e)}")
         return None
 
 # Upload tabs - Always show all options (jobs will queue automatically)
