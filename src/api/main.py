@@ -1,4 +1,4 @@
-# src/api/main.py (Updated for Job Chain)
+# src/api/main.py (Enhanced job-chains endpoints)
 
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -94,7 +94,7 @@ async def root():
         "message": "Automotive Specs RAG API with Job Chain Processing",
         "version": "0.2.0",
         "docs": "/docs",
-        "architecture": "event_driven_job_chains"
+        "architecture": "dedicated_gpu_workers"
     }
 
 
@@ -152,7 +152,7 @@ async def health_check():
 
     return {
         "status": "healthy" if redis_ok and qdrant_ok and job_chain_ok else "degraded",
-        "mode": "job_chain",
+        "mode": "dedicated_gpu_workers",
         "architecture": "event_driven",
         "components": {
             "redis": "connected" if redis_ok else "error",
@@ -162,32 +162,54 @@ async def health_check():
     }
 
 
-# Additional job chain specific endpoints
+# Enhanced job chains endpoint for UI support
 @app.get("/job-chains", tags=["Job Chains"])
 async def get_job_chains_overview():
-    """Get an overview of the job chain system."""
+    """
+    Get comprehensive overview of the job chain system.
+    Supports both 系统信息.py and 后台任务.py UI pages.
+    """
     try:
         from src.core.background.job_chain import job_chain
         from src.core.background.job_tracker import job_tracker
 
-        # Get queue status
+        # Get queue status (for 系统信息.py)
         queue_status = job_chain.get_queue_status()
 
-        # Get job statistics
+        # Get job statistics (for both pages)
         job_stats = job_tracker.count_jobs_by_status()
 
-        # Get recent jobs
+        # Get recent jobs (for 后台任务.py)
         recent_jobs = job_tracker.get_all_jobs(limit=10)
+
+        # Format recent jobs for UI consumption
+        formatted_recent_jobs = []
+        for job in recent_jobs:
+            formatted_job = {
+                "job_id": job.get("job_id", ""),
+                "job_type": job.get("job_type", ""),
+                "status": job.get("status", ""),
+                "created_at": job.get("created_at", 0),
+                "updated_at": job.get("updated_at", 0)
+            }
+
+            # Add progress info if available
+            progress_info = job.get("progress_info", {})
+            if progress_info:
+                formatted_job["progress"] = progress_info.get("progress")
+                formatted_job["progress_message"] = progress_info.get("message", "")
+
+            formatted_recent_jobs.append(formatted_job)
 
         return {
             "queue_status": queue_status,
             "job_statistics": job_stats,
-            "recent_jobs": recent_jobs,
+            "recent_jobs": formatted_recent_jobs,
             "system_info": {
-                "architecture": "event_driven_job_chains",
+                "architecture": "dedicated_gpu_workers",
                 "self_triggering": True,
-                "no_polling": True,
-                "automatic_recovery": True
+                "auto_queue_management": True,
+                "total_jobs": job_stats.get("total", 0)
             }
         }
     except Exception as e:
@@ -207,24 +229,39 @@ async def get_job_chain_details(job_id: str):
 
         # Get job chain status
         chain_status = job_chain.get_job_chain_status(job_id)
-        if not chain_status:
-            raise HTTPException(404, f"Job chain {job_id} not found")
 
         # Get job tracker information
         job_data = job_tracker.get_job(job_id)
 
-        return {
-            "job_chain": chain_status,
-            "job_data": job_data,
-            "combined_view": {
-                "job_id": job_id,
-                "status": job_data.get("status") if job_data else "unknown",
-                "progress": chain_status.get("progress_percentage", 0),
-                "current_task": chain_status.get("current_task"),
-                "total_steps": chain_status.get("total_steps", 0),
-                "step_timings": chain_status.get("step_timings", {})
-            }
+        if not job_data:
+            raise HTTPException(404, f"Job {job_id} not found")
+
+        # Combine chain and tracker data
+        combined_data = {
+            "job_id": job_id,
+            "status": job_data.get("status", "unknown"),
+            "job_type": job_data.get("job_type", ""),
+            "created_at": job_data.get("created_at", 0),
+            "updated_at": job_data.get("updated_at", 0),
+            "metadata": job_data.get("metadata", {}),
+            "result": job_data.get("result", {}),
+            "error": job_data.get("error"),
         }
+
+        # Add progress information
+        progress_info = job_data.get("progress_info", {})
+        if progress_info:
+            combined_data["progress_info"] = progress_info
+
+        # Add job chain specific info if available
+        if chain_status:
+            combined_data["job_chain"] = chain_status
+            combined_data["progress_percentage"] = chain_status.get("progress_percentage", 0)
+            combined_data["current_task"] = chain_status.get("current_task")
+            combined_data["total_steps"] = chain_status.get("total_steps", 0)
+
+        return combined_data
+
     except HTTPException:
         raise
     except Exception as e:
@@ -232,4 +269,23 @@ async def get_job_chain_details(job_id: str):
         raise HTTPException(
             status_code=500,
             detail=f"Error getting job chain details: {str(e)}"
+        )
+
+
+# Worker status endpoint (for 系统信息.py)
+@app.get("/workers/status", tags=["Workers"])
+async def get_worker_status():
+    """Get worker status for system monitoring."""
+    try:
+        from src.api.dependencies import get_redis_client
+        from src.core.worker_status import get_worker_status_for_ui
+
+        redis_client = get_redis_client()
+        return get_worker_status_for_ui(redis_client)
+
+    except Exception as e:
+        logger.error(f"Error getting worker status: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error getting worker status: {str(e)}"
         )

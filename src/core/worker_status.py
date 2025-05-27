@@ -1,16 +1,17 @@
 """
-Centralized worker status management module.
+Simplified worker status management module.
 
-This module provides functions for checking worker status, health and availability
-across the application.
+Core functions for checking worker status and availability.
+UI-specific formatting is now handled by the API layer.
 """
 
 import time
-from typing import Dict, List, Any, Optional, Tuple
+from typing import Dict, Any, Optional
 import redis
 import logging
 
 logger = logging.getLogger(__name__)
+
 
 def normalize_redis_key(key):
     """
@@ -26,6 +27,7 @@ def normalize_redis_key(key):
         return key.decode("utf-8")
     return key
 
+
 def get_worker_heartbeats(redis_client: redis.Redis) -> Dict[str, Dict[str, Any]]:
     """
     Get all worker heartbeats from Redis.
@@ -37,42 +39,49 @@ def get_worker_heartbeats(redis_client: redis.Redis) -> Dict[str, Dict[str, Any]
         Dictionary mapping worker IDs to worker information
     """
     worker_info = {}
-    worker_heartbeats = redis_client.keys("dramatiq:__heartbeats__:*")
 
-    for key in worker_heartbeats:
-        normalized_key = normalize_redis_key(key)
-        worker_id = normalized_key.split(":")[-1]
-        last_heartbeat = redis_client.get(key)
+    try:
+        worker_heartbeats = redis_client.keys("dramatiq:__heartbeats__:*")
 
-        # Try to parse heartbeat
-        try:
-            heartbeat_value = float(last_heartbeat) if last_heartbeat else 0
-            heartbeat_age = time.time() - heartbeat_value
+        for key in worker_heartbeats:
+            normalized_key = normalize_redis_key(key)
+            worker_id = normalized_key.split(":")[-1]
+            last_heartbeat = redis_client.get(key)
 
-            # Determine worker type
-            worker_type = "unknown"
-            for wtype in ["gpu-inference", "gpu-embedding", "gpu-whisper", "cpu", "system"]:
-                if wtype in worker_id:
-                    worker_type = wtype
-                    break
+            # Try to parse heartbeat
+            try:
+                heartbeat_value = float(last_heartbeat) if last_heartbeat else 0
+                heartbeat_age = time.time() - heartbeat_value
 
-            # Determine status based on heartbeat age
-            status = "healthy" if heartbeat_age < 60 else "stalled"
+                # Determine worker type from worker ID
+                worker_type = "unknown"
+                for wtype in ["gpu-inference", "gpu-embedding", "gpu-whisper", "cpu"]:
+                    if wtype in worker_id:
+                        worker_type = wtype
+                        break
 
-            worker_info[worker_id] = {
-                "type": worker_type,
-                "last_heartbeat_seconds_ago": heartbeat_age,
-                "status": status
-            }
-        except (ValueError, TypeError):
-            # Handle case where heartbeat value is invalid
-            worker_info[worker_id] = {
-                "type": "unknown",
-                "last_heartbeat_seconds_ago": 0,
-                "status": "unknown"
-            }
+                # Determine status based on heartbeat age (60 second threshold)
+                status = "healthy" if heartbeat_age < 60 else "stale"
+
+                worker_info[worker_id] = {
+                    "type": worker_type,
+                    "last_heartbeat_seconds_ago": heartbeat_age,
+                    "status": status,
+                    "last_heartbeat_time": heartbeat_value
+                }
+            except (ValueError, TypeError):
+                # Handle case where heartbeat value is invalid
+                worker_info[worker_id] = {
+                    "type": "unknown",
+                    "last_heartbeat_seconds_ago": 0,
+                    "status": "error",
+                    "last_heartbeat_time": 0
+                }
+    except Exception as e:
+        logger.error(f"Error getting worker heartbeats: {str(e)}")
 
     return worker_info
+
 
 def get_active_worker_counts(redis_client: redis.Redis) -> Dict[str, int]:
     """
@@ -82,7 +91,7 @@ def get_active_worker_counts(redis_client: redis.Redis) -> Dict[str, int]:
         redis_client: Redis client instance
 
     Returns:
-        Dictionary mapping worker types to counts
+        Dictionary mapping worker types to counts of healthy workers
     """
     worker_info = get_worker_heartbeats(redis_client)
 
@@ -92,142 +101,74 @@ def get_active_worker_counts(redis_client: redis.Redis) -> Dict[str, int]:
         "gpu-embedding": 0,
         "gpu-whisper": 0,
         "cpu": 0,
-        "system": 0,
+        "total": 0
     }
 
-    # Count workers by type
+    # Count workers by type (only healthy ones)
     for worker_id, info in worker_info.items():
-        worker_type = info.get("type", "unknown")
-        if worker_type in worker_count and info.get("status") == "healthy":
-            worker_count[worker_type] += 1
+        if info.get("status") == "healthy":
+            worker_type = info.get("type", "unknown")
+            if worker_type in worker_count:
+                worker_count[worker_type] += 1
+            worker_count["total"] += 1
 
     return worker_count
 
 
-def get_worker_status_for_ui(redis_client: redis.Redis) -> Dict[str, Any]:
-    """
-    Get worker status information formatted for UI display with Chinese localization.
-
-    Args:
-        redis_client: Redis client instance
-
-    Returns:
-        Dictionary with worker status information for UI in Chinese
-    """
-    worker_counts = get_active_worker_counts(redis_client)
-
-    # Format for UI display with Chinese descriptions
-    active_workers = {}
-    worker_types = {
-        "gpu-inference": "LLM 和重排序",
-        "gpu-embedding": "向量嵌入",
-        "gpu-whisper": "语音转录",
-        "cpu": "文本处理",
-        "system": "系统管理"
-    }
-
-    for worker_type, description in worker_types.items():
-        count = worker_counts.get(worker_type, 0)
-        if count > 0:
-            active_workers[worker_type] = {
-                "count": count,
-                "description": description,
-                "status": "活跃"  # "active" in Chinese
-            }
-
-    # Get queue information
-    queue_stats = {}
-    queue_names = {
-        "inference_tasks": "推理任务",
-        "embedding_tasks": "嵌入任务",
-        "transcription_tasks": "转录任务",
-        "cpu_tasks": "CPU任务",
-        "system_tasks": "系统任务"
-    }
-
-    for queue_key, queue_name in queue_names.items():
-        redis_queue_key = f"dramatiq:{queue_key}:msgs"
-        queue_stats[queue_name] = redis_client.llen(redis_queue_key)
-
-    return {
-        "active_workers": active_workers,
-        "queue_stats": queue_stats
-    }
-
-def get_worker_status(redis_client: redis.Redis) -> Dict[str, Any]:
-    """
-    Get comprehensive information about running worker processes.
-    Incorporates the functionality from monitoring.py
-
-    Args:
-        redis_client: Redis client instance
-
-    Returns:
-        Dictionary with worker status information
-    """
-    try:
-        # Get worker information from Redis
-        workers = []
-        worker_keys = redis_client.keys("dramatiq:__heartbeats__:*")
-
-        for key in worker_keys:
-            normalized_key = normalize_redis_key(key)
-            worker_id = normalized_key.split(":")[-1]
-            last_heartbeat = redis_client.get(key)
-
-            if last_heartbeat:
-                try:
-                    heartbeat_age = time.time() - float(last_heartbeat)
-                    workers.append({
-                        "worker_id": worker_id,
-                        "last_heartbeat_seconds_ago": heartbeat_age
-                    })
-                except (ValueError, TypeError):
-                    # Handle invalid heartbeat format
-                    workers.append({
-                        "worker_id": worker_id,
-                        "last_heartbeat_seconds_ago": None
-                    })
-
-        # Group workers by type
-        worker_types = {}
-        for worker in workers:
-            worker_id = worker["worker_id"]
-
-            # Extract worker type from ID (assumes format like 'worker-gpu-inference-1')
-            parts = worker_id.split("-")
-            if len(parts) >= 3:
-                worker_type = "-".join(parts[1:-1])  # Get middle parts
-            else:
-                worker_type = "unknown"
-
-            if worker_type not in worker_types:
-                worker_types[worker_type] = []
-
-            worker_types[worker_type].append(worker)
-
-        return {
-            "total_workers": len(workers),
-            "worker_types": worker_types
-        }
-    except Exception as e:
-        logger.error(f"Error getting worker status: {str(e)}")
-        return {
-            "total_workers": 0,
-            "worker_types": {},
-            "error": str(e)
-        }
-
-def check_worker_availability(redis_client: redis.Redis, required_type: str) -> bool:
+def check_worker_availability(redis_client: redis.Redis, worker_type: str) -> bool:
     """
     Check if a specific type of worker is available.
 
     Args:
         redis_client: Redis client instance
-        required_type: Type of worker to check for
+        worker_type: Type of worker to check for
 
     Returns:
-        True if at least one worker of the required type is active
+        True if at least one worker of the required type is healthy
     """
-    worker_counts = get_active_worker_counts(redis_client)
-    return worker_counts.get(required_type, 0) > 0
+    try:
+        worker_counts = get_active_worker_counts(redis_client)
+        return worker_counts.get(worker_type, 0) > 0
+    except Exception as e:
+        logger.error(f"Error checking worker availability for {worker_type}: {str(e)}")
+        return False
+
+
+def get_worker_summary(redis_client: redis.Redis) -> Dict[str, Any]:
+    """
+    Get a summary of worker status for system monitoring.
+
+    Args:
+        redis_client: Redis client instance
+
+    Returns:
+        Dictionary with worker summary information
+    """
+    try:
+        worker_counts = get_active_worker_counts(redis_client)
+        worker_heartbeats = get_worker_heartbeats(redis_client)
+
+        # Calculate summary stats
+        total_workers = len(worker_heartbeats)
+        healthy_workers = worker_counts["total"]
+
+        # Check if all essential worker types are available
+        essential_types = ["gpu-inference", "gpu-embedding", "gpu-whisper", "cpu"]
+        all_types_available = all(worker_counts.get(wtype, 0) > 0 for wtype in essential_types)
+
+        return {
+            "total_workers": total_workers,
+            "healthy_workers": healthy_workers,
+            "worker_type_counts": {k: v for k, v in worker_counts.items() if k != "total"},
+            "all_types_available": all_types_available,
+            "health_ratio": healthy_workers / total_workers if total_workers > 0 else 0
+        }
+    except Exception as e:
+        logger.error(f"Error getting worker summary: {str(e)}")
+        return {
+            "total_workers": 0,
+            "healthy_workers": 0,
+            "worker_type_counts": {},
+            "all_types_available": False,
+            "health_ratio": 0
+        }
