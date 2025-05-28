@@ -535,24 +535,7 @@ def transcribe_video_task(job_id: str, media_path: str):
         )
         chunks = text_splitter.split_text(transcript)
 
-        # Create documents with metadata
-        documents = []
-        for i, chunk in enumerate(chunks):
-            doc = Document(
-                page_content=chunk,
-                metadata={
-                    "chunk_id": i,
-                    "source": "video",
-                    "source_id": job_id,
-                    "language": info.language,
-                    "total_chunks": len(chunks)
-                }
-            )
-            documents.append(doc)
-
-        logger.info(f"Transcription completed for job {job_id}: {len(chunks)} chunks, language: {info.language}")
-
-        # CRITICAL FIX: Get existing job data to preserve video metadata
+        # CRITICAL FIX: Get existing job data to determine platform and preserve video metadata
         current_job = job_tracker.get_job(job_id, include_progress=False)
         existing_result = current_job.get("result", {}) if current_job else {}
 
@@ -564,6 +547,51 @@ def transcribe_video_task(job_id: str, media_path: str):
             except:
                 existing_result = {}
 
+        # Determine the correct source based on URL or job metadata
+        source_type = "video"  # Default fallback
+
+        # Check job metadata for platform info
+        job_metadata = current_job.get("metadata", {}) if current_job else {}
+        if isinstance(job_metadata, str):
+            try:
+                import json
+                job_metadata = json.loads(job_metadata)
+            except:
+                job_metadata = {}
+
+        platform = job_metadata.get("platform", "").lower()
+        if platform == "youtube":
+            source_type = "youtube"
+        elif platform == "bilibili":
+            source_type = "bilibili"
+        else:
+            # Try to detect from URL in existing result
+            video_metadata = existing_result.get("video_metadata", {})
+            url = video_metadata.get("url", "")
+            if "youtube.com" in url or "youtu.be" in url:
+                source_type = "youtube"
+            elif "bilibili.com" in url:
+                source_type = "bilibili"
+
+        logger.info(f"Detected source type: {source_type} for job {job_id}")
+
+        # Create documents with correct source type
+        documents = []
+        for i, chunk in enumerate(chunks):
+            doc = Document(
+                page_content=chunk,
+                metadata={
+                    "chunk_id": i,
+                    "source": source_type,  # ✅ Use detected source type (youtube/bilibili/video)
+                    "source_id": job_id,
+                    "language": info.language,
+                    "total_chunks": len(chunks)
+                }
+            )
+            documents.append(doc)
+
+        logger.info(f"Transcription completed for job {job_id}: {len(chunks)} chunks, language: {info.language}")
+
         # Combine transcription result with existing data (video metadata)
         transcription_result = {
             **existing_result,  # Preserve video metadata from download step
@@ -572,7 +600,8 @@ def transcribe_video_task(job_id: str, media_path: str):
             "language": info.language,
             "duration": info.duration,
             "chunk_count": len(chunks),
-            "transcription_completed_at": time.time()
+            "transcription_completed_at": time.time(),
+            "detected_source": source_type  # Store detected source for next step
         }
 
         # Store combined result in job tracker
@@ -745,7 +774,7 @@ def generate_embeddings_task(job_id: str, documents: List[Dict]):
             doc.metadata["ingestion_time"] = current_time
             doc.metadata["job_id"] = job_id
 
-        # CRITICAL FIX: Get existing job data to preserve video metadata and transcript
+        # Get existing job data to preserve video metadata and use detected source
         current_job = job_tracker.get_job(job_id, include_progress=False)
         existing_result = current_job.get("result", {}) if current_job else {}
 
@@ -757,10 +786,16 @@ def generate_embeddings_task(job_id: str, documents: List[Dict]):
             except:
                 existing_result = {}
 
+        # Get detected source type
+        detected_source = existing_result.get("detected_source", "video")
+
         # Add video metadata to documents if available
         video_metadata = existing_result.get("video_metadata", {})
         if video_metadata:
             for doc in doc_objects:
+                # Update source to use detected type
+                doc.metadata["source"] = detected_source
+
                 # Add video metadata to document metadata
                 doc.metadata.update({
                     "title": video_metadata.get("title", "No title"),
