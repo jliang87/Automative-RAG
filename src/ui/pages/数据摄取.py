@@ -1,9 +1,3 @@
-"""
-Simplified upload page - src/ui/pages/数据摄取.py
-Clean upload interface - jobs auto-queue, no capability checks needed
-FIXED VERSION with proper navigation
-"""
-
 import streamlit as st
 import json
 from src.ui.api_client import api_request
@@ -11,7 +5,6 @@ from src.ui.session_init import initialize_session_state
 
 initialize_session_state()
 
-# Navigation helper function
 def navigate_to_tasks_with_job(job_id):
     """Helper function to navigate to tasks page with specific job"""
     st.session_state.selected_job_id = job_id
@@ -46,7 +39,7 @@ def submit_upload(upload_type, data):
         st.error(f"上传时发生错误: {str(e)}")
         return None
 
-# Upload tabs - Always show all options (jobs will queue automatically)
+# Upload tabs
 tab1, tab2, tab3 = st.tabs(["🎬 视频链接", "📄 PDF文档", "✍️ 文字内容"])
 
 with tab1:
@@ -59,7 +52,6 @@ with tab1:
         help="粘贴视频链接，系统将自动提取语音并转换为文字"
     )
 
-    # Simple metadata
     with st.expander("补充信息（可选）"):
         v_manufacturer = st.text_input("品牌", key="v_manufacturer")
         v_model = st.text_input("车型", key="v_model")
@@ -83,19 +75,20 @@ with tab1:
             })
 
         if job_id:
+            st.session_state['last_video_job_id'] = job_id
             st.success(f"✅ 视频已提交处理，任务ID: {job_id[:8]}...")
             st.info("📋 任务已加入处理队列，您可以在\"后台任务\"页面跟踪进度")
+            st.rerun()
 
-            # Quick action buttons - FIXED VERSION
-            col1, col2 = st.columns(2)
-            with col1:
-                if st.button("查看任务状态", key=f"view_video_status_{job_id[:8]}", use_container_width=True):
-                    navigate_to_tasks_with_job(job_id)
-            with col2:
-                if st.button("继续上传", key=f"continue_video_{job_id[:8]}", use_container_width=True):
-                    st.rerun()
-        else:
-            st.error("❌ 上传失败，请检查链接格式或稍后重试")
+    if 'last_video_job_id' in st.session_state:
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("查看任务状态", key=f"view_video_status", use_container_width=True):
+                navigate_to_tasks_with_job(st.session_state['last_video_job_id'])
+        with col2:
+            if st.button("继续上传", key=f"continue_video", use_container_width=True):
+                del st.session_state['last_video_job_id']
+                st.rerun()
 
 with tab2:
     st.subheader("PDF文档上传")
@@ -106,13 +99,11 @@ with tab2:
         help="支持文字版和扫描版PDF，系统会自动识别"
     )
 
-    # Simple metadata
     with st.expander("补充信息（可选）"):
         p_manufacturer = st.text_input("品牌", key="p_manufacturer")
         p_model = st.text_input("车型", key="p_model")
         p_year = st.text_input("年份", key="p_year")
 
-        # Processing options
         st.markdown("**处理选项：**")
         use_ocr = st.checkbox("启用OCR识别 (扫描版PDF)", value=True, key="use_ocr")
         extract_tables = st.checkbox("提取表格数据", value=True, key="extract_tables")
@@ -137,23 +128,20 @@ with tab2:
             })
 
         if job_id:
+            st.session_state['last_pdf_job_id'] = job_id
             st.success(f"✅ PDF已提交处理，任务ID: {job_id[:8]}...")
             st.info("📋 任务已加入处理队列，您可以在\"后台任务\"页面跟踪进度")
+            st.rerun()
 
-            # Show file info
-            file_size_mb = pdf_file.size / 1024 / 1024
-            st.write(f"📄 文件: {pdf_file.name} ({file_size_mb:.2f} MB)")
-
-            # Quick action buttons - FIXED VERSION
-            col1, col2 = st.columns(2)
-            with col1:
-                if st.button("查看任务状态", key=f"view_pdf_status_{job_id[:8]}", use_container_width=True):
-                    navigate_to_tasks_with_job(job_id)
-            with col2:
-                if st.button("继续上传", key=f"continue_pdf_{job_id[:8]}", use_container_width=True):
-                    st.rerun()
-        else:
-            st.error("❌ 上传失败，请重试")
+    if 'last_pdf_job_id' in st.session_state:
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("查看任务状态", key=f"view_pdf_status", use_container_width=True):
+                navigate_to_tasks_with_job(st.session_state['last_pdf_job_id'])
+        with col2:
+            if st.button("继续上传", key=f"continue_pdf", use_container_width=True):
+                del st.session_state['last_pdf_job_id']
+                st.rerun()
 
 with tab3:
     st.subheader("文字内容输入")
@@ -165,12 +153,10 @@ with tab3:
         help="支持多段落长文本，系统会自动分段处理"
     )
 
-    # Character count
     if text_content:
         char_count = len(text_content)
         st.caption(f"字符数: {char_count:,}")
 
-    # Simple metadata
     with st.expander("补充信息（可选）"):
         t_title = st.text_input("标题", key="t_title", placeholder="例如：2023款宝马X5技术规格")
         t_manufacturer = st.text_input("品牌", key="t_manufacturer")
@@ -201,19 +187,20 @@ with tab3:
             })
 
         if job_id:
+            st.session_state['last_text_job_id'] = job_id
             st.success(f"✅ 文字已提交处理，任务ID: {job_id[:8]}...")
             st.info("📋 任务已加入处理队列，您可以在\"后台任务\"页面跟踪进度")
+            st.rerun()
 
-            # Quick action buttons - FIXED VERSION
-            col1, col2 = st.columns(2)
-            with col1:
-                if st.button("查看任务状态", key=f"view_text_status_{job_id[:8]}", use_container_width=True):
-                    navigate_to_tasks_with_job(job_id)
-            with col2:
-                if st.button("继续输入", key=f"continue_text_{job_id[:8]}", use_container_width=True):
-                    st.rerun()
-        else:
-            st.error("❌ 提交失败，请重试")
+    if 'last_text_job_id' in st.session_state:
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("查看任务状态", key=f"view_text_status", use_container_width=True):
+                navigate_to_tasks_with_job(st.session_state['last_text_job_id'])
+        with col2:
+            if st.button("继续输入", key=f"continue_text", use_container_width=True):
+                del st.session_state['last_text_job_id']
+                st.rerun()
 
 # Upload tips
 st.markdown("---")
