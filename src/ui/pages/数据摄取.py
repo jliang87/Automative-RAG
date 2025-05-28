@@ -15,7 +15,7 @@ initialize_session_state()
 def navigate_to_tasks_with_job(job_id):
     """Helper function to navigate to tasks page with specific job"""
     st.session_state.selected_job_id = job_id
-    st.session_state.navigate_to_tasks = True
+    st.switch_page("pages/后台任务.py")
 
 st.title("📤 上传汽车资料")
 st.markdown("支持视频链接和PDF文档上传，任务将自动处理")
@@ -91,7 +91,6 @@ with tab1:
             with col1:
                 if st.button("查看任务状态", key=f"view_video_status_{job_id[:8]}", use_container_width=True):
                     navigate_to_tasks_with_job(job_id)
-                    # Don't call st.rerun() here - let the navigation happen
             with col2:
                 if st.button("继续上传", key=f"continue_video_{job_id[:8]}", use_container_width=True):
                     st.rerun()
@@ -150,7 +149,6 @@ with tab2:
             with col1:
                 if st.button("查看任务状态", key=f"view_pdf_status_{job_id[:8]}", use_container_width=True):
                     navigate_to_tasks_with_job(job_id)
-                    # Don't call st.rerun() here - let the navigation happen
             with col2:
                 if st.button("继续上传", key=f"continue_pdf_{job_id[:8]}", use_container_width=True):
                     st.rerun()
@@ -211,7 +209,6 @@ with tab3:
             with col1:
                 if st.button("查看任务状态", key=f"view_text_status_{job_id[:8]}", use_container_width=True):
                     navigate_to_tasks_with_job(job_id)
-                    # Don't call st.rerun() here - let the navigation happen
             with col2:
                 if st.button("继续输入", key=f"continue_text_{job_id[:8]}", use_container_width=True):
                     st.rerun()
@@ -258,8 +255,3 @@ with nav_cols[2]:
         st.switch_page("src/ui/主页.py")
 
 st.caption("数据摄取 - 所有任务都会自动排队处理，请耐心等待")
-
-# Check for navigation trigger at the end
-if st.session_state.get('navigate_to_tasks', False):
-    st.session_state.navigate_to_tasks = False
-    st.switch_page("pages/后台任务.py")
