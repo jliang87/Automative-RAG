@@ -1,6 +1,7 @@
 """
 Simplified upload page - src/ui/pages/数据摄取.py
 Clean upload interface - jobs auto-queue, no capability checks needed
+FIXED VERSION with proper navigation
 """
 
 import streamlit as st
@@ -9,6 +10,17 @@ from src.ui.api_client import api_request
 from src.ui.session_init import initialize_session_state
 
 initialize_session_state()
+
+# Navigation helper function
+def navigate_to_tasks_with_job(job_id):
+    """Helper function to navigate to tasks page with specific job"""
+    st.session_state.selected_job_id = job_id
+    st.session_state.navigate_to_tasks = True
+
+# Check for navigation trigger at the very beginning
+if st.session_state.get('navigate_to_tasks', False):
+    st.session_state.navigate_to_tasks = False
+    st.switch_page("pages/后台任务.py")
 
 st.title("📤 上传汽车资料")
 st.markdown("支持视频链接和PDF文档上传，任务将自动处理")
@@ -82,15 +94,9 @@ with tab1:
             # Quick action buttons - FIXED VERSION
             col1, col2 = st.columns(2)
             with col1:
-                # Use a unique key and avoid rerun conflicts
                 if st.button("查看任务状态", key=f"view_video_status_{job_id[:8]}", use_container_width=True):
-                    # Clear any conflicting state
-                    if 'current_job_id' in st.session_state:
-                        del st.session_state.current_job_id
-                    # Set the job ID for navigation
-                    st.session_state.selected_job_id = job_id
-                    # Use experimental_set_query_params to force navigation
-                    st.switch_page("pages/后台任务.py")
+                    navigate_to_tasks_with_job(job_id)
+                    st.rerun()
             with col2:
                 if st.button("继续上传", key=f"continue_video_{job_id[:8]}", use_container_width=True):
                     st.rerun()
@@ -148,12 +154,8 @@ with tab2:
             col1, col2 = st.columns(2)
             with col1:
                 if st.button("查看任务状态", key=f"view_pdf_status_{job_id[:8]}", use_container_width=True):
-                    # Clear any conflicting state
-                    if 'current_job_id' in st.session_state:
-                        del st.session_state.current_job_id
-                    # Set the job ID for navigation
-                    st.session_state.selected_job_id = job_id
-                    st.switch_page("pages/后台任务.py")
+                    navigate_to_tasks_with_job(job_id)
+                    st.rerun()
             with col2:
                 if st.button("继续上传", key=f"continue_pdf_{job_id[:8]}", use_container_width=True):
                     st.rerun()
@@ -213,12 +215,8 @@ with tab3:
             col1, col2 = st.columns(2)
             with col1:
                 if st.button("查看任务状态", key=f"view_text_status_{job_id[:8]}", use_container_width=True):
-                    # Clear any conflicting state
-                    if 'current_job_id' in st.session_state:
-                        del st.session_state.current_job_id
-                    # Set the job ID for navigation
-                    st.session_state.selected_job_id = job_id
-                    st.switch_page("pages/后台任务.py")
+                    navigate_to_tasks_with_job(job_id)
+                    st.rerun()
             with col2:
                 if st.button("继续输入", key=f"continue_text_{job_id[:8]}", use_container_width=True):
                     st.rerun()
