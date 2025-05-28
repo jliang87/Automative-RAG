@@ -1,7 +1,7 @@
-# src/core/worker_status.py - Simplified version keeping only what's needed
+# src/core/worker_status.py - Complete fixed version
 
 """
-Simplified worker status management - keeps only the fixes that were actually needed.
+Simplified worker status management - keeps only what's needed.
 """
 
 import time
@@ -197,6 +197,51 @@ def get_worker_status_for_ui(redis_client: redis.Redis) -> Dict[str, Any]:
                 "health_ratio": 0
             },
             "workers": {}
+        }
+
+
+def debug_redis_keys(redis_client: redis.Redis) -> Dict[str, Any]:
+    """
+    Debug function to analyze Redis keys for worker heartbeat issues.
+    """
+    try:
+        # Get all heartbeat-related keys
+        heartbeat_keys = redis_client.keys("dramatiq:__heartbeats__*")
+
+        debug_info = {
+            "total_heartbeat_keys": len(heartbeat_keys),
+            "heartbeat_keys": [normalize_redis_key(key) for key in heartbeat_keys],
+            "key_types": {},
+            "problematic_keys": []
+        }
+
+        # Check each key type
+        for key in heartbeat_keys:
+            normalized_key = normalize_redis_key(key)
+            try:
+                key_type = redis_client.type(key)
+                if isinstance(key_type, bytes):
+                    key_type = key_type.decode('utf-8')
+
+                debug_info["key_types"][normalized_key] = key_type
+
+                # Flag problematic keys
+                if key_type not in ['string', 'none']:
+                    debug_info["problematic_keys"].append(normalized_key)
+
+            except Exception as e:
+                debug_info["key_types"][normalized_key] = f"error: {e}"
+
+        return debug_info
+
+    except Exception as e:
+        logger.error(f"Error in debug_redis_keys: {e}")
+        return {
+            "error": str(e),
+            "total_heartbeat_keys": 0,
+            "heartbeat_keys": [],
+            "key_types": {},
+            "problematic_keys": []
         }
 
 

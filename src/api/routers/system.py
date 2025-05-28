@@ -1,4 +1,4 @@
-# src/api/routers/system.py - Updated with improved worker status
+# src/api/routers/system.py - Fixed imports
 
 import os
 import time
@@ -12,7 +12,7 @@ import redis
 from src.core.background.job_tracker import job_tracker
 from src.core.background.job_chain import job_chain
 from src.api.dependencies import get_redis_client, get_token_header
-from src.core.worker_status import get_worker_status_for_ui, get_worker_summary, debug_redis_keys
+from src.core.worker_status import get_worker_status_for_ui, get_worker_summary, debug_redis_keys, clean_problematic_redis_keys  # Fixed import
 from src.config.settings import settings
 
 router = APIRouter()
@@ -40,7 +40,6 @@ async def detailed_health_check():
         worker_status_result = get_worker_status_for_ui(redis_client)
         worker_info = worker_status_result.get("summary", {})
         workers_detail = worker_status_result.get("workers", {})
-        debug_info = worker_status_result.get("debug_info")
 
         # GPU health (formatted for UI consumption)
         gpu_health = get_clean_gpu_status()
@@ -69,7 +68,8 @@ async def detailed_health_check():
         }
 
         # Include debug info if no workers found
-        if worker_info.get("total_workers", 0) == 0 and debug_info:
+        if worker_info.get("total_workers", 0) == 0:
+            debug_info = debug_redis_keys(redis_client)
             response["debug_info"] = debug_info
             logger.warning(f"No workers detected. Debug info: {debug_info}")
 
@@ -338,8 +338,6 @@ async def cleanup_redis_heartbeats(redis_client: redis.Redis = Depends(get_redis
     This fixes the WRONGTYPE error by removing parent keys with wrong data types.
     """
     try:
-        from src.core.worker_status import clean_problematic_redis_keys
-
         result = clean_problematic_redis_keys(redis_client)
 
         return {
@@ -358,8 +356,6 @@ async def analyze_redis_keys(redis_client: redis.Redis = Depends(get_redis_clien
     Analyze Redis keys to identify potential issues with heartbeat detection.
     """
     try:
-        from src.core.worker_status import debug_redis_keys
-
         debug_info = debug_redis_keys(redis_client)
 
         return {
