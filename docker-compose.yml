@@ -1,4 +1,4 @@
-# docker-compose.yml (Updated for Option 1 - Dedicated GPU Workers)
+# docker-compose.yml (Fixed GPU memory allocation)
 
 services:
   # FastAPI Backend (unchanged)
@@ -39,8 +39,6 @@ services:
       retries: 3
       start_period: 40s
 
-  # === REPLACE the single worker-gpu with these 3 dedicated workers ===
-
   # GPU Worker 1: Whisper Transcription (2GB allocation)
   worker-gpu-whisper:
     build:
@@ -61,7 +59,7 @@ services:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - LOG_LEVEL=INFO
-      - PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:2048,expandable_segments:False
+      - PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:2048,expandable_segments:True
     volumes:
       - ./src:/app/src
       - ./data:/app/data
@@ -100,7 +98,7 @@ services:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - LOG_LEVEL=INFO
-      - PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:3072,expandable_segments:False
+      - PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:3072,expandable_segments:True
     volumes:
       - ./src:/app/src
       - ./data:/app/data
@@ -119,7 +117,7 @@ services:
       retries: 3
       start_period: 60s
 
-  # GPU Worker 3: LLM Inference (6GB allocation)
+  # GPU Worker 3: LLM Inference (10GB allocation for 16GB GPU)
   worker-gpu-inference:
     build:
       context: .
@@ -139,7 +137,7 @@ services:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - LOG_LEVEL=INFO
-      - PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:6144,expandable_segments:False
+      - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True,max_split_size_mb:512
     volumes:
       - ./src:/app/src
       - ./data:/app/data

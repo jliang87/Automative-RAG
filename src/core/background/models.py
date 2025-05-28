@@ -34,17 +34,17 @@ def set_memory_fraction_for_worker():
 
     worker_type = get_worker_type()
 
-    # Set memory fractions based on our 16GB allocation strategy
+    # Optimized for 16GB GPU (14.58GB usable)
     memory_fractions = {
-        "gpu-whisper": 0.125,    # 2GB out of 16GB
-        "gpu-embedding": 0.1875, # 3GB out of 16GB
-        "gpu-inference": 0.375,  # 6GB out of 16GB
+        "gpu-whisper": 0.15,  # 2.2GB - Whisper medium model
+        "gpu-embedding": 0.25,  # 3.6GB - BGE-M3 embedding model
+        "gpu-inference": 0.70,  # 10.2GB - LLM + ColBERT + BGE reranker
     }
 
     if worker_type in memory_fractions:
         fraction = memory_fractions[worker_type]
         torch.cuda.set_per_process_memory_fraction(fraction)
-        logger.info(f"Set GPU memory fraction to {fraction} for {worker_type}")
+        logger.info(f"Set GPU memory fraction to {fraction} for {worker_type} (16GB GPU optimized)")
 
 
 def preload_embedding_model():
@@ -208,19 +208,25 @@ def preload_colbert_reranker():
     logger.info(f"Preloading ColBERT and BGE reranking models on {settings.device}")
 
     try:
-        # Clear CUDA cache before loading
+        # ADDED: Clear CUDA cache before loading to ensure maximum available memory
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
             for i in range(torch.cuda.device_count()):
                 torch.cuda.synchronize(i)
 
-            # Log GPU memory status before loading
+        # Log GPU memory status before loading
+        if torch.cuda.is_available():
             for i in range(torch.cuda.device_count()):
                 device_name = torch.cuda.get_device_name(i)
                 allocated = torch.cuda.memory_allocated(i) / (1024 ** 3)
                 reserved = torch.cuda.memory_reserved(i) / (1024 ** 3)
+                total_memory = torch.cuda.get_device_properties(i).total_memory / (1024 ** 3)
+                free_memory = total_memory - reserved
                 logger.info(
-                    f"GPU {i} ({device_name}) before reranker loading: Allocated: {allocated:.2f} GB, Reserved: {reserved:.2f} GB")
+                    f"GPU {i} ({device_name}) before reranker loading: "
+                    f"Allocated: {allocated:.2f} GB, Reserved: {reserved:.2f} GB, "
+                    f"Free: {free_memory:.2f} GB of {total_memory:.2f} GB total"
+                )
 
         # Import reranker
         from src.core.colbert_reranker import ColBERTReranker
@@ -247,12 +253,28 @@ def preload_colbert_reranker():
             for i in range(torch.cuda.device_count()):
                 allocated = torch.cuda.memory_allocated(i) / (1024 ** 3)
                 reserved = torch.cuda.memory_reserved(i) / (1024 ** 3)
+                total_memory = torch.cuda.get_device_properties(i).total_memory / (1024 ** 3)
+                free_memory = total_memory - reserved
                 logger.info(
-                    f"GPU {i} after reranker loading: Allocated: {allocated:.2f} GB, Reserved: {reserved:.2f} GB")
+                    f"GPU {i} after reranker loading: "
+                    f"Allocated: {allocated:.2f} GB, Reserved: {reserved:.2f} GB, "
+                    f"Free: {free_memory:.2f} GB of {total_memory:.2f} GB total"
+                )
 
         logger.info(f"Successfully preloaded ColBERT and BGE reranking models")
     except Exception as e:
         logger.error(f"Failed to preload reranking models: {str(e)}")
+        # ADDED: In case of failure, log more details and continue without reranker
+        if torch.cuda.is_available():
+            for i in range(torch.cuda.device_count()):
+                allocated = torch.cuda.memory_allocated(i) / (1024 ** 3)
+                reserved = torch.cuda.memory_reserved(i) / (1024 ** 3)
+                total_memory = torch.cuda.get_device_properties(i).total_memory / (1024 ** 3)
+                logger.error(
+                    f"GPU {i} memory at failure: {allocated:.2f}GB allocated, {reserved:.2f}GB reserved, {total_memory:.2f}GB total")
+
+        # Set to None so the system can continue without reranking
+        _PRELOADED_COLBERT_RERANKER = None
 
 
 def preload_whisper_model():
