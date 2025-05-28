@@ -79,10 +79,12 @@ with tab1:
             st.success(f"✅ 视频已提交处理，任务ID: {job_id[:8]}...")
             st.info("📋 任务已加入处理队列，您可以在\"后台任务\"页面跟踪进度")
 
-            # Quick action buttons
+            # Quick action buttons - FIXED VERSION
             col1, col2 = st.columns(2)
             with col1:
                 if st.button("查看任务状态", key="view_video_status"):
+                    # Set the selected job in session state so it opens directly
+                    st.session_state.selected_job_id = job_id
                     st.switch_page("pages/后台任务.py")
             with col2:
                 if st.button("继续上传", key="continue_video"):
@@ -137,10 +139,12 @@ with tab2:
             file_size_mb = pdf_file.size / 1024 / 1024
             st.write(f"📄 文件: {pdf_file.name} ({file_size_mb:.2f} MB)")
 
-            # Quick action buttons
+            # Quick action buttons - FIXED VERSION
             col1, col2 = st.columns(2)
             with col1:
                 if st.button("查看任务状态", key="view_pdf_status"):
+                    # Set the selected job in session state so it opens directly
+                    st.session_state.selected_job_id = job_id
                     st.switch_page("pages/后台任务.py")
             with col2:
                 if st.button("继续上传", key="continue_pdf"):
@@ -197,10 +201,12 @@ with tab3:
             st.success(f"✅ 文字已提交处理，任务ID: {job_id[:8]}...")
             st.info("📋 任务已加入处理队列，您可以在\"后台任务\"页面跟踪进度")
 
-            # Quick action buttons
+            # Quick action buttons - FIXED VERSION
             col1, col2 = st.columns(2)
             with col1:
                 if st.button("查看任务状态", key="view_text_status"):
+                    # Set the selected job in session state so it opens directly
+                    st.session_state.selected_job_id = job_id
                     st.switch_page("pages/后台任务.py")
             with col2:
                 if st.button("继续输入", key="continue_text"):

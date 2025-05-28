@@ -93,10 +93,54 @@ async def get_query_result(job_id: str) -> Optional[QueryResponse]:
 
     # Return appropriate response based on job status
     if status == "completed":
+        # Get documents and clean them
+        documents = result.get("documents", [])
+
+        # Clean document format for UI
+        cleaned_documents = []
+        for doc_data in documents:
+            if isinstance(doc_data, dict):
+                # Clean the metadata to avoid null values
+                doc_metadata = doc_data.get("metadata", {})
+
+                cleaned_metadata = {
+                    "source": doc_metadata.get("source", "unknown"),
+                    "source_id": doc_metadata.get("source_id", ""),
+                    "url": doc_metadata.get("url") or "",  # Convert null to empty string
+                    "title": doc_metadata.get("title") or "No title",
+                    "author": doc_metadata.get("author") or "Unknown",
+                    "published_date": doc_metadata.get("published_date"),
+                    "manufacturer": doc_metadata.get("manufacturer") or "",
+                    "model": doc_metadata.get("model") or "",
+                    "year": doc_metadata.get("year"),
+                    "category": doc_metadata.get("category") or "",
+                    "engine_type": doc_metadata.get("engine_type") or "",
+                    "transmission": doc_metadata.get("transmission") or "",
+                    "custom_metadata": doc_metadata.get("custom_metadata")
+                }
+
+                cleaned_doc = {
+                    "id": doc_data.get("id", ""),
+                    "content": doc_data.get("content", ""),
+                    "metadata": cleaned_metadata,
+                    "relevance_score": doc_data.get("relevance_score", 0.0)
+                }
+                cleaned_documents.append(cleaned_doc)
+
+        # Clean the answer to remove any parsing artifacts
+        answer = result.get("answer", "")
+
+        # Remove common LLM thinking artifacts
+        if answer.startswith("</think>\n\n"):
+            answer = answer.replace("</think>\n\n", "").strip()
+        if answer.startswith("<think>") and "</think>" in answer:
+            # Remove entire thinking section
+            answer = answer.split("</think>")[-1].strip()
+
         return QueryResponse(
             query=result.get("query", metadata.get("query", "")),
-            answer=result.get("answer", ""),
-            documents=result.get("documents", []),
+            answer=answer,
+            documents=cleaned_documents,
             metadata_filters_used=metadata.get("metadata_filter"),
             execution_time=result.get("execution_time", 0),
             status=status,
