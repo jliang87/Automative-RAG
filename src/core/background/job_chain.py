@@ -276,23 +276,62 @@ class JobChain:
         # Clean up chain state
         self._delete_chain_state(job_id)
 
+    # Add this new method to the JobChain class (or replace existing _complete_job_chain)
     def _complete_job_chain(self, job_id: str) -> None:
-        """Complete the entire job chain."""
+        """Complete the entire job chain while preserving the final inference result."""
         logger.info(f"Job chain completed for job {job_id}")
 
         # Get final chain state for timing information
         chain_state = self._get_chain_state(job_id)
         total_duration = time.time() - chain_state["started_at"] if chain_state else 0
 
-        # Update job status
-        job_tracker.update_job_status(
-            job_id,
-            JobStatus.COMPLETED,
-            result={
+        # CRITICAL FIX: Get the current job to preserve inference result
+        current_job = job_tracker.get_job(job_id, include_progress=False)
+
+        if current_job and current_job.get("result"):
+            existing_result = current_job.get("result")
+
+            # If result is a string, try to parse it as JSON
+            if isinstance(existing_result, str):
+                try:
+                    import json
+                    existing_result = json.loads(existing_result)
+                except:
+                    existing_result = {"raw_result": existing_result}
+
+            # Check if we have inference data (query, answer, documents)
+            if isinstance(existing_result, dict) and ("answer" in existing_result or "query" in existing_result):
+                # Preserve the inference result and add completion metadata
+                final_result = existing_result.copy()
+                final_result["job_chain_completion"] = {
+                    "message": "Job chain completed successfully",
+                    "total_duration": total_duration,
+                    "step_timings": chain_state.get("step_timings", {}) if chain_state else {}
+                }
+                logger.info(
+                    f"Preserving inference result for job {job_id} with answer: {bool(final_result.get('answer'))}")
+            else:
+                # No inference result found, use timing info only
+                final_result = {
+                    "message": "Job chain completed successfully",
+                    "total_duration": total_duration,
+                    "step_timings": chain_state.get("step_timings", {}) if chain_state else {}
+                }
+                logger.warning(f"No inference result found for job {job_id}, using timing info only")
+        else:
+            # No existing job data, use timing info only
+            final_result = {
                 "message": "Job chain completed successfully",
                 "total_duration": total_duration,
                 "step_timings": chain_state.get("step_timings", {}) if chain_state else {}
             }
+            logger.warning(f"No existing job data for {job_id}, using timing info only")
+
+        # Update job status with the final result
+        job_tracker.update_job_status(
+            job_id,
+            "completed",
+            result=final_result
         )
 
         # Update progress to 100%
@@ -427,12 +466,25 @@ def download_video_task(job_id: str, url: str, metadata: Optional[Dict] = None):
 
         logger.info(f"Video download completed for job {job_id}, media saved to: {media_path}")
 
-        # On success, trigger next task
-        job_chain.task_completed(job_id, {
+        # CRITICAL FIX: Store the download result immediately
+        download_result = {
             "media_path": media_path,
             "video_metadata": video_metadata,
-            "download_completed_at": time.time()
-        })
+            "download_completed_at": time.time(),
+            "url": url,
+            "custom_metadata": metadata
+        }
+
+        # Store result in job tracker to preserve it
+        job_tracker.update_job_status(
+            job_id,
+            "processing",
+            result=download_result,
+            stage="video_download_completed"
+        )
+
+        # On success, trigger next task
+        job_chain.task_completed(job_id, download_result)
 
     except Exception as e:
         logger.error(f"Video download failed for job {job_id}: {str(e)}")
@@ -500,15 +552,39 @@ def transcribe_video_task(job_id: str, media_path: str):
 
         logger.info(f"Transcription completed for job {job_id}: {len(chunks)} chunks, language: {info.language}")
 
-        # On success, trigger next task
-        job_chain.task_completed(job_id, {
+        # CRITICAL FIX: Get existing job data to preserve video metadata
+        current_job = job_tracker.get_job(job_id, include_progress=False)
+        existing_result = current_job.get("result", {}) if current_job else {}
+
+        # Parse existing result if it's a string
+        if isinstance(existing_result, str):
+            try:
+                import json
+                existing_result = json.loads(existing_result)
+            except:
+                existing_result = {}
+
+        # Combine transcription result with existing data (video metadata)
+        transcription_result = {
+            **existing_result,  # Preserve video metadata from download step
             "documents": [{"content": doc.page_content, "metadata": doc.metadata} for doc in documents],
             "transcript": transcript,
             "language": info.language,
             "duration": info.duration,
             "chunk_count": len(chunks),
             "transcription_completed_at": time.time()
-        })
+        }
+
+        # Store combined result in job tracker
+        job_tracker.update_job_status(
+            job_id,
+            "processing",
+            result=transcription_result,
+            stage="video_transcription_completed"
+        )
+
+        # On success, trigger next task
+        job_chain.task_completed(job_id, transcription_result)
 
     except Exception as e:
         logger.error(f"Video transcription failed for job {job_id}: {str(e)}")
@@ -550,12 +626,25 @@ def process_pdf_task(job_id: str, file_path: str, metadata: Optional[Dict] = Non
                 "metadata": doc.metadata
             })
 
-        # On success, trigger next task
-        job_chain.task_completed(job_id, {
+        # CRITICAL FIX: Store PDF processing result
+        pdf_result = {
             "documents": document_dicts,
             "document_count": len(documents),
-            "pdf_processing_completed_at": time.time()
-        })
+            "pdf_processing_completed_at": time.time(),
+            "file_path": file_path,
+            "custom_metadata": metadata
+        }
+
+        # Store result in job tracker
+        job_tracker.update_job_status(
+            job_id,
+            "processing",
+            result=pdf_result,
+            stage="pdf_processing_completed"
+        )
+
+        # On success, trigger next task
+        job_chain.task_completed(job_id, pdf_result)
 
     except Exception as e:
         logger.error(f"PDF processing failed for job {job_id}: {str(e)}")
@@ -606,12 +695,25 @@ def process_text_task(job_id: str, text: str, metadata: Optional[Dict] = None):
                 "metadata": doc.metadata
             })
 
-        # On success, trigger next task
-        job_chain.task_completed(job_id, {
+        # CRITICAL FIX: Store text processing result
+        text_result = {
             "documents": document_dicts,
             "chunk_count": len(chunks),
-            "text_processing_completed_at": time.time()
-        })
+            "text_processing_completed_at": time.time(),
+            "original_text": text,
+            "custom_metadata": metadata
+        }
+
+        # Store result in job tracker
+        job_tracker.update_job_status(
+            job_id,
+            "processing",
+            result=text_result,
+            stage="text_processing_completed"
+        )
+
+        # On success, trigger next task
+        job_chain.task_completed(job_id, text_result)
 
     except Exception as e:
         logger.error(f"Text processing failed for job {job_id}: {str(e)}")
@@ -637,11 +739,37 @@ def generate_embeddings_task(job_id: str, documents: List[Dict]):
             )
             doc_objects.append(doc)
 
-        # Add ingestion timestamp
+        # Add ingestion timestamp and job ID
         current_time = time.time()
         for doc in doc_objects:
             doc.metadata["ingestion_time"] = current_time
             doc.metadata["job_id"] = job_id
+
+        # CRITICAL FIX: Get existing job data to preserve video metadata and transcript
+        current_job = job_tracker.get_job(job_id, include_progress=False)
+        existing_result = current_job.get("result", {}) if current_job else {}
+
+        # Parse existing result if it's a string
+        if isinstance(existing_result, str):
+            try:
+                import json
+                existing_result = json.loads(existing_result)
+            except:
+                existing_result = {}
+
+        # Add video metadata to documents if available
+        video_metadata = existing_result.get("video_metadata", {})
+        if video_metadata:
+            for doc in doc_objects:
+                # Add video metadata to document metadata
+                doc.metadata.update({
+                    "title": video_metadata.get("title", "No title"),
+                    "author": video_metadata.get("author", "Unknown"),
+                    "url": video_metadata.get("url", ""),
+                    "video_id": video_metadata.get("video_id", ""),
+                    "published_date": video_metadata.get("published_date"),
+                    "description": video_metadata.get("description", "")
+                })
 
         # Add to vector store using preloaded embedding model
         vector_store = get_vector_store()
@@ -649,12 +777,25 @@ def generate_embeddings_task(job_id: str, documents: List[Dict]):
 
         logger.info(f"Embedding generation completed for job {job_id}: {len(doc_ids)} document IDs")
 
-        # On success, complete the job (no next task for ingestion workflows)
-        job_chain.task_completed(job_id, {
+        # Combine embedding result with existing data (video metadata + transcript)
+        final_result = {
+            **existing_result,  # Preserve all previous data
             "document_ids": doc_ids,
             "document_count": len(doc_ids),
-            "embedding_completed_at": time.time()
-        })
+            "embedding_completed_at": time.time(),
+            "ingestion_completed": True
+        }
+
+        # Store final result in job tracker
+        job_tracker.update_job_status(
+            job_id,
+            "processing",  # Keep as processing until job chain completes
+            result=final_result,
+            stage="embeddings_completed"
+        )
+
+        # On success, complete the job (this is the final step for video processing)
+        job_chain.task_completed(job_id, final_result)
 
     except Exception as e:
         logger.error(f"Embedding generation failed for job {job_id}: {str(e)}")
@@ -704,6 +845,7 @@ def retrieve_documents_task(job_id: str, query: str, metadata_filter: Optional[D
         job_chain.task_failed(job_id, f"Document retrieval failed: {str(e)}")
 
 
+# Replace these two functions in your src/core/background/job_chain.py
 @dramatiq.actor(queue_name="inference_tasks", store_results=True, max_retries=2)
 def llm_inference_task(job_id: str, query: str, documents: List[Dict]):
     """Perform LLM inference using preloaded models."""
@@ -755,13 +897,25 @@ def llm_inference_task(job_id: str, query: str, documents: List[Dict]):
 
         logger.info(f"LLM inference completed for job {job_id}")
 
-        # On success, complete the job
-        job_chain.task_completed(job_id, {
+        # CRITICAL FIX: Create the complete inference result
+        inference_result = {
             "query": query,
             "answer": answer,
             "documents": formatted_documents,
+            "document_count": len(formatted_documents),
             "inference_completed_at": time.time()
-        })
+        }
+
+        # CRITICAL FIX: Store the complete result in job tracker BEFORE calling task_completed
+        job_tracker.update_job_status(
+            job_id,
+            "processing",  # Keep as processing until job chain completes
+            result=inference_result,  # Store the actual inference result
+            stage="llm_inference_completed"
+        )
+
+        # Pass the inference result to job chain (this will trigger completion)
+        job_chain.task_completed(job_id, inference_result)
 
     except Exception as e:
         logger.error(f"LLM inference failed for job {job_id}: {str(e)}")
