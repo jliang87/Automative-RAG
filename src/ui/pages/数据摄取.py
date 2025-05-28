@@ -82,12 +82,17 @@ with tab1:
             # Quick action buttons - FIXED VERSION
             col1, col2 = st.columns(2)
             with col1:
-                if st.button("查看任务状态", key="view_video_status"):
-                    # Set the selected job in session state so it opens directly
+                # Use a unique key and avoid rerun conflicts
+                if st.button("查看任务状态", key=f"view_video_status_{job_id[:8]}", use_container_width=True):
+                    # Clear any conflicting state
+                    if 'current_job_id' in st.session_state:
+                        del st.session_state.current_job_id
+                    # Set the job ID for navigation
                     st.session_state.selected_job_id = job_id
+                    # Use experimental_set_query_params to force navigation
                     st.switch_page("pages/后台任务.py")
             with col2:
-                if st.button("继续上传", key="continue_video"):
+                if st.button("继续上传", key=f"continue_video_{job_id[:8]}", use_container_width=True):
                     st.rerun()
         else:
             st.error("❌ 上传失败，请检查链接格式或稍后重试")
@@ -142,12 +147,15 @@ with tab2:
             # Quick action buttons - FIXED VERSION
             col1, col2 = st.columns(2)
             with col1:
-                if st.button("查看任务状态", key="view_pdf_status"):
-                    # Set the selected job in session state so it opens directly
+                if st.button("查看任务状态", key=f"view_pdf_status_{job_id[:8]}", use_container_width=True):
+                    # Clear any conflicting state
+                    if 'current_job_id' in st.session_state:
+                        del st.session_state.current_job_id
+                    # Set the job ID for navigation
                     st.session_state.selected_job_id = job_id
                     st.switch_page("pages/后台任务.py")
             with col2:
-                if st.button("继续上传", key="continue_pdf"):
+                if st.button("继续上传", key=f"continue_pdf_{job_id[:8]}", use_container_width=True):
                     st.rerun()
         else:
             st.error("❌ 上传失败，请重试")
@@ -204,12 +212,15 @@ with tab3:
             # Quick action buttons - FIXED VERSION
             col1, col2 = st.columns(2)
             with col1:
-                if st.button("查看任务状态", key="view_text_status"):
-                    # Set the selected job in session state so it opens directly
+                if st.button("查看任务状态", key=f"view_text_status_{job_id[:8]}", use_container_width=True):
+                    # Clear any conflicting state
+                    if 'current_job_id' in st.session_state:
+                        del st.session_state.current_job_id
+                    # Set the job ID for navigation
                     st.session_state.selected_job_id = job_id
                     st.switch_page("pages/后台任务.py")
             with col2:
-                if st.button("继续输入", key="continue_text"):
+                if st.button("继续输入", key=f"continue_text_{job_id[:8]}", use_container_width=True):
                     st.rerun()
         else:
             st.error("❌ 提交失败，请重试")
