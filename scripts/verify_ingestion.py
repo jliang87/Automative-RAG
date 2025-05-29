@@ -1,10 +1,6 @@
 #!/usr/bin/env python3
 """
-Ingestion verification script for the RAG system.
-
-This script helps verify that documents are properly ingested into the vector store
-and can be retrieved correctly. It can also help diagnose issues with document
-processing, embedding, and retrieval.
+Complete ingestion verification script for the RAG system.
 """
 
 import os
@@ -12,6 +8,7 @@ import sys
 import json
 import argparse
 import logging
+import time
 from typing import List, Dict, Any, Optional
 
 # Add project root to path
@@ -19,10 +16,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Import project modules
 from src.config.settings import settings
-from src.core.document_processor import DocumentProcessor
 from src.core.vectorstore import QdrantStore
-from src.core.retriever import HybridRetriever
-from src.core.colbert_reranker import ColBERTReranker
+from qdrant_client import QdrantClient
 
 # Configure logging
 logging.basicConfig(
@@ -36,276 +31,356 @@ logging.basicConfig(
 logger = logging.getLogger("verify_ingestion")
 
 
-def initialize_components():
-    """Initialize the components needed for verification."""
-    logger.info("Initializing components...")
+def initialize_vector_store():
+    """Initialize vector store for verification."""
+    logger.info("Initializing vector store...")
 
-    # Initialize vector store
-    from qdrant_client import QdrantClient
     qdrant_client = QdrantClient(
         host=settings.qdrant_host,
         port=settings.qdrant_port,
     )
+
+    # Initialize in metadata-only mode for verification
     vector_store = QdrantStore(
         client=qdrant_client,
         collection_name=settings.qdrant_collection,
-        embedding_function=settings.embedding_function,
+        embedding_function=None,  # Metadata-only mode
     )
 
-    # Initialize ColBERT reranker
-    reranker = ColBERTReranker(
-        model_name=settings.default_colbert_model,
-        device=settings.device,
-        batch_size=settings.colbert_batch_size,
-        use_fp16=settings.use_fp16,
-        use_bge_reranker=settings.use_bge_reranker,
-        colbert_weight=settings.colbert_weight,
-        bge_weight=settings.bge_weight,
-        bge_model_name=settings.default_bge_reranker_model
-    )
-
-    # Initialize retriever
-    retriever = HybridRetriever(
-        vector_store=vector_store,
-        reranker=reranker,
-        top_k=settings.retriever_top_k,
-        rerank_top_k=settings.reranker_top_k,
-    )
-
-    # Initialize document processor
-    processor = DocumentProcessor(
-        vector_store=vector_store,
-        chunk_size=settings.chunk_size,
-        chunk_overlap=settings.chunk_overlap,
-        device=settings.device,
-    )
-
-    return vector_store, retriever, processor
+    return vector_store
 
 
-def verify_video(processor: DocumentProcessor, url: str, force_refresh: bool = False) -> Dict[str, Any]:
+def search_documents_by_job_id(vector_store: QdrantStore, job_id: str) -> List[Dict[str, Any]]:
     """
-    Verify that a video was properly ingested and is retrievable.
+    Search for documents by job ID.
 
     Args:
-        processor: Document processor
-        url: Video URL to verify
-        force_refresh: Whether to force reprocessing of the video
+        vector_store: Vector store instance
+        job_id: Job ID to search for
 
     Returns:
-        Dictionary with verification results
+        List of documents found
     """
-    logger.info(f"Verifying video ingestion for: {url}")
+    logger.info(f"Searching for documents with job_id: {job_id}")
 
-    if force_refresh:
-        # Process the video (reprocess if it already exists)
-        doc_ids = processor.process_video(url, force_refresh=True)
-        logger.info(f"Reprocessed video, got {len(doc_ids)} document IDs")
+    try:
+        # Search by metadata
+        documents = vector_store.search_by_metadata(
+            metadata_filter={"job_id": job_id},
+            limit=100
+        )
 
-    # Verify ingestion
-    result = processor.verify_ingestion(url)
+        logger.info(f"Found {len(documents)} documents for job {job_id}")
+        return [{"content": doc.page_content, "metadata": doc.metadata} for doc in documents]
 
-    # Print details
-    if result["verification_success"]:
-        logger.info(f"Verification successful! Found {result['documents_found']} documents")
-    else:
-        logger.error(f"Verification failed! No documents found for {url}")
-
-    return result
+    except Exception as e:
+        logger.error(f"Error searching documents: {e}")
+        return []
 
 
-def verify_all_videos(processor: DocumentProcessor, urls: List[str], force_refresh: bool = False) -> Dict[str, Any]:
+def search_documents_by_content(vector_store: QdrantStore, search_term: str) -> List[Dict[str, Any]]:
     """
-    Verify multiple videos.
+    Search for documents containing specific content.
 
     Args:
-        processor: Document processor
-        urls: List of video URLs to verify
-        force_refresh: Whether to force reprocessing
+        vector_store: Vector store instance
+        search_term: Term to search for in document content
 
     Returns:
-        Dictionary with verification results
+        List of matching documents
     """
-    results = {
-        "total": len(urls),
-        "successful": 0,
-        "failed": 0,
-        "details": []
+    logger.info(f"Searching for documents containing: '{search_term}'")
+
+    try:
+        # Get all documents (this is a brute force approach for debugging)
+        # In production, you'd want to use proper text search
+
+        collection_info = vector_store.client.get_collection(vector_store.collection_name)
+        logger.info(f"Collection has {collection_info.vectors_count} total documents")
+
+        # Scroll through all documents
+        all_docs = []
+        scroll_result = vector_store.client.scroll(
+            collection_name=vector_store.collection_name,
+            limit=1000,  # Adjust as needed
+            with_payload=True,
+            with_vectors=False
+        )
+
+        points = scroll_result[0]
+
+        matching_docs = []
+        for point in points:
+            content = point.payload.get("page_content", "")
+            metadata = point.payload.get("metadata", {})
+
+            # Check if search term is in content (case insensitive)
+            if search_term.lower() in content.lower():
+                matching_docs.append({
+                    "id": point.id,
+                    "content": content,
+                    "metadata": metadata,
+                    "relevance": "content_match"
+                })
+
+            # Also check metadata fields
+            elif any(search_term.lower() in str(v).lower() for v in metadata.values() if v):
+                matching_docs.append({
+                    "id": point.id,
+                    "content": content,
+                    "metadata": metadata,
+                    "relevance": "metadata_match"
+                })
+
+        logger.info(f"Found {len(matching_docs)} documents containing '{search_term}'")
+        return matching_docs
+
+    except Exception as e:
+        logger.error(f"Error searching by content: {e}")
+        return []
+
+
+def get_collection_stats(vector_store: QdrantStore) -> Dict[str, Any]:
+    """Get detailed collection statistics."""
+    logger.info("Getting collection statistics...")
+
+    try:
+        stats = vector_store.get_stats()
+
+        # Get additional info
+        collection_info = vector_store.client.get_collection(vector_store.collection_name)
+
+        # Sample some documents to understand structure
+        sample_docs = vector_store.client.scroll(
+            collection_name=vector_store.collection_name,
+            limit=5,
+            with_payload=True,
+            with_vectors=False
+        )[0]
+
+        sample_metadata = []
+        for point in sample_docs:
+            metadata = point.payload.get("metadata", {})
+            sample_metadata.append({
+                "source": metadata.get("source"),
+                "job_id": metadata.get("job_id"),
+                "title": metadata.get("title", "")[:50] + "..." if metadata.get("title") else None,
+                "chunk_id": metadata.get("chunk_id"),
+                "ingestion_time": metadata.get("ingestion_time")
+            })
+
+        enhanced_stats = {
+            "collection_name": vector_store.collection_name,
+            "vector_count": collection_info.vectors_count,
+            "collection_status": collection_info.status,
+            "sample_documents": sample_metadata,
+            "raw_stats": stats
+        }
+
+        return enhanced_stats
+
+    except Exception as e:
+        logger.error(f"Error getting stats: {e}")
+        return {"error": str(e)}
+
+
+def analyze_job_documents(vector_store: QdrantStore, job_id: str) -> Dict[str, Any]:
+    """
+    Comprehensive analysis of documents for a specific job.
+
+    Args:
+        vector_store: Vector store instance
+        job_id: Job ID to analyze
+
+    Returns:
+        Analysis results
+    """
+    logger.info(f"Analyzing documents for job: {job_id}")
+
+    documents = search_documents_by_job_id(vector_store, job_id)
+
+    if not documents:
+        return {
+            "job_id": job_id,
+            "found": False,
+            "message": "No documents found for this job ID"
+        }
+
+    # Analyze the documents
+    analysis = {
+        "job_id": job_id,
+        "found": True,
+        "document_count": len(documents),
+        "documents": [],
+        "content_analysis": {
+            "total_characters": 0,
+            "avg_chunk_length": 0,
+            "sources": set(),
+            "keywords": {}
+        }
     }
 
-    for url in urls:
-        result = verify_video(processor, url, force_refresh)
-        results["details"].append(result)
+    total_chars = 0
+    keyword_counts = {}
 
-        if result["verification_success"]:
-            results["successful"] += 1
-        else:
-            results["failed"] += 1
+    for i, doc in enumerate(documents):
+        content = doc["content"]
+        metadata = doc["metadata"]
 
-    logger.info(f"Verification complete: {results['successful']}/{results['total']} successful")
-    return results
+        total_chars += len(content)
 
-
-def test_query(retriever: HybridRetriever, query: str, metadata_filter: Optional[Dict[str, Any]] = None) -> Dict[
-    str, Any]:
-    """
-    Test a query to see what documents are retrieved.
-
-    Args:
-        retriever: HybridRetriever instance
-        query: Query string to test
-        metadata_filter: Optional metadata filter
-
-    Returns:
-        Dictionary with query results
-    """
-    logger.info(f"Testing query: '{query}'")
-    if metadata_filter:
-        logger.info(f"With metadata filter: {metadata_filter}")
-
-    # Retrieve documents
-    docs, execution_time = retriever.retrieve(
-        query=query,
-        metadata_filter=metadata_filter,
-        rerank=True,
-        ensure_source_diversity=True
-    )
-
-    # Format results
-    sources = {}
-    results = {
-        "query": query,
-        "metadata_filter": metadata_filter,
-        "execution_time": execution_time,
-        "documents_retrieved": len(docs),
-        "sources": {},
-        "results": []
-    }
-
-    for doc, score in docs:
-        source = doc.metadata.get("source", "unknown")
-        source_id = doc.metadata.get("source_id", "unknown")
-
-        # Track source statistics
-        source_key = f"{source}:{source_id}"
-        if source_key not in sources:
-            sources[source_key] = 0
-        sources[source_key] += 1
-
-        # Add to results
-        results["results"].append({
-            "score": score,
-            "content": doc.page_content[:200] + "..." if len(doc.page_content) > 200 else doc.page_content,
+        # Extract key info
+        doc_info = {
+            "document_number": i + 1,
+            "content_length": len(content),
+            "content_preview": content[:200] + "..." if len(content) > 200 else content,
             "metadata": {
-                "source": source,
-                "source_id": source_id,
-                "title": doc.metadata.get("title", "Unknown"),
-                "chunk_id": doc.metadata.get("chunk_id", -1),
-                "total_chunks": doc.metadata.get("total_chunks", 0)
+                "source": metadata.get("source"),
+                "chunk_id": metadata.get("chunk_id"),
+                "title": metadata.get("title"),
+                "ingestion_time": metadata.get("ingestion_time")
             }
-        })
+        }
 
-    # Add source counts
-    for source, count in sources.items():
-        results["sources"][source] = count
+        analysis["documents"].append(doc_info)
 
-    logger.info(f"Query returned {len(docs)} documents from {len(sources)} sources")
-    return results
+        # Track sources
+        if metadata.get("source"):
+            analysis["content_analysis"]["sources"].add(metadata["source"])
+
+        # Simple keyword extraction (look for key terms)
+        key_terms = ["吉利", "星越", "卡车", "碰撞", "事故", "安全"]
+        for term in key_terms:
+            if term in content:
+                keyword_counts[term] = keyword_counts.get(term, 0) + 1
+
+    # Finalize analysis
+    analysis["content_analysis"]["total_characters"] = total_chars
+    analysis["content_analysis"]["avg_chunk_length"] = total_chars / len(documents) if documents else 0
+    analysis["content_analysis"]["sources"] = list(analysis["content_analysis"]["sources"])
+    analysis["content_analysis"]["keywords"] = keyword_counts
+
+    return analysis
 
 
-def repair_vector_store(vector_store: QdrantStore) -> Dict[str, Any]:
+def debug_query_pipeline(vector_store: QdrantStore, query: str, job_id: str = None) -> Dict[str, Any]:
     """
-    Attempt to repair the vector store.
+    Debug why a query might not be finding expected documents.
 
     Args:
-        vector_store: Vector store to repair
+        vector_store: Vector store instance
+        query: Query to debug
+        job_id: Optional job ID to focus on
 
     Returns:
-        Dictionary with repair results
+        Debug information
     """
-    logger.info("Attempting to repair vector store...")
+    logger.info(f"Debugging query: '{query}'")
 
-    # Get stats before repair
-    before_stats = vector_store.get_stats()
-    logger.info(f"Before repair: {before_stats.get('vectors_count', 0)} vectors in collection")
-
-    # Perform repair
-    repair_result = vector_store.repair_indices()
-
-    # Get stats after repair
-    after_stats = vector_store.get_stats()
-    logger.info(f"After repair: {after_stats.get('vectors_count', 0)} vectors in collection")
-
-    return {
-        "before": before_stats,
-        "after": after_stats,
-        "repair_result": repair_result
+    debug_info = {
+        "query": query,
+        "job_id": job_id,
+        "steps": {}
     }
+
+    # Step 1: Check if documents exist for the job
+    if job_id:
+        job_docs = search_documents_by_job_id(vector_store, job_id)
+        debug_info["steps"]["job_documents"] = {
+            "found": len(job_docs),
+            "sample_content": [doc["content"][:100] + "..." for doc in job_docs[:3]]
+        }
+
+    # Step 2: Search for query terms in content
+    query_terms = query.split()
+    for term in query_terms:
+        matching_docs = search_documents_by_content(vector_store, term)
+        debug_info["steps"][f"term_search_{term}"] = {
+            "term": term,
+            "matches": len(matching_docs),
+            "sample_matches": [
+                {
+                    "job_id": doc["metadata"].get("job_id"),
+                    "source": doc["metadata"].get("source"),
+                    "content_preview": doc["content"][:100] + "..."
+                }
+                for doc in matching_docs[:3]
+            ]
+        }
+
+    # Step 3: Check collection status
+    stats = get_collection_stats(vector_store)
+    debug_info["steps"]["collection_status"] = stats
+
+    return debug_info
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Verify document ingestion and retrieval")
+    parser = argparse.ArgumentParser(description="Debug document ingestion and retrieval")
     subparsers = parser.add_subparsers(dest="command", help="Command to run")
 
-    # Verify video command
-    verify_parser = subparsers.add_parser("verify-video", help="Verify a video was properly ingested")
-    verify_parser.add_argument("url", help="URL of the video to verify")
-    verify_parser.add_argument("--force-refresh", action="store_true", help="Force reprocessing")
+    # Search by job ID
+    job_parser = subparsers.add_parser("search-job", help="Search documents by job ID")
+    job_parser.add_argument("job_id", help="Job ID to search for")
 
-    # Verify all videos command
-    verify_all_parser = subparsers.add_parser("verify-all", help="Verify all videos in a list")
-    verify_all_parser.add_argument("urls_file", help="JSON file containing a list of video URLs")
-    verify_all_parser.add_argument("--force-refresh", action="store_true", help="Force reprocessing")
+    # Search by content
+    content_parser = subparsers.add_parser("search-content", help="Search documents by content")
+    content_parser.add_argument("search_term", help="Term to search for in document content")
 
-    # Test query command
-    query_parser = subparsers.add_parser("test-query", help="Test a query")
-    query_parser.add_argument("query", help="Query string to test")
-    query_parser.add_argument("--metadata", help="JSON metadata filter")
+    # Get collection stats
+    stats_parser = subparsers.add_parser("stats", help="Get collection statistics")
 
-    # Repair vector store command
-    repair_parser = subparsers.add_parser("repair", help="Repair vector store")
+    # Analyze job
+    analyze_parser = subparsers.add_parser("analyze-job", help="Analyze documents for a specific job")
+    analyze_parser.add_argument("job_id", help="Job ID to analyze")
+
+    # Debug query
+    debug_parser = subparsers.add_parser("debug-query", help="Debug why a query might not work")
+    debug_parser.add_argument("query", help="Query to debug")
+    debug_parser.add_argument("--job-id", help="Optional job ID to focus debugging on")
 
     args = parser.parse_args()
 
-    # Create logs directory if it doesn't exist
+    if not args.command:
+        parser.print_help()
+        return
+
+    # Create logs directory
     os.makedirs("logs", exist_ok=True)
 
-    # Initialize components
-    vector_store, retriever, processor = initialize_components()
+    # Initialize vector store
+    vector_store = initialize_vector_store()
 
-    if args.command == "verify-video":
-        result = verify_video(processor, args.url, args.force_refresh)
-        print(json.dumps(result, indent=2))
+    if args.command == "search-job":
+        documents = search_documents_by_job_id(vector_store, args.job_id)
+        result = {
+            "job_id": args.job_id,
+            "documents_found": len(documents),
+            "documents": documents
+        }
+        print(json.dumps(result, indent=2, ensure_ascii=False))
 
-    elif args.command == "verify-all":
-        with open(args.urls_file, "r") as f:
-            urls = json.load(f)
+    elif args.command == "search-content":
+        documents = search_documents_by_content(vector_store, args.search_term)
+        result = {
+            "search_term": args.search_term,
+            "documents_found": len(documents),
+            "documents": documents
+        }
+        print(json.dumps(result, indent=2, ensure_ascii=False))
 
-        if not isinstance(urls, list):
-            logger.error("URLs file must contain a JSON array of URLs")
-            sys.exit(1)
+    elif args.command == "stats":
+        stats = get_collection_stats(vector_store)
+        print(json.dumps(stats, indent=2, ensure_ascii=False))
 
-        results = verify_all_videos(processor, urls, args.force_refresh)
-        print(json.dumps(results, indent=2))
+    elif args.command == "analyze-job":
+        analysis = analyze_job_documents(vector_store, args.job_id)
+        print(json.dumps(analysis, indent=2, ensure_ascii=False))
 
-        # Save results to file
-        output_file = f"verification_results_{int(time.time())}.json"
-        with open(output_file, "w") as f:
-            json.dump(results, f, indent=2)
-        logger.info(f"Results saved to {output_file}")
+    elif args.command == "debug-query":
+        debug_info = debug_query_pipeline(vector_store, args.query, args.job_id)
+        print(json.dumps(debug_info, indent=2, ensure_ascii=False))
 
-    elif args.command == "test-query":
-        metadata_filter = None
-        if args.metadata:
-            try:
-                metadata_filter = json.loads(args.metadata)
-            except json.JSONDecodeError:
-                logger.error("Invalid metadata JSON")
-                sys.exit(1)
 
-        result = test_query(retriever, args.query, metadata_filter)
-        print(json.dumps(result, indent=2))
-
-    elif args.command == "repair":
-        result = repair_vector_store(vector_store)
-        print(json.
+if __name__ == "__main__":
+    main()
