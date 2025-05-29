@@ -846,6 +846,7 @@ def retrieve_documents_task(job_id: str, query: str, metadata_filter: Optional[D
         # Import here to avoid circular imports
         from .models import get_vector_store
         from src.config.settings import settings
+        import numpy as np
 
         # Get vector store with preloaded embedding model
         vector_store = get_vector_store()
@@ -857,13 +858,28 @@ def retrieve_documents_task(job_id: str, query: str, metadata_filter: Optional[D
             metadata_filter=metadata_filter
         )
 
-        # Format results for transfer to inference worker
+        # Format results for transfer to inference worker - FIXED VERSION
         serialized_docs = []
         for doc, score in results:
+            # CRITICAL FIX: Convert numpy.float32 to Python float
+            json_safe_score = float(score) if isinstance(score, (np.floating, np.float32, np.float64)) else score
+
+            # Clean metadata to ensure JSON serialization compatibility
+            cleaned_metadata = {}
+            for key, value in doc.metadata.items():
+                if isinstance(value, (np.floating, np.float32, np.float64)):
+                    cleaned_metadata[key] = float(value)
+                elif isinstance(value, (np.integer, np.int32, np.int64)):
+                    cleaned_metadata[key] = int(value)
+                elif isinstance(value, np.ndarray):
+                    cleaned_metadata[key] = value.tolist()
+                else:
+                    cleaned_metadata[key] = value
+
             serialized_docs.append({
                 "content": doc.page_content,
-                "metadata": doc.metadata,
-                "relevance_score": score
+                "metadata": cleaned_metadata,
+                "relevance_score": json_safe_score
             })
 
         logger.info(f"Document retrieval completed for job {job_id}: {len(serialized_docs)} documents")
@@ -880,7 +896,6 @@ def retrieve_documents_task(job_id: str, query: str, metadata_filter: Optional[D
         job_chain.task_failed(job_id, f"Document retrieval failed: {str(e)}")
 
 
-# Replace these two functions in your src/core/background/job_chain.py
 @dramatiq.actor(queue_name="inference_tasks", store_results=True, max_retries=2)
 def llm_inference_task(job_id: str, query: str, documents: List[Dict]):
     """Perform LLM inference using preloaded models."""
@@ -891,6 +906,7 @@ def llm_inference_task(job_id: str, query: str, documents: List[Dict]):
         from .models import get_llm_model, get_colbert_reranker
         from langchain_core.documents import Document
         from src.config.settings import settings
+        import numpy as np
 
         # Convert documents back to Document objects with scores
         doc_objects = []
@@ -899,7 +915,10 @@ def llm_inference_task(job_id: str, query: str, documents: List[Dict]):
                 page_content=doc_dict["content"],
                 metadata=doc_dict.get("metadata", {})
             )
+            # CRITICAL FIX: Convert numpy.float32 to Python float
             score = doc_dict.get("relevance_score", 0)
+            if isinstance(score, (np.floating, np.float32, np.float64)):
+                score = float(score)
             doc_objects.append((doc, score))
 
         # Perform reranking using preloaded ColBERT model
@@ -919,20 +938,35 @@ def llm_inference_task(job_id: str, query: str, documents: List[Dict]):
             metadata_filter=None
         )
 
-        # Prepare formatted documents for response
+        # Prepare formatted documents for response with JSON-safe scores
         formatted_documents = []
         for doc, score in reranked_docs:
+            # CRITICAL FIX: Ensure all numeric values are JSON-serializable
+            json_safe_score = float(score) if isinstance(score, (np.floating, np.float32, np.float64)) else score
+
+            # Clean metadata to ensure all values are JSON-serializable
+            cleaned_metadata = {}
+            for key, value in doc.metadata.items():
+                if isinstance(value, (np.floating, np.float32, np.float64)):
+                    cleaned_metadata[key] = float(value)
+                elif isinstance(value, (np.integer, np.int32, np.int64)):
+                    cleaned_metadata[key] = int(value)
+                elif isinstance(value, np.ndarray):
+                    cleaned_metadata[key] = value.tolist()
+                else:
+                    cleaned_metadata[key] = value
+
             formatted_doc = {
-                "id": doc.metadata.get("id", ""),
+                "id": cleaned_metadata.get("id", ""),
                 "content": doc.page_content,
-                "metadata": doc.metadata,
-                "relevance_score": score,
+                "metadata": cleaned_metadata,
+                "relevance_score": json_safe_score,
             }
             formatted_documents.append(formatted_doc)
 
         logger.info(f"LLM inference completed for job {job_id}")
 
-        # CRITICAL FIX: Create the complete inference result
+        # CRITICAL FIX: Create the complete inference result with JSON-safe data
         inference_result = {
             "query": query,
             "answer": answer,
