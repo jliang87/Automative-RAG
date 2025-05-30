@@ -170,16 +170,64 @@ def get_collection_stats(vector_store: QdrantStore) -> Dict[str, Any]:
         # Get basic collection info first
         collection_info = vector_store.client.get_collection(vector_store.collection_name)
 
-        # Sample some documents to understand structure
-        sample_docs = vector_store.client.scroll(
-            collection_name=vector_store.collection_name,
-            limit=5,
-            with_payload=True,
-            with_vectors=False
-        )[0]
+        # Try multiple methods to get document count
+        vector_count = None
+        try:
+            # Method 1: Try vectors_count attribute
+            vector_count = getattr(collection_info, 'vectors_count', None)
+        except:
+            pass
+
+        if vector_count is None:
+            try:
+                # Method 2: Try points_count attribute
+                vector_count = getattr(collection_info, 'points_count', None)
+            except:
+                pass
+
+        if vector_count is None:
+            try:
+                # Method 3: Use count API directly
+                count_result = vector_store.client.count(vector_store.collection_name)
+                vector_count = count_result.count
+            except:
+                pass
+
+        # Sample documents to get actual count
+        all_docs = []
+        offset = None
+        actual_count = 0
+
+        while True:
+            try:
+                scroll_result = vector_store.client.scroll(
+                    collection_name=vector_store.collection_name,
+                    limit=100,
+                    offset=offset,
+                    with_payload=True,
+                    with_vectors=False
+                )
+
+                points, next_offset = scroll_result
+                if not points:
+                    break
+
+                actual_count += len(points)
+
+                # Keep first 5 for samples
+                if len(all_docs) < 5:
+                    all_docs.extend(points[:5 - len(all_docs)])
+
+                if next_offset is None:
+                    break
+                offset = next_offset
+
+            except Exception as e:
+                logger.error(f"Error during scroll: {e}")
+                break
 
         sample_metadata = []
-        for point in sample_docs:
+        for point in all_docs[:5]:
             metadata = point.payload.get("metadata", {})
             sample_metadata.append({
                 "point_id": str(point.id),
@@ -191,13 +239,14 @@ def get_collection_stats(vector_store: QdrantStore) -> Dict[str, Any]:
                 "content_length": len(point.payload.get("page_content", ""))
             })
 
-        # Convert collection_info to dict safely
         enhanced_stats = {
             "collection_name": vector_store.collection_name,
-            "vector_count": getattr(collection_info, 'vectors_count', 0),
+            "vector_count_api": vector_count,  # What API reports
+            "actual_document_count": actual_count,  # What we actually found
             "collection_status": str(getattr(collection_info, 'status', 'unknown')),
             "sample_documents": sample_metadata,
-            "total_sample_docs": len(sample_docs)
+            "total_sample_docs": len(sample_metadata),
+            "count_method_used": "scroll_count" if vector_count is None else "api_count"
         }
 
         return enhanced_stats
