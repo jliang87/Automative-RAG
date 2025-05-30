@@ -185,58 +185,87 @@ def display_job_card(job: Dict[str, Any], context: str, index: int):
                             if 'document_count' in result:
                                 st.success(f"✅ 成功生成 {result['document_count']} 个文档片段")
 
-                                # NEW: Show documents in expandable dropdown
+                                # FIXED: Use checkbox instead of nested expander
                                 documents = result.get('documents', [])
                                 if documents:
-                                    with st.expander(f"📄 查看 {len(documents)} 个文档片段", expanded=False):
+                                    # Create a checkbox to show/hide documents
+                                    show_docs_key = f"show_docs_{job_id[:8]}"
+                                    if show_docs_key not in st.session_state:
+                                        st.session_state[show_docs_key] = False
+
+                                    # Toggle checkbox
+                                    st.session_state[show_docs_key] = st.checkbox(
+                                        f"📄 显示 {len(documents)} 个文档片段",
+                                        value=st.session_state[show_docs_key],
+                                        key=f"docs_toggle_{job_id[:8]}"
+                                    )
+
+                                    # Show documents if checkbox is checked
+                                    if st.session_state[show_docs_key]:
+                                        st.markdown("**文档片段:**")
+
                                         for i, doc in enumerate(documents):
-                                            st.write(f"**文档 {i + 1}:**")
+                                            # Use a container with border styling instead of expander
+                                            with st.container():
+                                                st.markdown(f"**📄 文档 {i + 1}:**")
 
-                                            # Show metadata if available
-                                            metadata = doc.get('metadata', {})
-                                            if metadata:
-                                                meta_cols = st.columns(3)
-                                                with meta_cols[0]:
-                                                    if metadata.get('source'):
-                                                        st.caption(f"来源: {metadata['source']}")
-                                                with meta_cols[1]:
-                                                    if metadata.get('chunk_id') is not None:
-                                                        st.caption(f"片段: {metadata['chunk_id'] + 1}")
-                                                with meta_cols[2]:
-                                                    if metadata.get('title'):
-                                                        st.caption(f"标题: {metadata['title'][:30]}...")
+                                                # Show metadata if available
+                                                metadata = doc.get('metadata', {})
+                                                if metadata:
+                                                    meta_cols = st.columns(3)
+                                                    with meta_cols[0]:
+                                                        if metadata.get('source'):
+                                                            st.caption(f"来源: {metadata['source']}")
+                                                    with meta_cols[1]:
+                                                        if metadata.get('chunk_id') is not None:
+                                                            st.caption(f"片段: {metadata['chunk_id'] + 1}")
+                                                    with meta_cols[2]:
+                                                        if metadata.get('title'):
+                                                            st.caption(f"标题: {metadata['title'][:30]}...")
 
-                                            # Show content
-                                            content = doc.get('content', '')
-                                            if content:
-                                                # Truncate very long content
-                                                if len(content) > 500:
-                                                    st.text_area(
-                                                        f"内容 {i + 1}",
-                                                        content[:500] + "...(内容已截断)",
-                                                        height=100,
-                                                        key=f"doc_content_{job_id}_{i}",
-                                                        disabled=True
-                                                    )
-                                                    if st.button(f"显示完整内容 {i + 1}",
-                                                                 key=f"show_full_{job_id}_{i}"):
+                                                # Show content
+                                                content = doc.get('content', '')
+                                                if content:
+                                                    # Truncate very long content
+                                                    if len(content) > 500:
+                                                        # Use text_area for long content
                                                         st.text_area(
-                                                            f"完整内容 {i + 1}",
-                                                            content,
-                                                            height=200,
-                                                            key=f"full_content_{job_id}_{i}",
+                                                            f"内容片段 {i + 1}",
+                                                            content[:500] + "...(内容已截断)",
+                                                            height=80,
+                                                            key=f"doc_content_{job_id}_{i}",
                                                             disabled=True
                                                         )
-                                                else:
-                                                    st.text_area(
-                                                        f"内容 {i + 1}",
-                                                        content,
-                                                        height=100,
-                                                        key=f"doc_short_{job_id}_{i}",
-                                                        disabled=True
-                                                    )
 
-                                            st.divider()
+                                                        # Button to show full content
+                                                        full_content_key = f"show_full_{job_id}_{i}"
+                                                        if full_content_key not in st.session_state:
+                                                            st.session_state[full_content_key] = False
+
+                                                        if st.button(f"显示完整内容 {i + 1}",
+                                                                     key=f"toggle_full_{job_id}_{i}"):
+                                                            st.session_state[full_content_key] = not st.session_state[
+                                                                full_content_key]
+
+                                                        if st.session_state[full_content_key]:
+                                                            st.text_area(
+                                                                f"完整内容 {i + 1}",
+                                                                content,
+                                                                height=200,
+                                                                key=f"full_content_{job_id}_{i}",
+                                                                disabled=True
+                                                            )
+                                                    else:
+                                                        # Short content - show directly
+                                                        st.text_area(
+                                                            f"内容 {i + 1}",
+                                                            content,
+                                                            height=80,
+                                                            key=f"doc_short_{job_id}_{i}",
+                                                            disabled=True
+                                                        )
+
+                                                st.markdown("---")  # Separator between documents
 
                             # Query results
                             if 'answer' in result:

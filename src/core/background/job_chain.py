@@ -535,7 +535,7 @@ def transcribe_video_task(job_id: str, media_path: str):
         )
         chunks = text_splitter.split_text(transcript)
 
-        # CRITICAL FIX: Get existing job data to determine platform and preserve video metadata
+        # CRITICAL FIX: Get existing job data to preserve video metadata
         current_job = job_tracker.get_job(job_id, include_progress=False)
         existing_result = current_job.get("result", {}) if current_job else {}
 
@@ -550,8 +550,30 @@ def transcribe_video_task(job_id: str, media_path: str):
         # Get video metadata from download step
         video_metadata = existing_result.get("video_metadata", {})
 
-        # CRITICAL: Ensure we have the actual video URL and ID
-        original_url = existing_result.get("url")
+        # CRITICAL FIX: Ensure we have the actual video URL
+        # Priority: video_metadata.url > existing_result.url > job metadata
+        original_url = None
+
+        # First, try to get URL from video metadata (most reliable)
+        if video_metadata.get("url"):
+            original_url = video_metadata["url"]
+
+        # Fallback to existing result URL
+        elif existing_result.get("url"):
+            original_url = existing_result["url"]
+
+        # Last resort: get from job metadata
+        else:
+            job_metadata = current_job.get("metadata", {}) if current_job else {}
+            if isinstance(job_metadata, str):
+                try:
+                    import json
+                    job_metadata = json.loads(job_metadata)
+                except:
+                    job_metadata = {}
+            original_url = job_metadata.get("url")
+
+        # Get video ID
         video_id = video_metadata.get("video_id", "")
 
         logger.info(
@@ -596,10 +618,10 @@ def transcribe_video_task(job_id: str, media_path: str):
                     "language": info.language,
                     "total_chunks": len(chunks),
 
-                    # CRITICAL: Add ALL video metadata
+                    # CRITICAL FIX: Ensure URL is properly preserved
                     "title": video_metadata.get("title", "No title"),
                     "author": video_metadata.get("author", "Unknown"),
-                    "url": original_url or "",
+                    "url": original_url,  # ✅ Use the properly retrieved URL (can be None)
                     "video_id": video_id or "",
                     "published_date": video_metadata.get("published_date"),
                     "description": video_metadata.get("description", "")[:500] + "..." if video_metadata.get(
@@ -614,6 +636,7 @@ def transcribe_video_task(job_id: str, media_path: str):
             documents.append(doc)
 
         logger.info(f"Transcription completed for job {job_id}: {len(chunks)} chunks, language: {info.language}")
+        logger.info(f"URL preserved in documents: {original_url}")  # Debug log
 
         # Combine transcription result with existing data (video metadata)
         transcription_result = {
@@ -624,7 +647,8 @@ def transcribe_video_task(job_id: str, media_path: str):
             "duration": info.duration,
             "chunk_count": len(chunks),
             "transcription_completed_at": time.time(),
-            "detected_source": source_type  # Store detected source for next step
+            "detected_source": source_type,  # Store detected source for next step
+            "preserved_url": original_url  # Debug: track if URL was preserved
         }
 
         # Store combined result in job tracker

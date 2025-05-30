@@ -13,6 +13,7 @@ import json
 from typing import Dict, List, Optional, Tuple, Union, Literal
 
 import torch
+import logging
 from langchain_core.documents import Document
 # import whisper
 # Import the faster-whisper package for transcription on CPU
@@ -25,6 +26,7 @@ from src.utils.helpers import (
     generate_unique_id
 )
 
+logger = logging.getLogger(__name__)
 
 class VideoTranscriber:
     """
@@ -265,11 +267,14 @@ class VideoTranscriber:
                     "author": data.get("uploader", "Unknown"),
                     "published_date": data.get("upload_date"),
                     "video_id": video_id,
-                    "url": url,
+                    "url": url,  # ✅ Always preserve the original URL
                     "length": data.get("duration", 0),
                     "views": data.get("view_count", 0),
                     "description": data.get("description", ""),
                 }
+
+                # Debug log to verify URL is set
+                logger.info(f"Video metadata extracted for {video_id}: URL={url}")
                 return metadata
             else:
                 raise ValueError("No metadata returned from yt-dlp")
@@ -285,17 +290,20 @@ class VideoTranscriber:
                 except Exception:
                     video_id = "unknown"
 
-            # Create minimal metadata to allow processing to continue
-            return {
+            # CRITICAL FIX: Always preserve URL in fallback metadata
+            fallback_metadata = {
                 "title": f"Video {video_id}",
                 "author": "Unknown Author",
                 "published_date": None,
                 "video_id": video_id,
-                "url": url,
+                "url": url,  # ✅ Always preserve URL even in fallback
                 "length": 0,
                 "views": 0,
                 "description": "",
             }
+
+            logger.warning(f"Using fallback metadata for {video_id}: URL={url}")
+            return fallback_metadata
 
     def transcribe_with_whisper(self, media_path: str) -> str:
         """
