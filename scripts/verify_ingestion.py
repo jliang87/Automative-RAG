@@ -92,48 +92,70 @@ def search_documents_by_content(vector_store: QdrantStore, search_term: str) -> 
     logger.info(f"Searching for documents containing: '{search_term}'")
 
     try:
-        # Get all documents (this is a brute force approach for debugging)
-        # In production, you'd want to use proper text search
-
+        # Get collection info first
         collection_info = vector_store.client.get_collection(vector_store.collection_name)
-        logger.info(f"Collection has {collection_info.vectors_count} total documents")
+        total_vectors = getattr(collection_info, 'vectors_count', 0)
+        logger.info(f"Collection has {total_vectors} total documents")
 
-        # Scroll through all documents
-        all_docs = []
-        scroll_result = vector_store.client.scroll(
-            collection_name=vector_store.collection_name,
-            limit=1000,  # Adjust as needed
-            with_payload=True,
-            with_vectors=False
-        )
+        if total_vectors == 0:
+            logger.warning("Collection appears to be empty!")
+            return []
 
-        points = scroll_result[0]
+        # Scroll through all documents in batches
+        all_matching_docs = []
+        offset = None
+        batch_size = 100
+        total_processed = 0
 
-        matching_docs = []
-        for point in points:
-            content = point.payload.get("page_content", "")
-            metadata = point.payload.get("metadata", {})
+        while True:
+            # Scroll through documents
+            scroll_result = vector_store.client.scroll(
+                collection_name=vector_store.collection_name,
+                limit=batch_size,
+                offset=offset,
+                with_payload=True,
+                with_vectors=False
+            )
 
-            # Check if search term is in content (case insensitive)
-            if search_term.lower() in content.lower():
-                matching_docs.append({
-                    "id": point.id,
-                    "content": content,
-                    "metadata": metadata,
-                    "relevance": "content_match"
-                })
+            points, next_offset = scroll_result
 
-            # Also check metadata fields
-            elif any(search_term.lower() in str(v).lower() for v in metadata.values() if v):
-                matching_docs.append({
-                    "id": point.id,
-                    "content": content,
-                    "metadata": metadata,
-                    "relevance": "metadata_match"
-                })
+            if not points:
+                break
 
-        logger.info(f"Found {len(matching_docs)} documents containing '{search_term}'")
-        return matching_docs
+            logger.info(f"Processing batch of {len(points)} documents (total processed: {total_processed})")
+
+            for point in points:
+                content = point.payload.get("page_content", "")
+                metadata = point.payload.get("metadata", {})
+
+                # Check if search term is in content (case insensitive)
+                if search_term.lower() in content.lower():
+                    all_matching_docs.append({
+                        "id": str(point.id),
+                        "content": content,
+                        "metadata": metadata,
+                        "relevance": "content_match"
+                    })
+
+                # Also check metadata fields for partial matches
+                elif any(search_term.lower() in str(v).lower() for v in metadata.values() if v):
+                    all_matching_docs.append({
+                        "id": str(point.id),
+                        "content": content,
+                        "metadata": metadata,
+                        "relevance": "metadata_match"
+                    })
+
+            total_processed += len(points)
+
+            # Continue with next batch
+            if next_offset is None:
+                break
+            offset = next_offset
+
+        logger.info(
+            f"Processed {total_processed} total documents, found {len(all_matching_docs)} matches for '{search_term}'")
+        return all_matching_docs
 
     except Exception as e:
         logger.error(f"Error searching by content: {e}")
@@ -145,9 +167,7 @@ def get_collection_stats(vector_store: QdrantStore) -> Dict[str, Any]:
     logger.info("Getting collection statistics...")
 
     try:
-        stats = vector_store.get_stats()
-
-        # Get additional info
+        # Get basic collection info first
         collection_info = vector_store.client.get_collection(vector_store.collection_name)
 
         # Sample some documents to understand structure
@@ -162,19 +182,22 @@ def get_collection_stats(vector_store: QdrantStore) -> Dict[str, Any]:
         for point in sample_docs:
             metadata = point.payload.get("metadata", {})
             sample_metadata.append({
+                "point_id": str(point.id),
                 "source": metadata.get("source"),
                 "job_id": metadata.get("job_id"),
                 "title": metadata.get("title", "")[:50] + "..." if metadata.get("title") else None,
                 "chunk_id": metadata.get("chunk_id"),
-                "ingestion_time": metadata.get("ingestion_time")
+                "ingestion_time": metadata.get("ingestion_time"),
+                "content_length": len(point.payload.get("page_content", ""))
             })
 
+        # Convert collection_info to dict safely
         enhanced_stats = {
             "collection_name": vector_store.collection_name,
-            "vector_count": collection_info.vectors_count,
-            "collection_status": collection_info.status,
+            "vector_count": getattr(collection_info, 'vectors_count', 0),
+            "collection_status": str(getattr(collection_info, 'status', 'unknown')),
             "sample_documents": sample_metadata,
-            "raw_stats": stats
+            "total_sample_docs": len(sample_docs)
         }
 
         return enhanced_stats

@@ -547,6 +547,16 @@ def transcribe_video_task(job_id: str, media_path: str):
             except:
                 existing_result = {}
 
+        # Get video metadata from download step
+        video_metadata = existing_result.get("video_metadata", {})
+
+        # CRITICAL: Ensure we have the actual video URL and ID
+        original_url = existing_result.get("url")
+        video_id = video_metadata.get("video_id", "")
+
+        logger.info(
+            f"Video metadata for job {job_id}: URL={original_url}, video_id={video_id}, title={video_metadata.get('title', 'N/A')}")
+
         # Determine the correct source based on URL or job metadata
         source_type = "video"  # Default fallback
 
@@ -566,26 +576,39 @@ def transcribe_video_task(job_id: str, media_path: str):
             source_type = "bilibili"
         else:
             # Try to detect from URL in existing result
-            video_metadata = existing_result.get("video_metadata", {})
-            url = video_metadata.get("url", "")
-            if "youtube.com" in url or "youtu.be" in url:
-                source_type = "youtube"
-            elif "bilibili.com" in url:
-                source_type = "bilibili"
+            if original_url:
+                if "youtube.com" in original_url or "youtu.be" in original_url:
+                    source_type = "youtube"
+                elif "bilibili.com" in original_url:
+                    source_type = "bilibili"
 
         logger.info(f"Detected source type: {source_type} for job {job_id}")
 
-        # Create documents with correct source type
+        # Create documents with COMPLETE metadata
         documents = []
         for i, chunk in enumerate(chunks):
             doc = Document(
                 page_content=chunk,
                 metadata={
                     "chunk_id": i,
-                    "source": source_type,  # ✅ Use detected source type (youtube/bilibili/video)
-                    "source_id": job_id,
+                    "source": source_type,
+                    "source_id": video_id or job_id,  # Use actual video_id if available
                     "language": info.language,
-                    "total_chunks": len(chunks)
+                    "total_chunks": len(chunks),
+
+                    # CRITICAL: Add ALL video metadata
+                    "title": video_metadata.get("title", "No title"),
+                    "author": video_metadata.get("author", "Unknown"),
+                    "url": original_url or "",
+                    "video_id": video_id or "",
+                    "published_date": video_metadata.get("published_date"),
+                    "description": video_metadata.get("description", "")[:500] + "..." if video_metadata.get(
+                        "description") else "",
+                    "length": video_metadata.get("length", 0),
+                    "views": video_metadata.get("view_count", 0),
+
+                    # Add custom metadata from job if any
+                    "custom_metadata": job_metadata.get("custom_metadata", {})
                 }
             )
             documents.append(doc)
@@ -768,11 +791,19 @@ def generate_embeddings_task(job_id: str, documents: List[Dict]):
             )
             doc_objects.append(doc)
 
-        # Add ingestion timestamp and job ID
+        # CRITICAL FIX: Add ingestion timestamp and job ID to ALL documents
         current_time = time.time()
         for doc in doc_objects:
-            doc.metadata["ingestion_time"] = current_time
+            # Ensure job_id is always present
             doc.metadata["job_id"] = job_id
+
+            # Add ingestion timestamp if not present
+            if "ingestion_time" not in doc.metadata:
+                doc.metadata["ingestion_time"] = current_time
+
+            # Ensure document has an ID for proper indexing
+            if "id" not in doc.metadata or not doc.metadata["id"]:
+                doc.metadata["id"] = f"doc-{job_id}-{len(doc_objects)}-{int(current_time)}"
 
         # Get existing job data to preserve video metadata and use detected source
         current_job = job_tracker.get_job(job_id, include_progress=False)
@@ -796,15 +827,20 @@ def generate_embeddings_task(job_id: str, documents: List[Dict]):
                 # Update source to use detected type
                 doc.metadata["source"] = detected_source
 
-                # Add video metadata to document metadata
+                # Add video metadata to document metadata - FIXED VERSION
                 doc.metadata.update({
                     "title": video_metadata.get("title", "No title"),
                     "author": video_metadata.get("author", "Unknown"),
                     "url": video_metadata.get("url", ""),
                     "video_id": video_metadata.get("video_id", ""),
                     "published_date": video_metadata.get("published_date"),
-                    "description": video_metadata.get("description", "")
+                    "description": video_metadata.get("description", "")[:200] + "..." if video_metadata.get(
+                        "description") else ""
                 })
+
+                # IMPORTANT: Ensure these are preserved
+                logger.info(
+                    f"Document metadata for job {job_id}: title='{doc.metadata.get('title')}', url='{doc.metadata.get('url')}', job_id='{doc.metadata.get('job_id')}'")
 
         # Add to vector store using preloaded embedding model
         vector_store = get_vector_store()
