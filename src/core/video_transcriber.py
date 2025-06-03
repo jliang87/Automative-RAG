@@ -240,70 +240,54 @@ class VideoTranscriber:
     def get_video_metadata(self, url: str) -> Dict[str, Union[str, int]]:
         """
         Get metadata from a video using yt-dlp.
-
-        Args:
-            url: Video URL
-
-        Returns:
-            Dictionary containing video metadata
+        FAILS if metadata extraction fails - NO FALLBACKS!
         """
         try:
             video_id = self.extract_video_id(url)
 
-            # Use yt-dlp to get metadata
             result = subprocess.run([
                 "yt-dlp",
                 "--dump-json",
                 "--skip-download",
                 url
-            ], capture_output=True, text=True, check=True)
+            ], capture_output=True, text=True, check=True, encoding='utf-8')
 
-            if result.stdout:
-                data = json.loads(result.stdout)
+            if not result.stdout:
+                raise ValueError(f"yt-dlp returned empty output for {url}")
 
-                # Extract relevant metadata
-                metadata = {
-                    "title": data.get("title", f"Video {video_id}"),
-                    "author": data.get("uploader", "Unknown"),
-                    "published_date": data.get("upload_date"),
-                    "video_id": video_id,
-                    "url": url,  # ✅ Always preserve the original URL
-                    "length": data.get("duration", 0),
-                    "views": data.get("view_count", 0),
-                    "description": data.get("description", ""),
-                }
+            data = json.loads(result.stdout)
 
-                # Debug log to verify URL is set
-                logger.info(f"Video metadata extracted for {video_id}: URL={url}")
-                return metadata
-            else:
-                raise ValueError("No metadata returned from yt-dlp")
+            # Validate that we got essential metadata
+            if not data.get("title") or not data.get("uploader"):
+                raise ValueError(f"Missing essential metadata (title/uploader) for {url}")
 
-        except Exception as e:
-            # Fallback metadata if yt-dlp fails
-            print(f"Warning: Error fetching video metadata: {str(e)}")
-
-            # Try to extract video_id if not already done
-            if 'video_id' not in locals():
-                try:
-                    video_id = self.extract_video_id(url)
-                except Exception:
-                    video_id = "unknown"
-
-            # CRITICAL FIX: Always preserve URL in fallback metadata
-            fallback_metadata = {
-                "title": f"Video {video_id}",
-                "author": "Unknown Author",
-                "published_date": None,
-                "video_id": video_id,
-                "url": url,  # ✅ Always preserve URL even in fallback
-                "length": 0,
-                "views": 0,
-                "description": "",
+            metadata = {
+                "title": data.get("title"),
+                "author": data.get("uploader"),
+                "published_date": data.get("upload_date"),
+                "video_id": data.get("id", video_id),
+                "url": url,
+                "length": int(data.get("duration", 0)),
+                "views": data.get("view_count", 0),
+                "description": data.get("description", ""),
             }
 
-            logger.warning(f"Using fallback metadata for {video_id}: URL={url}")
-            return fallback_metadata
+            return metadata
+
+        except subprocess.CalledProcessError as e:
+            error_msg = f"yt-dlp command failed for {url}: {e.stderr}"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+
+        except json.JSONDecodeError as e:
+            error_msg = f"Failed to parse yt-dlp JSON output for {url}: {str(e)}"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+
+        except Exception as e:
+            error_msg = f"Metadata extraction failed for {url}: {str(e)}"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
 
     def transcribe_with_whisper(self, media_path: str) -> str:
         """

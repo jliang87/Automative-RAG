@@ -522,96 +522,50 @@ job_chain = JobChain()
 
 @dramatiq.actor(queue_name="cpu_tasks", store_results=True, max_retries=2)
 def download_video_task(job_id: str, url: str, metadata: Optional[Dict] = None):
-    """Download video and trigger next task."""
+    """Download video and trigger next task - FAIL if metadata extraction fails."""
     try:
         logger.info(f"Downloading video for job {job_id}: {url}")
 
-        # Import here to avoid circular imports
         from src.core.video_transcriber import VideoTranscriber
-
         transcriber = VideoTranscriber()
 
-        # Extract audio (this includes download)
+        # Extract audio
         media_path = transcriber.extract_audio(url)
 
-        # CRITICAL FIX: Get video metadata using the transcriber with enhanced error handling
+        # Get video metadata - THIS WILL RAISE EXCEPTION IF IT FAILS
         try:
             video_metadata = transcriber.get_video_metadata(url)
             logger.info(f"Successfully retrieved video metadata for job {job_id}")
         except Exception as e:
-            logger.warning(f"Failed to get video metadata for job {job_id}: {str(e)}")
-            # Create fallback metadata ensuring URL is preserved
-            try:
-                video_id = transcriber.extract_video_id(url)
-            except:
-                video_id = f"unknown_{int(time.time())}"
+            # NO FALLBACK - fail the entire job
+            error_msg = f"Failed to extract video metadata: {str(e)}"
+            logger.error(error_msg)
+            job_chain.task_failed(job_id, error_msg)
+            return
 
-            video_metadata = {
-                "title": f"Video {video_id}",
-                "author": "Unknown Author",
-                "published_date": None,
-                "video_id": video_id,
-                "url": url,  # CRITICAL: Always preserve URL
-                "length": 0,
-                "views": 0,
-                "description": "",
-            }
-            logger.info(f"Created fallback video metadata for job {job_id} with URL: {url}")
+        # Validate metadata completeness
+        if not video_metadata.get("title") or video_metadata.get("title") == "Unknown Video":
+            error_msg = f"Extracted metadata is incomplete or invalid for {url}"
+            logger.error(error_msg)
+            job_chain.task_failed(job_id, error_msg)
+            return
 
-        # CRITICAL VERIFICATION: Ensure URL is in video_metadata
-        if not video_metadata.get("url"):
-            logger.warning(f"video_metadata missing URL for job {job_id}, adding it")
-            video_metadata["url"] = url
+        logger.info(f"Video download completed for job {job_id}: {video_metadata['title']}")
 
-        logger.info(f"Video download completed for job {job_id}, media saved to: {media_path}")
-
-        # CRITICAL FIX: Create comprehensive result structure with video metadata
         download_result = {
             "media_path": media_path,
-            "video_metadata": video_metadata,  # CRITICAL: Store complete video metadata
+            "video_metadata": video_metadata,
             "download_completed_at": time.time(),
-            "url": url,  # Also store URL at top level for redundancy
+            "url": url,
             "custom_metadata": metadata or {}
         }
 
-        # VERIFICATION: Log what we're storing
-        logger.info(f"Download result for job {job_id}: keys={list(download_result.keys())}")
-        if video_metadata:
-            logger.info(f"video_metadata contains: {list(video_metadata.keys())}")
-            logger.info(f"video_metadata URL: {video_metadata.get('url')}")
-            logger.info(f"video_metadata title: {video_metadata.get('title')}")
-        else:
-            logger.error(f"video_metadata is empty for job {job_id}!")
-
-        # ADDITIONAL VERIFICATION: Ensure video_metadata has required fields
-        required_fields = ["url", "title", "author", "video_id"]
-        missing_fields = [field for field in required_fields if not video_metadata.get(field)]
-        if missing_fields:
-            logger.warning(f"video_metadata missing required fields for job {job_id}: {missing_fields}")
-            # Fill in missing required fields
-            for field in missing_fields:
-                if field == "url":
-                    video_metadata["url"] = url
-                elif field == "title":
-                    video_metadata["title"] = f"Video {video_metadata.get('video_id', 'Unknown')}"
-                elif field == "author":
-                    video_metadata["author"] = "Unknown Author"
-                elif field == "video_id":
-                    video_metadata["video_id"] = f"unknown_{int(time.time())}"
-
-        # Store the complete download result in job tracker
-        job_tracker.update_job_status(
-            job_id,
-            "processing",
-            result=download_result,  # Store complete download result with video_metadata
-            stage="video_download_completed"
-        )
-
-        # FINAL VERIFICATION: Log that video_metadata is properly stored
-        logger.info(f"STORED video_metadata for job {job_id} with URL: {video_metadata.get('url')}")
-
-        # On success, trigger next task
         job_chain.task_completed(job_id, download_result)
+
+    except Exception as e:
+        error_msg = f"Video download failed for job {job_id}: {str(e)}"
+        logger.error(error_msg)
+        job_chain.task_failed(job_id, error_msg)
 
     except Exception as e:
         logger.error(f"Video download failed for job {job_id}: {str(e)}")
@@ -620,11 +574,10 @@ def download_video_task(job_id: str, url: str, metadata: Optional[Dict] = None):
 
 @dramatiq.actor(queue_name="transcription_tasks", store_results=True, max_retries=2)
 def transcribe_video_task(job_id: str, media_path: str):
-    """Transcribe video using preloaded Whisper model."""
+    """Transcribe video using preloaded Whisper model - FAIL if video_metadata is missing."""
     try:
         logger.info(f"Transcribing video for job {job_id}: {media_path}")
 
-        # Import here to avoid circular imports
         from .models import get_whisper_model
         from langchain_core.documents import Document
         from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -645,6 +598,12 @@ def transcribe_video_task(job_id: str, media_path: str):
         all_text = [segment.text for segment in segments]
         transcript = " ".join(all_text)
 
+        if not transcript.strip():
+            error_msg = f"Transcription failed - no text extracted from {media_path}"
+            logger.error(error_msg)
+            job_chain.task_failed(job_id, error_msg)
+            return
+
         # Apply Chinese conversion if needed
         if info.language == "zh":
             try:
@@ -662,90 +621,60 @@ def transcribe_video_task(job_id: str, media_path: str):
         )
         chunks = text_splitter.split_text(transcript)
 
-        # CRITICAL FIX: Get existing job data FIRST to preserve video metadata
+        # CRITICAL: Get existing job data and VALIDATE video_metadata exists
         current_job = job_tracker.get_job(job_id, include_progress=False)
-        existing_result = current_job.get("result", {}) if current_job else {}
+        if not current_job:
+            error_msg = f"Job {job_id} not found in tracker"
+            logger.error(error_msg)
+            job_chain.task_failed(job_id, error_msg)
+            return
 
-        # Parse existing result if it's a string
+        existing_result = current_job.get("result", {})
         if isinstance(existing_result, str):
             try:
-                import json
                 existing_result = json.loads(existing_result)
             except:
                 existing_result = {}
 
-        # DEBUG: Log what we found from previous step
-        logger.info(f"Transcription job {job_id}: Found existing result keys: {list(existing_result.keys())}")
-
-        # CRITICAL: Extract video_metadata BEFORE we modify anything
+        # FAIL if video_metadata is missing or invalid
         video_metadata = existing_result.get("video_metadata", {})
-        logger.info(f"Transcription job {job_id}: Found video_metadata keys: {list(video_metadata.keys())}")
+        if not video_metadata or not isinstance(video_metadata, dict):
+            error_msg = f"video_metadata missing from previous step for job {job_id}"
+            logger.error(error_msg)
+            job_chain.task_failed(job_id, error_msg)
+            return
 
-        if not video_metadata:
-            logger.warning(f"Transcription job {job_id}: video_metadata missing from existing result!")
+        # FAIL if video_metadata is just fallback data
+        if (video_metadata.get("title") in ["Unknown Video", ""] or
+                video_metadata.get("author") in ["Unknown", "Unknown Author", ""]):
+            error_msg = f"video_metadata contains fallback/invalid data for job {job_id}"
+            logger.error(error_msg)
+            job_chain.task_failed(job_id, error_msg)
+            return
 
-            # Try to recover from job metadata as fallback
-            job_metadata = current_job.get("metadata", {}) if current_job else {}
-            if isinstance(job_metadata, str):
-                try:
-                    import json
-                    job_metadata = json.loads(job_metadata)
-                except:
-                    job_metadata = {}
+        # Get the original URL - MUST exist
+        original_url = video_metadata.get("url")
+        if not original_url:
+            error_msg = f"No URL found in video_metadata for job {job_id}"
+            logger.error(error_msg)
+            job_chain.task_failed(job_id, error_msg)
+            return
 
-            # Create minimal video metadata from job metadata
-            video_metadata = {
-                "url": job_metadata.get("url", ""),
-                "title": "Unknown Video",
-                "author": "Unknown",
-                "video_id": "",
-                "published_date": None,
-                "description": "",
-                "length": 0,
-                "views": 0
-            }
-            logger.warning(f"Created fallback video_metadata for job {job_id}")
-
-        # Get the original URL - priority order: video_metadata.url > existing_result.url > job_metadata.url
-        original_url = None
-
-        if video_metadata.get("url"):
-            original_url = video_metadata["url"]
-            logger.info(f"Got URL from video_metadata: {original_url}")
-        elif existing_result.get("url"):
-            original_url = existing_result["url"]
-            logger.info(f"Got URL from existing_result: {original_url}")
-        else:
-            # Last resort: get from job metadata
-            job_metadata = current_job.get("metadata", {}) if current_job else {}
-            if isinstance(job_metadata, str):
-                try:
-                    import json
-                    job_metadata = json.loads(job_metadata)
-                except:
-                    job_metadata = {}
-            original_url = job_metadata.get("url", "")
-            if original_url:
-                logger.info(f"Got URL from job_metadata: {original_url}")
-            else:
-                logger.error(f"Could not find original URL for job {job_id}")
-
-        # Get video ID and determine source type
-        video_id = video_metadata.get("video_id", "")
+        # Get video ID - MUST exist
+        video_id = video_metadata.get("video_id")
         if not video_id:
-            logger.warning(f"No video_id found in video_metadata for job {job_id}")
+            error_msg = f"No video_id found in video_metadata for job {job_id}"
+            logger.error(error_msg)
+            job_chain.task_failed(job_id, error_msg)
+            return
 
-        logger.info(
-            f"Video metadata for job {job_id}: URL={original_url}, video_id={video_id}, title={video_metadata.get('title', 'N/A')}")
+        logger.info(f"Using valid video metadata: {video_metadata.get('title')} by {video_metadata.get('author')}")
 
-        # Determine the correct source based on URL or job metadata
-        source_type = "video"  # Default fallback
-
-        # Check job metadata for platform info
-        job_metadata = current_job.get("metadata", {}) if current_job else {}
+        # Determine source type
+        source_type = "video"
+        job_metadata = current_job.get("metadata", {})
         if isinstance(job_metadata, str):
             try:
-                import json
                 job_metadata = json.loads(job_metadata)
             except:
                 job_metadata = {}
@@ -755,17 +684,14 @@ def transcribe_video_task(job_id: str, media_path: str):
             source_type = "youtube"
         elif platform == "bilibili":
             source_type = "bilibili"
-        else:
-            # Try to detect from URL in existing result
-            if original_url:
-                if "youtube.com" in original_url or "youtu.be" in original_url:
-                    source_type = "youtube"
-                elif "bilibili.com" in original_url:
-                    source_type = "bilibili"
+        elif "youtube.com" in original_url or "youtu.be" in original_url:
+            source_type = "youtube"
+        elif "bilibili.com" in original_url:
+            source_type = "bilibili"
 
         logger.info(f"Detected source type: {source_type} for job {job_id}")
 
-        # Create documents with COMPLETE metadata
+        # Create documents with VALIDATED metadata
         documents = []
         for i, chunk in enumerate(chunks):
             doc = Document(
@@ -773,20 +699,19 @@ def transcribe_video_task(job_id: str, media_path: str):
                 metadata={
                     "chunk_id": i,
                     "source": source_type,
-                    "source_id": video_id or job_id,  # Use actual video_id if available
+                    "source_id": video_id,
                     "language": info.language,
                     "total_chunks": len(chunks),
 
-                    # CRITICAL FIX: Ensure URL is properly preserved from video_metadata
-                    "title": video_metadata.get("title", "No title"),
-                    "author": video_metadata.get("author", "Unknown"),
-                    "url": original_url or "",  # ✅ Use the properly retrieved URL
-                    "video_id": video_id or "",
+                    # Use VALIDATED video metadata
+                    "title": video_metadata["title"],
+                    "author": video_metadata["author"],
+                    "url": original_url,
+                    "video_id": video_id,
                     "published_date": video_metadata.get("published_date"),
-                    "description": video_metadata.get("description", "")[:500] + "..." if video_metadata.get(
-                        "description") else "",
+                    "description": video_metadata.get("description", ""),
                     "length": video_metadata.get("length", 0),
-                    "views": video_metadata.get("view_count", 0),
+                    "views": video_metadata.get("views", 0),
 
                     # Add custom metadata from job if any
                     "custom_metadata": job_metadata.get("custom_metadata", {})
@@ -795,16 +720,12 @@ def transcribe_video_task(job_id: str, media_path: str):
             documents.append(doc)
 
         logger.info(f"Transcription completed for job {job_id}: {len(chunks)} chunks, language: {info.language}")
-        logger.info(f"URL preserved in documents: {original_url}")  # Debug log
 
-        # CRITICAL FIX: Create transcription result while PRESERVING ALL existing data
-        # Use dict.update() to ensure video_metadata is preserved
+        # Create transcription result while preserving ALL existing data
         transcription_result = {}
+        transcription_result.update(existing_result)  # Preserve everything
 
-        # First, copy ALL existing data
-        transcription_result.update(existing_result)
-
-        # Then add the new transcription data
+        # Add new transcription data
         transcription_result.update({
             "documents": [{"content": doc.page_content, "metadata": doc.metadata} for doc in documents],
             "transcript": transcript,
@@ -812,46 +733,25 @@ def transcribe_video_task(job_id: str, media_path: str):
             "duration": info.duration,
             "chunk_count": len(chunks),
             "transcription_completed_at": time.time(),
-            "detected_source": source_type,  # Store detected source for next step
-            "preserved_url": original_url  # Debug: track if URL was preserved
+            "detected_source": source_type,
         })
 
-        # CRITICAL VERIFICATION: Ensure video_metadata is still in the result
-        if "video_metadata" in transcription_result:
-            vm = transcription_result["video_metadata"]
-            logger.info(f"SUCCESS: video_metadata preserved in final result with URL: {vm.get('url')}")
-            logger.info(f"video_metadata keys: {list(vm.keys())}")
-        else:
-            logger.error(f"CRITICAL ERROR: video_metadata LOST during transcription for job {job_id}")
-            logger.error(f"Final result keys: {list(transcription_result.keys())}")
-            logger.error(f"Original existing_result keys: {list(existing_result.keys())}")
+        # FINAL VALIDATION: Ensure video_metadata is still preserved
+        if "video_metadata" not in transcription_result:
+            error_msg = f"CRITICAL: video_metadata lost during transcription processing for job {job_id}"
+            logger.error(error_msg)
+            job_chain.task_failed(job_id, error_msg)
+            return
 
-            # EMERGENCY RECOVERY: Force video_metadata back into result
-            if video_metadata:
-                transcription_result["video_metadata"] = video_metadata
-                logger.info("EMERGENCY RECOVERY: video_metadata force-restored to result")
-
-        # Update job tracker with progress message
-        job_tracker.update_job_status(
-            job_id,
-            "processing",
-            result=transcription_result,
-            stage="video_transcription_completed"
-        )
-
-        # FINAL DEBUG: Verify what we're passing to the next step
-        logger.info(f"Final transcription_result keys being passed: {list(transcription_result.keys())}")
-        if "video_metadata" in transcription_result:
-            logger.info(f"video_metadata will be available for embedding step")
-        else:
-            logger.error(f"video_metadata will NOT be available for embedding step!")
+        logger.info(f"SUCCESS: Transcription completed with valid metadata for job {job_id}")
 
         # On success, trigger next task
         job_chain.task_completed(job_id, transcription_result)
 
     except Exception as e:
-        logger.error(f"Video transcription failed for job {job_id}: {str(e)}")
-        job_chain.task_failed(job_id, f"Video transcription failed: {str(e)}")
+        error_msg = f"Video transcription failed for job {job_id}: {str(e)}"
+        logger.error(error_msg)
+        job_chain.task_failed(job_id, error_msg)
 
 
 @dramatiq.actor(queue_name="cpu_tasks", store_results=True, max_retries=2)
@@ -985,75 +885,88 @@ def process_text_task(job_id: str, text: str, metadata: Optional[Dict] = None):
 
 @dramatiq.actor(queue_name="embedding_tasks", store_results=True, max_retries=2)
 def generate_embeddings_task(job_id: str, documents: List[Dict]):
-    """Generate embeddings using preloaded embedding model."""
+    """Generate embeddings using preloaded embedding model - FAIL if video_metadata is missing."""
     try:
         logger.info(f"Generating embeddings for job {job_id}: {len(documents)} documents")
 
-        # Import here to avoid circular imports
         from .models import get_vector_store
         from langchain_core.documents import Document
+
+        # Validate documents exist
+        if not documents:
+            error_msg = f"No documents provided for embedding generation in job {job_id}"
+            logger.error(error_msg)
+            job_chain.task_failed(job_id, error_msg)
+            return
 
         # Convert back to Document objects
         doc_objects = []
         for doc_dict in documents:
+            if not doc_dict.get("content") or not doc_dict.get("metadata"):
+                error_msg = f"Invalid document structure in job {job_id} - missing content or metadata"
+                logger.error(error_msg)
+                job_chain.task_failed(job_id, error_msg)
+                return
+
             doc = Document(
                 page_content=doc_dict["content"],
                 metadata=doc_dict["metadata"]
             )
             doc_objects.append(doc)
 
-        # CRITICAL FIX: Get existing job data FIRST to preserve ALL previous data
+        # CRITICAL: Get existing job data and VALIDATE video_metadata exists
         current_job = job_tracker.get_job(job_id, include_progress=False)
-        existing_result = current_job.get("result", {}) if current_job else {}
+        if not current_job:
+            error_msg = f"Job {job_id} not found in tracker"
+            logger.error(error_msg)
+            job_chain.task_failed(job_id, error_msg)
+            return
 
-        # Parse existing result if it's a string
+        existing_result = current_job.get("result", {})
         if isinstance(existing_result, str):
             try:
-                import json
                 existing_result = json.loads(existing_result)
             except:
                 existing_result = {}
 
-        # DEBUG: Log what we found from previous steps
-        logger.info(f"Embeddings job {job_id}: Found existing result keys: {list(existing_result.keys())}")
-
-        # CRITICAL: Extract and verify video_metadata BEFORE we modify anything
+        # FAIL if video_metadata is missing or invalid
         video_metadata = existing_result.get("video_metadata", {})
-        if video_metadata:
-            logger.info(f"Embeddings job {job_id}: Found video_metadata with keys: {list(video_metadata.keys())}")
-            if video_metadata.get("url"):
-                logger.info(f"Embeddings job {job_id}: video_metadata.url = {video_metadata['url']}")
-        else:
-            logger.warning(f"Embeddings job {job_id}: No video_metadata found in existing result")
+        if not video_metadata or not isinstance(video_metadata, dict):
+            error_msg = f"video_metadata missing from previous steps for job {job_id}"
+            logger.error(error_msg)
+            job_chain.task_failed(job_id, error_msg)
+            return
 
-            # Try to recover from job metadata as fallback
-            job_metadata = current_job.get("metadata", {}) if current_job else {}
-            if isinstance(job_metadata, str):
-                try:
-                    import json
-                    job_metadata = json.loads(job_metadata)
-                except:
-                    job_metadata = {}
+        # FAIL if video_metadata contains fallback/invalid data
+        if (video_metadata.get("title") in ["Unknown Video", ""] or
+                video_metadata.get("author") in ["Unknown", "Unknown Author", ""] or
+                not video_metadata.get("url") or
+                not video_metadata.get("video_id")):
+            error_msg = f"video_metadata contains invalid/fallback data for job {job_id}"
+            logger.error(error_msg)
+            job_chain.task_failed(job_id, error_msg)
+            return
 
-            # Create minimal video metadata from job metadata
-            video_metadata = {
-                "url": job_metadata.get("url", ""),
-                "title": "Unknown Video",
-                "author": "Unknown",
-                "video_id": "",
-                "published_date": None,
-                "description": "",
-                "length": 0,
-                "views": 0
-            }
-            logger.warning(f"Created fallback video_metadata for embeddings job {job_id}")
+        logger.info(f"Using validated video_metadata: {video_metadata['title']} by {video_metadata['author']}")
 
         # Get detected source type from previous step
-        detected_source = existing_result.get("detected_source", "video")
+        detected_source = existing_result.get("detected_source")
+        if not detected_source:
+            error_msg = f"No detected_source from transcription step for job {job_id}"
+            logger.error(error_msg)
+            job_chain.task_failed(job_id, error_msg)
+            return
 
-        # CRITICAL FIX: Add ingestion timestamp and job ID to ALL documents
+        # Add ingestion timestamp and job ID to ALL documents
         current_time = time.time()
         for doc in doc_objects:
+            # Validate document has required metadata
+            if not doc.metadata.get("title") or not doc.metadata.get("author"):
+                error_msg = f"Document missing required metadata (title/author) in job {job_id}"
+                logger.error(error_msg)
+                job_chain.task_failed(job_id, error_msg)
+                return
+
             # Ensure job_id is always present
             doc.metadata["job_id"] = job_id
 
@@ -1065,36 +978,29 @@ def generate_embeddings_task(job_id: str, documents: List[Dict]):
             if "id" not in doc.metadata or not doc.metadata["id"]:
                 doc.metadata["id"] = f"doc-{job_id}-{len(doc_objects)}-{int(current_time)}"
 
-        # CRITICAL FIX: Add video metadata to documents if available
-        if video_metadata:
-            logger.info(f"Adding video metadata to {len(doc_objects)} documents")
-            for doc in doc_objects:
-                # Update source to use detected type
-                doc.metadata["source"] = detected_source
+        # Validate that video_metadata is properly embedded in documents
+        for doc in doc_objects:
+            if (doc.metadata.get("title") in ["Unknown Video", ""] or
+                    doc.metadata.get("author") in ["Unknown", "Unknown Author", ""] or
+                    not doc.metadata.get("url")):
+                error_msg = f"Document metadata contains invalid data for job {job_id}"
+                logger.error(error_msg)
+                job_chain.task_failed(job_id, error_msg)
+                return
 
-                # Add video metadata to document metadata - ENSURE ALL FIELDS ARE PRESERVED
-                doc.metadata.update({
-                    "title": video_metadata.get("title", "No title"),
-                    "author": video_metadata.get("author", "Unknown"),
-                    "url": video_metadata.get("url", ""),  # CRITICAL: Preserve URL
-                    "video_id": video_metadata.get("video_id", ""),
-                    "published_date": video_metadata.get("published_date"),
-                    "description": video_metadata.get("description", "")[:200] + "..." if video_metadata.get(
-                        "description") else "",
-                    "length": video_metadata.get("length", 0),
-                    "views": video_metadata.get("view_count", 0) or video_metadata.get("views", 0)
-                    # Handle both field names
-                })
-
-                # VERIFICATION: Log document metadata to ensure URL is preserved
-                logger.debug(
-                    f"Document metadata for job {job_id}: title='{doc.metadata.get('title')}', url='{doc.metadata.get('url')}', job_id='{doc.metadata.get('job_id')}'")
+        logger.info(f"All documents validated with proper metadata for job {job_id}")
 
         # Check if we're in metadata-only mode
         if not hasattr(job_tracker, '_metadata_only_mode'):
             # Add to vector store using preloaded embedding model
             vector_store = get_vector_store()
             doc_ids = vector_store.add_documents(doc_objects)
+
+            if not doc_ids:
+                error_msg = f"Vector store failed to generate document IDs for job {job_id}"
+                logger.error(error_msg)
+                job_chain.task_failed(job_id, error_msg)
+                return
 
             logger.info(f"Embedding generation completed for job {job_id}: {len(doc_ids)} document IDs")
         else:
@@ -1103,14 +1009,11 @@ def generate_embeddings_task(job_id: str, documents: List[Dict]):
             logger.info(
                 f"Simulated embedding generation for job {job_id}: {len(doc_ids)} document IDs (metadata-only mode)")
 
-        # CRITICAL FIX: Create final result while PRESERVING ALL existing data
-        # Use dict.update() pattern to ensure nothing is lost
+        # Create final result while PRESERVING ALL existing data
         final_result = {}
+        final_result.update(existing_result)  # Preserve everything from previous steps
 
-        # First, copy ALL existing data (including video_metadata, transcript, etc.)
-        final_result.update(existing_result)
-
-        # Then add the new embedding data WITHOUT overwriting existing keys
+        # Add the new embedding data
         final_result.update({
             "document_ids": doc_ids,
             "document_count": len(doc_ids),
@@ -1118,48 +1021,33 @@ def generate_embeddings_task(job_id: str, documents: List[Dict]):
             "ingestion_completed": True
         })
 
-        # CRITICAL VERIFICATION: Ensure video_metadata is still preserved
-        if "video_metadata" in final_result:
-            vm = final_result["video_metadata"]
-            logger.info(f"SUCCESS: video_metadata preserved in final embedding result with URL: {vm.get('url')}")
-            logger.info(f"Final result has video_metadata with keys: {list(vm.keys())}")
-        else:
-            logger.error(f"CRITICAL ERROR: video_metadata LOST during embedding generation for job {job_id}")
-            logger.error(f"Final result keys: {list(final_result.keys())}")
-            logger.error(f"Original existing_result keys: {list(existing_result.keys())}")
+        # FINAL VALIDATION: Ensure video_metadata is still preserved
+        if "video_metadata" not in final_result:
+            error_msg = f"CRITICAL: video_metadata lost during embedding generation for job {job_id}"
+            logger.error(error_msg)
+            job_chain.task_failed(job_id, error_msg)
+            return
 
-            # EMERGENCY RECOVERY: Force video_metadata back into result
-            if video_metadata:
-                final_result["video_metadata"] = video_metadata
-                logger.info("EMERGENCY RECOVERY: video_metadata force-restored from existing_result in embedding task")
+        # VALIDATE final video_metadata quality
+        final_vm = final_result["video_metadata"]
+        if (not final_vm.get("title") or final_vm.get("title") == "Unknown Video" or
+                not final_vm.get("author") or final_vm.get("author") in ["Unknown", "Unknown Author"] or
+                not final_vm.get("url")):
+            error_msg = f"CRITICAL: Final video_metadata is invalid for job {job_id}"
+            logger.error(error_msg)
+            job_chain.task_failed(job_id, error_msg)
+            return
 
-        # ADDITIONAL VERIFICATION: Check that transcript is preserved
-        if "transcript" in existing_result and "transcript" in final_result:
-            logger.info(f"SUCCESS: transcript preserved in final result ({len(final_result['transcript'])} characters)")
-        elif "transcript" in existing_result:
-            logger.warning(f"WARNING: transcript may have been lost during embedding generation")
-
-        # Store final result in job tracker
-        job_tracker.update_job_status(
-            job_id,
-            "processing",  # Keep as processing until job chain completes
-            result=final_result,
-            stage="embeddings_completed"
-        )
-
-        # FINAL DEBUG: Log what's being passed to completion
-        logger.info(f"Embedding task final result keys: {list(final_result.keys())}")
-        logger.info(f"Passing to job completion with video_metadata: {bool('video_metadata' in final_result)}")
-        if "video_metadata" in final_result:
-            vm = final_result["video_metadata"]
-            logger.info(f"Final video_metadata URL: {vm.get('url', 'NO_URL')}")
+        logger.info(f"SUCCESS: Embedding generation completed with validated metadata for job {job_id}")
+        logger.info(f"Final video_metadata: {final_vm['title']} by {final_vm['author']}")
 
         # On success, complete the job (this is the final step for video processing)
         job_chain.task_completed(job_id, final_result)
 
     except Exception as e:
-        logger.error(f"Embedding generation failed for job {job_id}: {str(e)}")
-        job_chain.task_failed(job_id, f"Embedding generation failed: {str(e)}")
+        error_msg = f"Embedding generation failed for job {job_id}: {str(e)}"
+        logger.error(error_msg)
+        job_chain.task_failed(job_id, error_msg)
 
 
 @dramatiq.actor(queue_name="embedding_tasks", store_results=True, max_retries=2)
