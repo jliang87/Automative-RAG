@@ -54,7 +54,7 @@ st.markdown("---")
 # Main actions - Always available (jobs will queue automatically)
 st.subheader("🔍 开始使用")
 
-action_cols = st.columns(3)
+action_cols = st.columns(4)  # Changed from 3 to 4 columns
 
 with action_cols[0]:
     st.markdown("#### 查询汽车信息")
@@ -69,6 +69,12 @@ with action_cols[1]:
         st.switch_page("pages/数据摄取.py")
 
 with action_cols[2]:
+    st.markdown("#### 浏览文档")  # NEW
+    st.markdown("查看所有已存储的文档")
+    if st.button("浏览文档", use_container_width=True):
+        st.switch_page("pages/文档浏览.py")
+
+with action_cols[3]:
     st.markdown("#### 查看处理状态")
     st.markdown("跟踪任务处理进度")
     if st.button("查看状态", use_container_width=True):

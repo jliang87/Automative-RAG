@@ -172,131 +172,218 @@ def display_job_card(job: Dict[str, Any], context: str, index: int):
                     else:
                         st.caption(message or "处理中...")
 
-                # Metadata
-                metadata = job_detail.get('metadata', {})
-                if metadata and isinstance(metadata, dict):
-                    if metadata.get('url'):
-                        st.write(f"**URL:** {metadata['url']}")
-                    if metadata.get('query'):
-                        st.write(f"**查询:** {metadata['query']}")
+                        # Enhanced Metadata Display
+                        st.markdown("**📋 任务元数据:**")
+                        metadata = job_detail.get('metadata', {})
+                        result = job_detail.get('result', {})
 
-                # Results (for completed jobs)
-                if job_detail.get('status') == 'completed':
-                    result = job_detail.get('result', {})
-                    if result and isinstance(result, dict):
-                        # Document processing results
-                        if 'document_count' in result:
-                            st.success(f"✅ 成功生成 {result['document_count']} 个文档片段")
+                        if metadata and isinstance(metadata, dict):
+                            # Basic job metadata
+                            if metadata.get('url'):
+                                st.write(f"**🔗 URL:** {metadata['url']}")
+                            if metadata.get('query'):
+                                st.write(f"**❓ 查询:** {metadata['query']}")
+                            if metadata.get('platform'):
+                                st.write(f"**📺 平台:** {metadata['platform']}")
 
-                            # FIXED: Use simple UI elements instead of nested expander
-                            documents = result.get('documents', [])
-                            if documents:
-                                # Create a toggle for showing documents
-                                show_docs_key = f"show_docs_{job_id[:8]}"
+                        # Enhanced Results Display for Video Processing
+                        if job_detail.get('status') == 'completed':
+                            if result and isinstance(result, dict):
 
-                                # Initialize state if not exists
-                                if show_docs_key not in st.session_state:
-                                    st.session_state[show_docs_key] = False
+                                # ENHANCED: Show video metadata if available
+                                video_metadata = result.get('video_metadata', {})
+                                if video_metadata:
+                                    st.markdown("**🎬 视频信息:**")
 
-                                # Toggle button
-                                if st.button(
-                                        f"📄 {'隐藏' if st.session_state[show_docs_key] else '显示'} {len(documents)} 个文档片段",
-                                        key=f"toggle_docs_{job_id[:8]}"):
-                                    st.session_state[show_docs_key] = not st.session_state[show_docs_key]
-                                    st.rerun()
+                                    video_col1, video_col2 = st.columns(2)
+                                    with video_col1:
+                                        if video_metadata.get('title'):
+                                            st.write(f"**标题:** {video_metadata['title']}")
+                                        if video_metadata.get('author'):
+                                            st.write(f"**作者:** {video_metadata['author']}")
+                                        if video_metadata.get('published_date'):
+                                            st.write(f"**发布日期:** {video_metadata['published_date']}")
 
-                                # Show documents if toggled on
-                                if st.session_state[show_docs_key]:
-                                    st.markdown("**📄 文档片段:**")
+                                    with video_col2:
+                                        if video_metadata.get('length'):
+                                            duration_mins = video_metadata['length'] // 60
+                                            duration_secs = video_metadata['length'] % 60
+                                            st.write(f"**时长:** {duration_mins}分{duration_secs}秒")
+                                        if video_metadata.get('views'):
+                                            st.write(f"**观看次数:** {video_metadata['views']:,}")
+                                        if video_metadata.get('video_id'):
+                                            st.write(f"**视频ID:** {video_metadata['video_id']}")
 
-                                    for i, doc in enumerate(documents):
-                                        # Use container with markdown styling
-                                        with st.container():
-                                            st.markdown(f"**文档 {i + 1}:**")
+                                    # Show description if available
+                                    if video_metadata.get('description'):
+                                        description = video_metadata['description']
+                                        st.write("**📝 视频描述:**")
+                                        # Show truncated description with option to expand
+                                        if len(description) > 300:
+                                            desc_key = f"show_desc_{job_id[:8]}"
+                                            if desc_key not in st.session_state:
+                                                st.session_state[desc_key] = False
 
-                                            # Show metadata if available
-                                            metadata = doc.get('metadata', {})
-                                            if metadata:
-                                                meta_cols = st.columns(3)
-                                                with meta_cols[0]:
-                                                    if metadata.get('source'):
-                                                        st.caption(f"来源: {metadata['source']}")
-                                                with meta_cols[1]:
-                                                    if metadata.get('chunk_id') is not None:
-                                                        st.caption(f"片段: {metadata['chunk_id'] + 1}")
-                                                with meta_cols[2]:
-                                                    if metadata.get('title'):
-                                                        st.caption(f"标题: {metadata['title'][:30]}...")
+                                            if st.session_state[desc_key]:
+                                                st.text_area("完整描述", description, height=150, disabled=True, key=f"full_desc_{job_id[:8]}")
+                                                if st.button("收起描述", key=f"hide_desc_{job_id[:8]}"):
+                                                    st.session_state[desc_key] = False
+                                                    st.rerun()
+                                            else:
+                                                st.text_area("描述预览", description[:300] + "...", height=80, disabled=True, key=f"short_desc_{job_id[:8]}")
+                                                if st.button("显示完整描述", key=f"show_desc_btn_{job_id[:8]}"):
+                                                    st.session_state[desc_key] = True
+                                                    st.rerun()
+                                        else:
+                                            st.text_area("视频描述", description, height=80, disabled=True, key=f"desc_{job_id[:8]}")
 
-                                            # Show content
-                                            content = doc.get('content', '')
-                                            if content:
-                                                # Truncate very long content
-                                                if len(content) > 500:
-                                                    st.text_area(
-                                                        f"内容 {i + 1}",
-                                                        content[:500] + "...(内容已截断)",
-                                                        height=100,
-                                                        key=f"doc_content_{job_id}_{i}",
-                                                        disabled=True
-                                                    )
+                                # ENHANCED: Show transcription if available
+                                transcript = result.get('transcript', '')
+                                if transcript:
+                                    st.markdown("**🎤 转录内容:**")
+                                    transcript_key = f"show_transcript_{job_id[:8]}"
+                                    if transcript_key not in st.session_state:
+                                        st.session_state[transcript_key] = False
 
-                                                    # Button to show full content in a new text area
-                                                    full_key = f"show_full_{job_id}_{i}"
-                                                    if full_key not in st.session_state:
-                                                        st.session_state[full_key] = False
+                                    # Show transcript stats
+                                    word_count = len(transcript.split())
+                                    char_count = len(transcript)
+                                    language = result.get('language', '未知')
 
-                                                    if st.button(f"显示完整内容 {i + 1}", key=f"btn_full_{job_id}_{i}"):
-                                                        st.session_state[full_key] = not st.session_state[full_key]
-                                                        st.rerun()
+                                    trans_col1, trans_col2, trans_col3 = st.columns(3)
+                                    with trans_col1:
+                                        st.metric("字数", f"{word_count:,}")
+                                    with trans_col2:
+                                        st.metric("字符数", f"{char_count:,}")
+                                    with trans_col3:
+                                        st.metric("语言", language)
 
-                                                    if st.session_state[full_key]:
-                                                        st.text_area(
-                                                            f"完整内容 {i + 1}",
-                                                            content,
-                                                            height=200,
-                                                            key=f"full_content_{job_id}_{i}",
-                                                            disabled=True
-                                                        )
-                                                else:
-                                                    st.text_area(
-                                                        f"内容 {i + 1}",
-                                                        content,
-                                                        height=100,
-                                                        key=f"doc_short_{job_id}_{i}",
-                                                        disabled=True
-                                                    )
+                                    # Toggle transcript display
+                                    if st.button(f"{'隐藏' if st.session_state[transcript_key] else '显示'} 转录内容",
+                                                 key=f"toggle_transcript_{job_id[:8]}"):
+                                        st.session_state[transcript_key] = not st.session_state[transcript_key]
+                                        st.rerun()
 
-                                            st.markdown("---")
+                                    if st.session_state[transcript_key]:
+                                        st.text_area(
+                                            "完整转录内容",
+                                            transcript,
+                                            height=300,
+                                            disabled=True,
+                                            key=f"transcript_{job_id[:8]}"
+                                        )
 
-                        # Query results
-                        if 'answer' in result:
-                            st.write("**查询答案:**")
-                            answer = result['answer']
+                                # Document processing results
+                                if 'document_count' in result:
+                                    st.success(f"✅ 成功生成 {result['document_count']} 个文档片段")
 
-                            # Remove </think> artifacts
-                            if "</think>" in answer:
-                                answer = answer.split("</think>")[-1].strip()
+                                    documents = result.get('documents', [])
+                                    if documents:
+                                        # Create a toggle for showing documents
+                                        show_docs_key = f"show_docs_{job_id[:8]}"
 
-                            # Remove <think> tags
-                            if answer.startswith("<think>"):
-                                lines = answer.split('\n')
-                                clean_lines = []
-                                thinking_section = True
-                                for line in lines:
-                                    if thinking_section and (not line.strip().startswith('<') and line.strip()):
-                                        thinking_section = False
-                                    if not thinking_section:
-                                        clean_lines.append(line)
-                                answer = '\n'.join(clean_lines).strip()
+                                        if show_docs_key not in st.session_state:
+                                            st.session_state[show_docs_key] = False
 
-                            # Final cleanup
-                            answer = answer.replace("<think>", "").replace("</think>", "").strip()
+                                        # Toggle button with more details
+                                        if st.button(f"📄 {'隐藏' if st.session_state[show_docs_key] else '显示'} {len(documents)} 个文档片段 (向量化后)",
+                                                     key=f"toggle_docs_{job_id[:8]}"):
+                                            st.session_state[show_docs_key] = not st.session_state[show_docs_key]
+                                            st.rerun()
 
-                            if answer:
-                                st.info(answer)
-                            else:
-                                st.warning("答案为空或无法解析")
+                                        if st.session_state[show_docs_key]:
+                                            st.markdown("**📄 向量化文档片段:**")
+                                            st.caption("这些是被切分并存储到向量数据库中的文档片段")
+
+                                            for i, doc in enumerate(documents):
+                                                with st.container():
+                                                    st.markdown(f"**片段 {i + 1}/{len(documents)}:**")
+
+                                                    # Enhanced metadata display
+                                                    doc_metadata = doc.get('metadata', {})
+                                                    if doc_metadata:
+                                                        meta_cols = st.columns(4)
+                                                        with meta_cols[0]:
+                                                            if doc_metadata.get('source'):
+                                                                st.caption(f"📍 来源: {doc_metadata['source']}")
+                                                        with meta_cols[1]:
+                                                            if doc_metadata.get('chunk_id') is not None:
+                                                                st.caption(f"🔢 片段: {doc_metadata['chunk_id'] + 1}")
+                                                        with meta_cols[2]:
+                                                            if doc_metadata.get('language'):
+                                                                st.caption(f"🌐 语言: {doc_metadata['language']}")
+                                                        with meta_cols[3]:
+                                                            if doc_metadata.get('total_chunks'):
+                                                                st.caption(f"📊 总片段: {doc_metadata['total_chunks']}")
+
+                                                        # Video-specific metadata
+                                                        if doc_metadata.get('title'):
+                                                            st.caption(f"📺 标题: {doc_metadata['title']}")
+                                                        if doc_metadata.get('author'):
+                                                            st.caption(f"👤 作者: {doc_metadata['author']}")
+
+                                                    # Show content
+                                                    content = doc.get('content', '')
+                                                    if content:
+                                                        if len(content) > 500:
+                                                            st.text_area(
+                                                                f"内容片段 {i + 1}",
+                                                                content[:500] + "...(已截断)",
+                                                                height=100,
+                                                                key=f"doc_content_{job_id}_{i}",
+                                                                disabled=True
+                                                            )
+
+                                                            full_key = f"show_full_{job_id}_{i}"
+                                                            if full_key not in st.session_state:
+                                                                st.session_state[full_key] = False
+
+                                                            if st.button(f"显示完整内容", key=f"btn_full_{job_id}_{i}"):
+                                                                st.session_state[full_key] = not st.session_state[full_key]
+                                                                st.rerun()
+
+                                                            if st.session_state[full_key]:
+                                                                st.text_area(
+                                                                    f"完整内容",
+                                                                    content,
+                                                                    height=200,
+                                                                    key=f"full_content_{job_id}_{i}",
+                                                                    disabled=True
+                                                                )
+                                                        else:
+                                                            st.text_area(
+                                                                f"内容片段 {i + 1}",
+                                                                content,
+                                                                height=100,
+                                                                key=f"doc_short_{job_id}_{i}",
+                                                                disabled=True
+                                                            )
+
+                                                    st.markdown("---")
+
+                                # Query results (unchanged)
+                                if 'answer' in result:
+                                    st.write("**❓ 查询答案:**")
+                                    answer = result['answer']
+                                    # ... (same answer processing code as before)
+                                    if "</think>" in answer:
+                                        answer = answer.split("</think>")[-1].strip()
+                                    if answer.startswith("<think>"):
+                                        lines = answer.split('\n')
+                                        clean_lines = []
+                                        thinking_section = True
+                                        for line in lines:
+                                            if thinking_section and (not line.strip().startswith('<') and line.strip()):
+                                                thinking_section = False
+                                            if not thinking_section:
+                                                clean_lines.append(line)
+                                        answer = '\n'.join(clean_lines).strip()
+                                    answer = answer.replace("<think>", "").replace("</think>", "").strip()
+
+                                    if answer:
+                                        st.info(answer)
+                                    else:
+                                        st.warning("答案为空或无法解析")
 
                 # Error information (for failed jobs)
                 elif job_detail.get('status') == 'failed':
