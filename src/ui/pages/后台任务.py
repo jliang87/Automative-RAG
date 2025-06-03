@@ -6,6 +6,7 @@ Focus: Individual job tracking, progress, results, management
 import streamlit as st
 import time
 from typing import Dict, Any
+import logging
 from src.ui.api_client import (
     get_jobs_list,
     get_job_details,
@@ -13,6 +14,8 @@ from src.ui.api_client import (
     api_request
 )
 from src.ui.session_init import initialize_session_state
+
+logger = logging.getLogger(__name__)
 
 initialize_session_state()
 
@@ -190,9 +193,34 @@ def display_job_card(job: Dict[str, Any], context: str, index: int):
                         if job_detail.get('status') == 'completed':
                             if result and isinstance(result, dict):
 
-                                # ENHANCED: Show video metadata if available
+                                # ENHANCED: Show video metadata if available - FIXED VERSION
                                 video_metadata = result.get('video_metadata', {})
-                                if video_metadata:
+
+                                # Also check if video_metadata is nested in job_chain_completion
+                                if not video_metadata and 'job_chain_completion' in result:
+                                    # Sometimes video_metadata might be at a different level
+                                    for key, value in result.items():
+                                        if isinstance(value, dict) and 'video_metadata' in value:
+                                            video_metadata = value['video_metadata']
+                                            break
+
+                                # Try to find video metadata in any nested structure
+                                if not video_metadata:
+                                    def find_video_metadata(obj, path=""):
+                                        if isinstance(obj, dict):
+                                            if 'video_metadata' in obj:
+                                                logger.info(f"Found video_metadata at path: {path}")
+                                                return obj['video_metadata']
+                                            for key, value in obj.items():
+                                                found = find_video_metadata(value, f"{path}.{key}" if path else key)
+                                                if found:
+                                                    return found
+                                        return None
+
+                                    video_metadata = find_video_metadata(result) or {}
+
+                                # ENHANCED: Show video metadata with comprehensive display
+                                if video_metadata and isinstance(video_metadata, dict):
                                     st.markdown("**🎬 视频信息:**")
 
                                     video_col1, video_col2 = st.columns(2)
@@ -204,6 +232,10 @@ def display_job_card(job: Dict[str, Any], context: str, index: int):
                                         if video_metadata.get('published_date'):
                                             st.write(f"**发布日期:** {video_metadata['published_date']}")
 
+                                        # Show URL as clickable link
+                                        if video_metadata.get('url'):
+                                            st.write(f"**链接:** [观看视频]({video_metadata['url']})")
+
                                     with video_col2:
                                         if video_metadata.get('length'):
                                             duration_mins = video_metadata['length'] // 60
@@ -213,6 +245,11 @@ def display_job_card(job: Dict[str, Any], context: str, index: int):
                                             st.write(f"**观看次数:** {video_metadata['views']:,}")
                                         if video_metadata.get('video_id'):
                                             st.write(f"**视频ID:** {video_metadata['video_id']}")
+
+                                        # Show language if available
+                                        language = result.get('language') or video_metadata.get('language')
+                                        if language:
+                                            st.write(f"**语言:** {language}")
 
                                     # Show description if available
                                     if video_metadata.get('description'):
@@ -225,17 +262,53 @@ def display_job_card(job: Dict[str, Any], context: str, index: int):
                                                 st.session_state[desc_key] = False
 
                                             if st.session_state[desc_key]:
-                                                st.text_area("完整描述", description, height=150, disabled=True, key=f"full_desc_{job_id[:8]}")
+                                                st.text_area("完整描述", description, height=150, disabled=True,
+                                                             key=f"full_desc_{job_id[:8]}")
                                                 if st.button("收起描述", key=f"hide_desc_{job_id[:8]}"):
                                                     st.session_state[desc_key] = False
                                                     st.rerun()
                                             else:
-                                                st.text_area("描述预览", description[:300] + "...", height=80, disabled=True, key=f"short_desc_{job_id[:8]}")
+                                                st.text_area("描述预览", description[:300] + "...", height=80,
+                                                             disabled=True, key=f"short_desc_{job_id[:8]}")
                                                 if st.button("显示完整描述", key=f"show_desc_btn_{job_id[:8]}"):
                                                     st.session_state[desc_key] = True
                                                     st.rerun()
                                         else:
-                                            st.text_area("视频描述", description, height=80, disabled=True, key=f"desc_{job_id[:8]}")
+                                            st.text_area("视频描述", description, height=80, disabled=True,
+                                                         key=f"desc_{job_id[:8]}")
+                                else:
+                                    # DEBUG: Show what we found instead
+                                    st.markdown("**🔍 调试信息:**")
+                                    st.write(f"**结果键:** {list(result.keys())}")
+
+                                    # Look for any video-related data
+                                    video_related_keys = [k for k in result.keys() if
+                                                          'video' in k.lower() or 'metadata' in k.lower() or 'url' in k.lower()]
+                                    if video_related_keys:
+                                        st.write(f"**可能的视频相关键:** {video_related_keys}")
+                                        for key in video_related_keys[:3]:  # Show first 3
+                                            value = result.get(key)
+                                            if isinstance(value, (str, int, float)):
+                                                st.write(f"**{key}:** {value}")
+                                            elif isinstance(value, dict):
+                                                st.write(f"**{key}:** {list(value.keys())}")
+
+                                    # Check if there's a URL anywhere
+                                    url_found = None
+
+                                    def find_url(obj):
+                                        if isinstance(obj, dict):
+                                            if 'url' in obj and obj['url']:
+                                                return obj['url']
+                                            for value in obj.values():
+                                                found = find_url(value)
+                                                if found:
+                                                    return found
+                                        return None
+
+                                    url_found = find_url(result)
+                                    if url_found:
+                                        st.write(f"**找到URL:** [链接]({url_found})")
 
                                 # ENHANCED: Show transcription if available
                                 transcript = result.get('transcript', '')
@@ -273,7 +346,7 @@ def display_job_card(job: Dict[str, Any], context: str, index: int):
                                             key=f"transcript_{job_id[:8]}"
                                         )
 
-                                # Document processing results
+                                # Document processing results - ENHANCED
                                 if 'document_count' in result:
                                     st.success(f"✅ 成功生成 {result['document_count']} 个文档片段")
 
@@ -286,8 +359,9 @@ def display_job_card(job: Dict[str, Any], context: str, index: int):
                                             st.session_state[show_docs_key] = False
 
                                         # Toggle button with more details
-                                        if st.button(f"📄 {'隐藏' if st.session_state[show_docs_key] else '显示'} {len(documents)} 个文档片段 (向量化后)",
-                                                     key=f"toggle_docs_{job_id[:8]}"):
+                                        if st.button(
+                                                f"📄 {'隐藏' if st.session_state[show_docs_key] else '显示'} {len(documents)} 个文档片段 (向量化后)",
+                                                key=f"toggle_docs_{job_id[:8]}"):
                                             st.session_state[show_docs_key] = not st.session_state[show_docs_key]
                                             st.rerun()
 
@@ -316,11 +390,13 @@ def display_job_card(job: Dict[str, Any], context: str, index: int):
                                                             if doc_metadata.get('total_chunks'):
                                                                 st.caption(f"📊 总片段: {doc_metadata['total_chunks']}")
 
-                                                        # Video-specific metadata
+                                                        # Video-specific metadata from document
                                                         if doc_metadata.get('title'):
                                                             st.caption(f"📺 标题: {doc_metadata['title']}")
                                                         if doc_metadata.get('author'):
                                                             st.caption(f"👤 作者: {doc_metadata['author']}")
+                                                        if doc_metadata.get('url'):
+                                                            st.caption(f"🔗 [视频链接]({doc_metadata['url']})")
 
                                                     # Show content
                                                     content = doc.get('content', '')
@@ -339,7 +415,8 @@ def display_job_card(job: Dict[str, Any], context: str, index: int):
                                                                 st.session_state[full_key] = False
 
                                                             if st.button(f"显示完整内容", key=f"btn_full_{job_id}_{i}"):
-                                                                st.session_state[full_key] = not st.session_state[full_key]
+                                                                st.session_state[full_key] = not st.session_state[
+                                                                    full_key]
                                                                 st.rerun()
 
                                                             if st.session_state[full_key]:

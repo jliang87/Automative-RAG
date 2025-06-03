@@ -96,7 +96,7 @@ class JobChain:
     def _execute_next_task(self, job_id: str) -> None:
         """
         Execute the next task in the chain for a given job.
-        This is called both initially and after each task completion.
+        FIXED: Pass complete data to next task.
         """
         chain_state = self._get_chain_state(job_id)
         if not chain_state:
@@ -119,7 +119,7 @@ class JobChain:
         # Update job status
         job_tracker.update_job_status(
             job_id,
-            JobStatus.PROCESSING,
+            "processing",
             result={
                 "message": f"Executing {task_name}",
                 "step": current_step + 1,
@@ -136,14 +136,37 @@ class JobChain:
         chain_state["step_timings"][task_name] = {"started_at": time.time()}
         self._save_chain_state(job_id, chain_state)
 
+        # CRITICAL FIX: Get the complete current data for the task
+        # Get from job tracker, not just chain state
+        current_job = job_tracker.get_job(job_id, include_progress=False)
+        current_job_result = current_job.get("result", {}) if current_job else {}
+
+        # Parse if string
+        if isinstance(current_job_result, str):
+            try:
+                import json
+                current_job_result = json.loads(current_job_result)
+            except:
+                current_job_result = {}
+
+        # Merge chain data with current job data
+        complete_data = {}
+        complete_data.update(chain_state["data"])  # Start with chain data
+        complete_data.update(current_job_result)  # Merge with current job result
+
+        logger.info(f"Executing {task_name} with data keys: {list(complete_data.keys())}")
+        if "video_metadata" in complete_data:
+            vm = complete_data["video_metadata"]
+            logger.info(f"Passing video_metadata to {task_name} with URL: {vm.get('url', 'NO_URL')}")
+
         # Check if there's already a running task for this queue type
         if self._is_queue_busy(queue_name):
             logger.info(f"Queue {queue_name} is busy, task {task_name} will wait")
             # Queue the task - it will be picked up when the queue is free
-            self._queue_task(job_id, task_name, queue_name, chain_state["data"])
+            self._queue_task(job_id, task_name, queue_name, complete_data)
         else:
             # Execute immediately
-            self._execute_task_immediately(job_id, task_name, queue_name, chain_state["data"])
+            self._execute_task_immediately(job_id, task_name, queue_name, complete_data)
 
     def _execute_task_immediately(self, job_id: str, task_name: str, queue_name: str, data: Dict[str, Any]) -> None:
         """Execute a task immediately and mark the queue as busy."""
@@ -194,6 +217,7 @@ class JobChain:
         """
         Called when a task completes successfully.
         This automatically triggers the next task in the chain.
+        FIXED: Properly preserve and pass data between tasks.
         """
         logger.info(f"Task completed for job {job_id}, triggering next task")
 
@@ -220,8 +244,43 @@ class JobChain:
             self._mark_queue_free(queue_name)
             self._process_waiting_tasks(queue_name)
 
-        # Update data with result
-        chain_state["data"].update(result)
+        # CRITICAL FIX: Properly merge task result with chain data
+        # Get existing job tracker data FIRST
+        current_job = job_tracker.get_job(job_id, include_progress=False)
+        existing_job_result = current_job.get("result", {}) if current_job else {}
+
+        # Parse existing result if it's a string
+        if isinstance(existing_job_result, str):
+            try:
+                import json
+                existing_job_result = json.loads(existing_job_result)
+            except:
+                existing_job_result = {}
+
+        # CRITICAL: Merge task result with existing job data
+        combined_result = {}
+        combined_result.update(existing_job_result)  # Preserve existing data first
+        combined_result.update(result)  # Add new task result
+
+        # VERIFICATION: Log the merge
+        logger.info(f"Task completion merge for job {job_id}:")
+        logger.info(f"  Existing job result keys: {list(existing_job_result.keys())}")
+        logger.info(f"  New task result keys: {list(result.keys())}")
+        logger.info(f"  Combined result keys: {list(combined_result.keys())}")
+
+        # Check if video_metadata is preserved
+        if "video_metadata" in combined_result:
+            vm = combined_result["video_metadata"]
+            logger.info(f"  video_metadata preserved with URL: {vm.get('url', 'NO_URL')}")
+        elif "video_metadata" in result:
+            logger.info(f"  video_metadata found in task result")
+        elif "video_metadata" in existing_job_result:
+            logger.info(f"  video_metadata found in existing job result")
+        else:
+            logger.warning(f"  video_metadata NOT found in either result!")
+
+        # Update chain state data with the combined result
+        chain_state["data"].update(combined_result)
 
         # Move to next step
         chain_state["current_step"] += 1
@@ -230,6 +289,14 @@ class JobChain:
         progress = (chain_state["current_step"] / len(chain_state["workflow"])) * 100
         job_tracker.update_job_progress(job_id, progress,
                                         f"Completed step {chain_state['current_step']}/{len(chain_state['workflow'])}")
+
+        # CRITICAL: Update job tracker with the combined result
+        job_tracker.update_job_status(
+            job_id,
+            "processing",
+            result=combined_result,  # Store the combined result, not just the task result
+            stage=f"completed_step_{current_step + 1}"
+        )
 
         # Save updated state
         self._save_chain_state(job_id, chain_state)
@@ -284,42 +351,54 @@ class JobChain:
         chain_state = self._get_chain_state(job_id)
         total_duration = time.time() - chain_state["started_at"] if chain_state else 0
 
-        # Get the current job to preserve ALL results
+        # CRITICAL FIX: Get the CURRENT job data, not chain data
         current_job = job_tracker.get_job(job_id, include_progress=False)
+
+        if not current_job:
+            logger.error(f"No job data found for completed job {job_id}")
+            # Clean up and return
+            self._delete_chain_state(job_id)
+            return
+
+        existing_result = current_job.get("result", {})
+
+        # Parse existing result if it's a string
+        if isinstance(existing_result, str):
+            try:
+                import json
+                existing_result = json.loads(existing_result)
+            except:
+                existing_result = {}
 
         # Default completion info
         completion_info = {
             "job_chain_completion": {
                 "message": "Job chain completed successfully",
                 "total_duration": total_duration,
-                "step_timings": chain_state.get("step_timings", {}) if chain_state else {}
+                "step_timings": chain_state.get("step_timings", {}) if chain_state else {},
+                "completed_at": time.time()
             }
         }
 
-        if current_job and current_job.get("result"):
-            existing_result = current_job.get("result")
+        # CRITICAL FIX: Preserve ALL existing result data
+        if existing_result and isinstance(existing_result, dict):
+            # Preserve everything and add completion info
+            final_result = {}
+            final_result.update(existing_result)  # Preserve all existing data first
+            final_result.update(completion_info)  # Add completion info
 
-            # If result is a string, try to parse it as JSON
-            if isinstance(existing_result, str):
-                try:
-                    import json
-                    existing_result = json.loads(existing_result)
-                except:
-                    existing_result = {"raw_result": existing_result}
+            logger.info(f"Preserving all job data for {job_id} with keys: {list(existing_result.keys())}")
 
-            # SIMPLE: Always preserve existing result if it's a non-empty dict
-            if isinstance(existing_result, dict) and existing_result:
-                # Preserve everything and add completion info
-                final_result = {**existing_result, **completion_info}
-                logger.info(f"Preserving all job data for {job_id} with keys: {list(existing_result.keys())}")
+            # VERIFICATION: Check video_metadata preservation
+            if "video_metadata" in final_result:
+                vm = final_result["video_metadata"]
+                logger.info(f"Final job completion: video_metadata preserved with URL: {vm.get('url', 'NO_URL')}")
             else:
-                # No meaningful existing result
-                final_result = completion_info
-                logger.info(f"No existing result to preserve for job {job_id}")
+                logger.warning(f"Final job completion: video_metadata NOT found in final result")
         else:
-            # No existing job data
+            # No meaningful existing result
             final_result = completion_info
-            logger.info(f"No existing job data for {job_id}")
+            logger.info(f"No existing result to preserve for job {job_id}")
 
         # Update job status with the final result
         job_tracker.update_job_status(
