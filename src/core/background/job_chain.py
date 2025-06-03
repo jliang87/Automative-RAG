@@ -309,8 +309,9 @@ class JobChain:
         job_tracker.update_job_status(
             job_id,
             "processing",
-            result=combined_result,  # Store the combined result, not just the task result
-            stage=f"completed_step_{current_step + 1}"
+            result=combined_result,
+            stage=f"completed_step_{current_step + 1}",
+            replace_result=True  # Complete step result - replace it
         )
 
         # Save updated state
@@ -349,7 +350,8 @@ class JobChain:
         job_tracker.update_job_status(
             job_id,
             JobStatus.FAILED,
-            error=error
+            error=error,
+            replace_result=False  # Don't replace result on failure, preserve what we had
         )
 
         # Update progress to show failure
@@ -419,7 +421,8 @@ class JobChain:
         job_tracker.update_job_status(
             job_id,
             "completed",
-            result=final_result
+            result=final_result,
+            replace_result=True  # Final result - replace it
         )
 
         # Update progress to 100%
@@ -827,7 +830,8 @@ def process_pdf_task(job_id: str, file_path: str, metadata: Optional[Dict] = Non
             job_id,
             "processing",
             result=pdf_result,
-            stage="pdf_processing_completed"
+            stage="pdf_processing_completed",
+            replace_result=True  # Complete task result - replace it
         )
 
         # On success, trigger next task
@@ -896,7 +900,8 @@ def process_text_task(job_id: str, text: str, metadata: Optional[Dict] = None):
             job_id,
             "processing",
             result=text_result,
-            stage="text_processing_completed"
+            stage="text_processing_completed",
+            replace_result=True  # Complete task result - replace it
         )
 
         # On success, trigger next task

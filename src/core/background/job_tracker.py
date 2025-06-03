@@ -44,8 +44,7 @@ class JobTracker:
         logger.info(f"Created job {job_id} of type {job_type}")
 
     def update_job_status(self, job_id: str, status: str, result: Any = None, error: str = None,
-                          stage: str = None) -> None:
-        """Update the status of a job."""
+                          stage: str = None, replace_result: bool = False) -> None:
         job_data_json = self.redis.hget(self.job_key, job_id)
         if not job_data_json:
             logger.warning(f"Job {job_id} not found when updating status to {status}")
@@ -60,12 +59,36 @@ class JobTracker:
             job_data["current_stage"] = stage
             job_data["stage_updated_at"] = time.time()
 
-        # Add result and error
+        # Handle result updating
         if result is not None:
-            if isinstance(result, (list, dict)):
-                job_data["result"] = json.dumps(result)
+            if replace_result or not job_data.get("result"):
+                # Replace entire result (for task completions)
+                if isinstance(result, (list, dict)):
+                    job_data["result"] = json.dumps(result)
+                else:
+                    job_data["result"] = str(result)
+                logger.debug(f"Replaced result for job {job_id}")
             else:
-                job_data["result"] = str(result)
+                # Merge with existing result (for progress updates)
+                existing_result = job_data.get("result")
+                if isinstance(existing_result, str):
+                    try:
+                        existing_result = json.loads(existing_result)
+                    except:
+                        existing_result = {}
+
+                if isinstance(existing_result, dict) and isinstance(result, dict):
+                    merged_result = existing_result.copy()
+                    merged_result.update(result)
+                    job_data["result"] = json.dumps(merged_result)
+                    logger.debug(
+                        f"Merged result for job {job_id}: preserved {len(existing_result)} existing keys, added {len(result)} new keys")
+                else:
+                    # Fall back to replacement if types don't match
+                    if isinstance(result, (list, dict)):
+                        job_data["result"] = json.dumps(result)
+                    else:
+                        job_data["result"] = str(result)
 
         if error is not None:
             job_data["error"] = str(error)
