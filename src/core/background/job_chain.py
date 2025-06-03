@@ -136,8 +136,8 @@ class JobChain:
         chain_state["step_timings"][task_name] = {"started_at": time.time()}
         self._save_chain_state(job_id, chain_state)
 
-        # CRITICAL FIX: Get the complete current data for the task
-        # Get from job tracker, not just chain state
+        # CRITICAL FIX: Get the complete current data from job tracker
+        # This ensures we get ALL accumulated data from previous tasks
         current_job = job_tracker.get_job(job_id, include_progress=False)
         current_job_result = current_job.get("result", {}) if current_job else {}
 
@@ -155,9 +155,22 @@ class JobChain:
         complete_data.update(current_job_result)  # Merge with current job result
 
         logger.info(f"Executing {task_name} with data keys: {list(complete_data.keys())}")
+
+        # DEBUG: Log available data for troubleshooting
         if "video_metadata" in complete_data:
             vm = complete_data["video_metadata"]
             logger.info(f"Passing video_metadata to {task_name} with URL: {vm.get('url', 'NO_URL')}")
+            logger.info(f"Passing video_metadata to {task_name} with title: {vm.get('title', 'NO_TITLE')}")
+
+        # Log what data is being passed to each task type
+        if task_name == "transcribe_video" and "media_path" in complete_data:
+            logger.info(f"Passing media_path to transcribe_video: {complete_data['media_path']}")
+        elif task_name == "generate_embeddings" and "documents" in complete_data:
+            doc_count = len(complete_data["documents"]) if isinstance(complete_data["documents"], list) else 0
+            logger.info(f"Passing {doc_count} documents to generate_embeddings")
+        elif task_name == "llm_inference" and "documents" in complete_data:
+            doc_count = len(complete_data["documents"]) if isinstance(complete_data["documents"], list) else 0
+            logger.info(f"Passing {doc_count} documents to llm_inference")
 
         # Check if there's already a running task for this queue type
         if self._is_queue_busy(queue_name):
@@ -244,8 +257,8 @@ class JobChain:
             self._mark_queue_free(queue_name)
             self._process_waiting_tasks(queue_name)
 
-        # CRITICAL FIX: Properly merge task result with chain data
-        # Get existing job tracker data FIRST
+        # CRITICAL FIX: Get the CURRENT job data from job tracker
+        # This is the source of truth that includes all previous task results
         current_job = job_tracker.get_job(job_id, include_progress=False)
         existing_job_result = current_job.get("result", {}) if current_job else {}
 
@@ -258,22 +271,24 @@ class JobChain:
                 existing_job_result = {}
 
         # CRITICAL: Merge task result with existing job data
+        # Ensure video_metadata is preserved across task boundaries
         combined_result = {}
         combined_result.update(existing_job_result)  # Preserve existing data first
         combined_result.update(result)  # Add new task result
 
-        # VERIFICATION: Log the merge
+        # VERIFICATION: Log the merge for debugging
         logger.info(f"Task completion merge for job {job_id}:")
         logger.info(f"  Existing job result keys: {list(existing_job_result.keys())}")
         logger.info(f"  New task result keys: {list(result.keys())}")
         logger.info(f"  Combined result keys: {list(combined_result.keys())}")
 
-        # Check if video_metadata is preserved
+        # CRITICAL CHECK: Ensure video_metadata is preserved
         if "video_metadata" in combined_result:
             vm = combined_result["video_metadata"]
             logger.info(f"  video_metadata preserved with URL: {vm.get('url', 'NO_URL')}")
+            logger.info(f"  video_metadata title: {vm.get('title', 'NO_TITLE')}")
         elif "video_metadata" in result:
-            logger.info(f"  video_metadata found in task result")
+            logger.info(f"  video_metadata found in new task result")
         elif "video_metadata" in existing_job_result:
             logger.info(f"  video_metadata found in existing job result")
         else:
@@ -554,22 +569,31 @@ def download_video_task(job_id: str, url: str, metadata: Optional[Dict] = None):
 
         download_result = {
             "media_path": media_path,
-            "video_metadata": video_metadata,
+            "video_metadata": video_metadata,  # CRITICAL: This must be preserved
             "download_completed_at": time.time(),
             "url": url,
             "custom_metadata": metadata or {}
         }
 
+        # CRITICAL FIX: Store the download result in job tracker BEFORE calling task_completed
+        # This ensures the video_metadata is available for the next task
+        job_tracker.update_job_status(
+            job_id,
+            "processing",
+            result=download_result,  # Store the complete download result
+            stage="download_completed"
+        )
+
+        logger.info(f"CRITICAL CHECK: video_metadata stored with keys: {list(video_metadata.keys())}")
+        logger.info(f"CRITICAL CHECK: video_metadata title: {video_metadata.get('title', 'NO_TITLE')}")
+
+        # Now trigger the next task
         job_chain.task_completed(job_id, download_result)
 
     except Exception as e:
         error_msg = f"Video download failed for job {job_id}: {str(e)}"
         logger.error(error_msg)
         job_chain.task_failed(job_id, error_msg)
-
-    except Exception as e:
-        logger.error(f"Video download failed for job {job_id}: {str(e)}")
-        job_chain.task_failed(job_id, f"Video download failed: {str(e)}")
 
 
 @dramatiq.actor(queue_name="transcription_tasks", store_results=True, max_retries=2)
