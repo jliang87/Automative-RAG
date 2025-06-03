@@ -455,25 +455,34 @@ def download_video_task(job_id: str, url: str, metadata: Optional[Dict] = None):
         # Extract audio (this includes download)
         media_path = transcriber.extract_audio(url)
 
-        # Get video metadata
+        # CRITICAL FIX: Get video metadata using the transcriber
         video_metadata = transcriber.get_video_metadata(url)
 
         logger.info(f"Video download completed for job {job_id}, media saved to: {media_path}")
 
-        # CRITICAL FIX: Store the download result immediately
+        # CRITICAL FIX: Create proper result structure with video metadata
         download_result = {
             "media_path": media_path,
-            "video_metadata": video_metadata,
+            "video_metadata": video_metadata,  # This was missing!
             "download_completed_at": time.time(),
             "url": url,
-            "custom_metadata": metadata
+            "custom_metadata": metadata or {}
         }
 
-        # Store result in job tracker to preserve it
+        # DEBUG: Log what we're storing
+        logger.info(f"Download result for job {job_id}: keys={list(download_result.keys())}")
+        if video_metadata:
+            logger.info(f"video_metadata contains: {list(video_metadata.keys())}")
+            logger.info(f"video_metadata URL: {video_metadata.get('url')}")
+            logger.info(f"video_metadata title: {video_metadata.get('title')}")
+        else:
+            logger.error(f"video_metadata is empty for job {job_id}!")
+
+        # CRITICAL FIX: Store the actual download result, not just progress
         job_tracker.update_job_status(
             job_id,
             "processing",
-            result=download_result,
+            result=download_result,  # Store complete download result
             stage="video_download_completed"
         )
 
