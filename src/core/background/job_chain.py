@@ -276,17 +276,25 @@ class JobChain:
         # Clean up chain state
         self._delete_chain_state(job_id)
 
-    # Add this new method to the JobChain class (or replace existing _complete_job_chain)
     def _complete_job_chain(self, job_id: str) -> None:
-        """Complete the entire job chain while preserving the final inference result."""
+        """Complete the entire job chain while preserving ALL job results."""
         logger.info(f"Job chain completed for job {job_id}")
 
         # Get final chain state for timing information
         chain_state = self._get_chain_state(job_id)
         total_duration = time.time() - chain_state["started_at"] if chain_state else 0
 
-        # CRITICAL FIX: Get the current job to preserve inference result
+        # Get the current job to preserve ALL results
         current_job = job_tracker.get_job(job_id, include_progress=False)
+
+        # Default completion info
+        completion_info = {
+            "job_chain_completion": {
+                "message": "Job chain completed successfully",
+                "total_duration": total_duration,
+                "step_timings": chain_state.get("step_timings", {}) if chain_state else {}
+            }
+        }
 
         if current_job and current_job.get("result"):
             existing_result = current_job.get("result")
@@ -299,33 +307,19 @@ class JobChain:
                 except:
                     existing_result = {"raw_result": existing_result}
 
-            # Check if we have inference data (query, answer, documents)
-            if isinstance(existing_result, dict) and ("answer" in existing_result or "query" in existing_result):
-                # Preserve the inference result and add completion metadata
-                final_result = existing_result.copy()
-                final_result["job_chain_completion"] = {
-                    "message": "Job chain completed successfully",
-                    "total_duration": total_duration,
-                    "step_timings": chain_state.get("step_timings", {}) if chain_state else {}
-                }
-                logger.info(
-                    f"Preserving inference result for job {job_id} with answer: {bool(final_result.get('answer'))}")
+            # SIMPLE: Always preserve existing result if it's a non-empty dict
+            if isinstance(existing_result, dict) and existing_result:
+                # Preserve everything and add completion info
+                final_result = {**existing_result, **completion_info}
+                logger.info(f"Preserving all job data for {job_id} with keys: {list(existing_result.keys())}")
             else:
-                # No inference result found, use timing info only
-                final_result = {
-                    "message": "Job chain completed successfully",
-                    "total_duration": total_duration,
-                    "step_timings": chain_state.get("step_timings", {}) if chain_state else {}
-                }
-                logger.warning(f"No inference result found for job {job_id}, using timing info only")
+                # No meaningful existing result
+                final_result = completion_info
+                logger.info(f"No existing result to preserve for job {job_id}")
         else:
-            # No existing job data, use timing info only
-            final_result = {
-                "message": "Job chain completed successfully",
-                "total_duration": total_duration,
-                "step_timings": chain_state.get("step_timings", {}) if chain_state else {}
-            }
-            logger.warning(f"No existing job data for {job_id}, using timing info only")
+            # No existing job data
+            final_result = completion_info
+            logger.info(f"No existing job data for {job_id}")
 
         # Update job status with the final result
         job_tracker.update_job_status(
@@ -547,8 +541,17 @@ def transcribe_video_task(job_id: str, media_path: str):
             except:
                 existing_result = {}
 
+        # DEBUG: Log what we found from previous step
+        logger.info(f"Transcription job {job_id}: Found existing result keys: {list(existing_result.keys())}")
+
         # Get video metadata from download step
         video_metadata = existing_result.get("video_metadata", {})
+        logger.info(f"Transcription job {job_id}: Found video_metadata keys: {list(video_metadata.keys())}")
+
+        if video_metadata.get("url"):
+            logger.info(f"Transcription job {job_id}: video_metadata.url = {video_metadata['url']}")
+        else:
+            logger.warning(f"Transcription job {job_id}: video_metadata missing URL!")
 
         # CRITICAL FIX: Ensure we have the actual video URL
         # Priority: video_metadata.url > existing_result.url > job metadata
@@ -557,10 +560,12 @@ def transcribe_video_task(job_id: str, media_path: str):
         # First, try to get URL from video metadata (most reliable)
         if video_metadata.get("url"):
             original_url = video_metadata["url"]
+            logger.info(f"Got URL from video_metadata: {original_url}")
 
         # Fallback to existing result URL
         elif existing_result.get("url"):
             original_url = existing_result["url"]
+            logger.info(f"Got URL from existing_result: {original_url}")
 
         # Last resort: get from job metadata
         else:
@@ -572,12 +577,19 @@ def transcribe_video_task(job_id: str, media_path: str):
                 except:
                     job_metadata = {}
             original_url = job_metadata.get("url")
+            if original_url:
+                logger.info(f"Got URL from job_metadata: {original_url}")
+            else:
+                logger.error(f"Could not find original URL for job {job_id}")
 
         # Get video ID
         video_id = video_metadata.get("video_id", "")
+        if not video_id:
+            logger.warning(f"No video_id found in video_metadata for job {job_id}")
 
         logger.info(
-            f"Video metadata for job {job_id}: URL={original_url}, video_id={video_id}, title={video_metadata.get('title', 'N/A')}")
+            f"Video metadata for job {job_id}: URL={original_url}, video_id={video_id}, title={video_metadata.get('title', 'N/A')}"
+        )
 
         # Determine the correct source based on URL or job metadata
         source_type = "video"  # Default fallback
@@ -621,7 +633,7 @@ def transcribe_video_task(job_id: str, media_path: str):
                     # CRITICAL FIX: Ensure URL is properly preserved
                     "title": video_metadata.get("title", "No title"),
                     "author": video_metadata.get("author", "Unknown"),
-                    "url": original_url,  # ✅ Use the properly retrieved URL (can be None)
+                    "url": original_url,  # ✅ Use the properly retrieved URL
                     "video_id": video_id or "",
                     "published_date": video_metadata.get("published_date"),
                     "description": video_metadata.get("description", "")[:500] + "..." if video_metadata.get(
@@ -638,9 +650,10 @@ def transcribe_video_task(job_id: str, media_path: str):
         logger.info(f"Transcription completed for job {job_id}: {len(chunks)} chunks, language: {info.language}")
         logger.info(f"URL preserved in documents: {original_url}")  # Debug log
 
-        # Combine transcription result with existing data (video metadata)
+        # CRITICAL FIX: Combine transcription result with existing data (video metadata)
+        # Make sure we preserve ALL existing data, especially video_metadata
         transcription_result = {
-            **existing_result,  # Preserve video metadata from download step
+            **existing_result,  # Preserve ALL existing data including video_metadata
             "documents": [{"content": doc.page_content, "metadata": doc.metadata} for doc in documents],
             "transcript": transcript,
             "language": info.language,
@@ -651,6 +664,21 @@ def transcribe_video_task(job_id: str, media_path: str):
             "preserved_url": original_url  # Debug: track if URL was preserved
         }
 
+        # CRITICAL DEBUG: Verify video_metadata is still in the result
+        if "video_metadata" in transcription_result:
+            vm = transcription_result["video_metadata"]
+            logger.info(f"SUCCESS: video_metadata preserved in final result with URL: {vm.get('url')}")
+            logger.info(f"video_metadata keys: {list(vm.keys())}")
+        else:
+            logger.error(f"CRITICAL ERROR: video_metadata LOST during transcription for job {job_id}")
+            logger.error(f"Final result keys: {list(transcription_result.keys())}")
+            logger.error(f"Original existing_result keys: {list(existing_result.keys())}")
+
+            # Try to recover video_metadata if it was in existing_result
+            if "video_metadata" in existing_result:
+                transcription_result["video_metadata"] = existing_result["video_metadata"]
+                logger.info("RECOVERED: video_metadata restored from existing_result")
+
         # Store combined result in job tracker
         job_tracker.update_job_status(
             job_id,
@@ -658,6 +686,13 @@ def transcribe_video_task(job_id: str, media_path: str):
             result=transcription_result,
             stage="video_transcription_completed"
         )
+
+        # FINAL DEBUG: Verify what we're passing to the next step
+        logger.info(f"Final transcription_result keys being passed: {list(transcription_result.keys())}")
+        if "video_metadata" in transcription_result:
+            logger.info(f"video_metadata will be available for embedding step")
+        else:
+            logger.error(f"video_metadata will NOT be available for embedding step!")
 
         # On success, trigger next task
         job_chain.task_completed(job_id, transcription_result)
@@ -829,7 +864,7 @@ def generate_embeddings_task(job_id: str, documents: List[Dict]):
             if "id" not in doc.metadata or not doc.metadata["id"]:
                 doc.metadata["id"] = f"doc-{job_id}-{len(doc_objects)}-{int(current_time)}"
 
-        # Get existing job data to preserve video metadata and use detected source
+        # CRITICAL FIX: Get existing job data to preserve video metadata and use detected source
         current_job = job_tracker.get_job(job_id, include_progress=False)
         existing_result = current_job.get("result", {}) if current_job else {}
 
@@ -841,12 +876,24 @@ def generate_embeddings_task(job_id: str, documents: List[Dict]):
             except:
                 existing_result = {}
 
+        # DEBUG: Log what we found
+        logger.info(f"Embeddings job {job_id}: Found existing result keys: {list(existing_result.keys())}")
+
+        # CRITICAL FIX: Preserve video metadata
+        video_metadata = existing_result.get("video_metadata", {})
+        if video_metadata:
+            logger.info(f"Embeddings job {job_id}: Found video_metadata with keys: {list(video_metadata.keys())}")
+            if video_metadata.get("url"):
+                logger.info(f"Embeddings job {job_id}: video_metadata.url = {video_metadata['url']}")
+        else:
+            logger.warning(f"Embeddings job {job_id}: No video_metadata found in existing result")
+
         # Get detected source type
         detected_source = existing_result.get("detected_source", "video")
 
         # Add video metadata to documents if available
-        video_metadata = existing_result.get("video_metadata", {})
         if video_metadata:
+            logger.info(f"Adding video metadata to {len(doc_objects)} documents")
             for doc in doc_objects:
                 # Update source to use detected type
                 doc.metadata["source"] = detected_source
@@ -863,7 +910,7 @@ def generate_embeddings_task(job_id: str, documents: List[Dict]):
                 })
 
                 # IMPORTANT: Ensure these are preserved
-                logger.info(
+                logger.debug(
                     f"Document metadata for job {job_id}: title='{doc.metadata.get('title')}', url='{doc.metadata.get('url')}', job_id='{doc.metadata.get('job_id')}'")
 
         # Add to vector store using preloaded embedding model
@@ -872,14 +919,29 @@ def generate_embeddings_task(job_id: str, documents: List[Dict]):
 
         logger.info(f"Embedding generation completed for job {job_id}: {len(doc_ids)} document IDs")
 
-        # Combine embedding result with existing data (video metadata + transcript)
+        # CRITICAL FIX: Combine embedding result with existing data (preserving ALL previous data)
         final_result = {
-            **existing_result,  # Preserve all previous data
+            **existing_result,  # Preserve ALL previous data including video_metadata
             "document_ids": doc_ids,
             "document_count": len(doc_ids),
             "embedding_completed_at": time.time(),
             "ingestion_completed": True
         }
+
+        # CRITICAL DEBUG: Verify video_metadata is still preserved
+        if "video_metadata" in final_result:
+            vm = final_result["video_metadata"]
+            logger.info(f"SUCCESS: video_metadata preserved in final embedding result with URL: {vm.get('url')}")
+            logger.info(f"Final result has video_metadata with keys: {list(vm.keys())}")
+        else:
+            logger.error(f"CRITICAL ERROR: video_metadata LOST during embedding generation for job {job_id}")
+            logger.error(f"Final result keys: {list(final_result.keys())}")
+            logger.error(f"Original existing_result keys: {list(existing_result.keys())}")
+
+            # Try to recover video_metadata if it was in existing_result
+            if "video_metadata" in existing_result:
+                final_result["video_metadata"] = existing_result["video_metadata"]
+                logger.info("RECOVERED: video_metadata restored from existing_result in embedding task")
 
         # Store final result in job tracker
         job_tracker.update_job_status(
@@ -888,6 +950,10 @@ def generate_embeddings_task(job_id: str, documents: List[Dict]):
             result=final_result,
             stage="embeddings_completed"
         )
+
+        # FINAL DEBUG: Log what's being passed to completion
+        logger.info(f"Embedding task final result keys: {list(final_result.keys())}")
+        logger.info(f"Passing to job completion with video_metadata: {bool('video_metadata' in final_result)}")
 
         # On success, complete the job (this is the final step for video processing)
         job_chain.task_completed(job_id, final_result)
