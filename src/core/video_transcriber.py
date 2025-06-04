@@ -1,10 +1,3 @@
-"""
-Module for transcribing videos from various platforms with GPU-accelerated Whisper.
-
-This module provides a unified transcriber for YouTube, Bilibili, and other video platforms,
-with GPU acceleration using Whisper for high-quality transcription.
-"""
-
 import os
 import re
 import tempfile
@@ -15,8 +8,6 @@ from typing import Dict, List, Optional, Tuple, Union, Literal
 import torch
 import logging
 from langchain_core.documents import Document
-# import whisper
-# Import the faster-whisper package for transcription on CPU
 from faster_whisper import WhisperModel
 
 from src.models.schema import DocumentMetadata, DocumentSource
@@ -32,6 +23,7 @@ class VideoTranscriber:
     """
     Unified video transcriber that handles multiple platforms (YouTube, Bilibili, etc.)
     using faster-whisper for CPU-optimized transcription.
+    ENHANCED with comprehensive Unicode handling for Chinese content.
     """
 
     def __init__(
@@ -239,8 +231,9 @@ class VideoTranscriber:
 
     def get_video_metadata(self, url: str) -> Dict[str, Union[str, int]]:
         """
-        Get metadata from a video using yt-dlp with proper Unicode handling.
+        Get metadata from a video using yt-dlp with comprehensive Unicode handling.
         ENHANCED VERSION: Properly handles Chinese characters and Unicode encoding.
+        FAILS if metadata extraction fails - NO FALLBACKS!
         """
         try:
             video_id = self.extract_video_id(url)
@@ -270,45 +263,13 @@ class VideoTranscriber:
                     return field_value
 
                 try:
-                    # Handle Unicode escape sequences like \u6b3e
-                    if '\\u' in field_value:
-                        # First, try to decode as if it's a JSON string
-                        try:
-                            # If it looks like it might be double-encoded
-                            if field_value.startswith('"') and field_value.endswith('"'):
-                                decoded = json.loads(field_value)
-                            else:
-                                # Handle raw Unicode escapes
-                                decoded = field_value.encode('utf-8').decode('unicode_escape')
-                            return decoded
-                        except (json.JSONDecodeError, UnicodeDecodeError):
-                            # If JSON decoding fails, try manual Unicode escape decoding
-                            try:
-                                return field_value.encode('latin1').decode('unicode_escape')
-                            except (UnicodeDecodeError, UnicodeEncodeError):
-                                # If all else fails, use codecs
-                                import codecs
-                                return codecs.decode(field_value, 'unicode_escape')
-
-                    # For Chinese text that might be incorrectly encoded
-                    # Try to detect and fix common encoding issues
-                    if any(ord(char) > 127 for char in field_value):
-                        # Check if it's already properly encoded UTF-8
-                        try:
-                            field_value.encode('utf-8')
-                            return field_value  # Already proper UTF-8
-                        except UnicodeEncodeError:
-                            # Try to fix encoding issues
-                            try:
-                                return field_value.encode('latin1').decode('utf-8')
-                            except (UnicodeDecodeError, UnicodeEncodeError):
-                                pass
-
-                    return field_value
+                    # Import Unicode handler
+                    from src.utils.unicode_handler import decode_unicode_escapes
+                    return decode_unicode_escapes(field_value)
 
                 except Exception as e:
                     logger.warning(f"Failed to decode Unicode in field: {field_value}, error: {e}")
-                    return field_value  # Return original if all decoding attempts fail
+                    return field_value  # Return original if decoding fails
 
             # Apply Unicode decoding to text fields
             metadata = {
@@ -322,12 +283,19 @@ class VideoTranscriber:
                 "description": decode_unicode_field(data.get("description", "")),
             }
 
-            # VALIDATION: Ensure decoded metadata is valid
+            # ENHANCED VALIDATION: Ensure decoded metadata is valid
             if not metadata["title"] or metadata["title"] in ["", "Unknown Video"]:
                 raise ValueError(f"Title decoding failed or invalid for {url}")
 
             if not metadata["author"] or metadata["author"] in ["", "Unknown", "Unknown Author"]:
                 raise ValueError(f"Author decoding failed or invalid for {url}")
+
+            # CRITICAL VALIDATION: Check for remaining Unicode escapes
+            if "\\u" in metadata["title"]:
+                raise ValueError(f"Title still contains Unicode escapes after decoding: {metadata['title']}")
+
+            if "\\u" in metadata["author"]:
+                raise ValueError(f"Author still contains Unicode escapes after decoding: {metadata['author']}")
 
             logger.info(f"Successfully extracted and decoded metadata for {video_id}")
             logger.info(f"Title: {metadata['title']}")
@@ -382,6 +350,12 @@ class VideoTranscriber:
         all_text = [segment.text for segment in segments]
         transcript = " ".join(all_text)
 
+        # ENHANCED: Apply Unicode decoding to transcript
+        if transcript and "\\u" in transcript:
+            logger.info("Applying Unicode decoding to transcript...")
+            from src.utils.unicode_handler import decode_unicode_escapes
+            transcript = decode_unicode_escapes(transcript)
+
         # ✅ Convert only if detected language is Chinese
         if info.language.startswith("zh") and self.chinese_converter:
             print("Detected Chinese. Converting to Simplified Chinese...")
@@ -395,6 +369,7 @@ class VideoTranscriber:
     ) -> List[Document]:
         """
         Process a video and return Langchain documents using Whisper for transcription.
+        ENHANCED with comprehensive Unicode handling.
 
         Args:
             url: Video URL
@@ -406,10 +381,15 @@ class VideoTranscriber:
         # Detect platform from URL
         platform = self.detect_platform(url)
 
-        # Extract metadata
+        # Extract metadata with Unicode handling
         video_metadata = self.get_video_metadata(url)
 
-        # Extract automotive metadata using helper function
+        # Apply Unicode decoding to custom metadata if provided
+        if custom_metadata:
+            from src.utils.unicode_handler import decode_unicode_in_dict
+            custom_metadata = decode_unicode_in_dict(custom_metadata)
+
+        # Extract automotive metadata using helper function (with Unicode-decoded text)
         auto_metadata = extract_metadata_from_text(video_metadata.get("title", "") + " " +
                                                   video_metadata.get("description", ""))
 
@@ -421,7 +401,7 @@ class VideoTranscriber:
             # Extract audio
             media_path = self.extract_audio(url)
 
-            # Transcribe with Whisper
+            # Transcribe with Whisper (now includes Unicode handling)
             transcript_text, info = self.transcribe_with_whisper(media_path)
             custom_metadata = custom_metadata or {}
             custom_metadata["language"] = info.language
@@ -432,13 +412,13 @@ class VideoTranscriber:
         if not transcript_text:
             raise ValueError("Transcription failed: no text was generated")
 
-        # Create metadata object
+        # Create metadata object with Unicode-safe data
         metadata = DocumentMetadata(
             source=source,
             source_id=video_metadata["video_id"],
             url=url,
-            title=video_metadata["title"],
-            author=video_metadata["author"],
+            title=video_metadata["title"],  # Already Unicode-decoded
+            author=video_metadata["author"],  # Already Unicode-decoded
             published_date=video_metadata["published_date"],
             manufacturer=auto_metadata.get("manufacturer"),
             model=custom_metadata.get("model") if custom_metadata else None,
@@ -452,13 +432,14 @@ class VideoTranscriber:
         # Add transcription info to metadata
         metadata.custom_metadata["transcription_method"] = "whisper"
         metadata.custom_metadata["whisper_model"] = self.whisper_model_size
+        metadata.custom_metadata["unicode_processed"] = True  # Flag for tracking
 
         # Add platform information
         metadata.custom_metadata["platform"] = platform
 
-        # Create document
+        # Create document with Unicode-safe content
         document = Document(
-            page_content=transcript_text,
+            page_content=transcript_text,  # Already Unicode-decoded
             metadata=metadata.dict(),
         )
 
@@ -469,6 +450,7 @@ class VideoTranscriber:
     ) -> Dict[str, Union[List[str], Dict[str, str]]]:
         """
         Process multiple videos in batch using Whisper for transcription.
+        ENHANCED with Unicode handling for all videos.
 
         Args:
             urls: List of Video URLs

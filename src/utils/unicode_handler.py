@@ -1,6 +1,7 @@
 import json
 import logging
 import codecs
+import re
 from typing import Any, Dict, List, Union
 
 logger = logging.getLogger(__name__)
@@ -58,7 +59,6 @@ def decode_unicode_escapes(text: str) -> str:
 
         # Pattern 3: URL-encoded Unicode (%uXXXX)
         if '%u' in text:
-            import re
             def replace_percent_unicode(match):
                 code = match.group(1)
                 return chr(int(code, 16))
@@ -167,3 +167,117 @@ def decode_unicode_in_json_result(result: Union[str, Dict, List]) -> Union[str, 
         return decode_unicode_in_list(result)
 
     return result
+
+
+def clean_form_input(text: str) -> str:
+    """
+    Clean text from web forms that might contain Unicode escapes.
+    Common when users copy-paste from websites.
+
+    Args:
+        text: Text input from web forms
+
+    Returns:
+        Cleaned text with proper Unicode
+    """
+    if not text:
+        return text
+
+    # Common issues from copy-paste from websites
+    if "\\u" in text:
+        return decode_unicode_escapes(text)
+
+    return text
+
+
+def validate_unicode_cleaning(text: str, field_name: str = "text") -> bool:
+    """
+    Validate that Unicode cleaning was successful.
+
+    Args:
+        text: Text to validate
+        field_name: Name of the field for logging
+
+    Returns:
+        True if text is clean, False if Unicode escapes remain
+    """
+    if not isinstance(text, str):
+        return True
+
+    if "\\u" in text:
+        logger.warning(f"Unicode escapes still present in {field_name}: {text[:100]}...")
+        return False
+
+    return True
+
+
+def test_unicode_decoding():
+    """Test function to validate Unicode decoding works correctly"""
+
+    # Test cases with common Unicode escape patterns
+    test_cases = [
+        # Chinese characters with Unicode escapes
+        ("\\u6b3e", "款"),
+        ("\\u8f66\\u5728\\u7ebf", "车在线"),
+        ("25\\u6b3e\\u8fdc\\u9014\\u88c5\\u9970", "25款远途装饰"),
+
+        # Already properly encoded text
+        ("正常中文", "正常中文"),
+        ("Normal English", "Normal English"),
+
+        # Mixed content
+        ("2023\\u5e74\\u5b9d\\u9a6cX5", "2023年宝马X5"),
+
+        # Double-escaped
+        ("\\\\u6b3e", "款"),
+
+        # Complex automotive terms
+        ("\\u5b9d\\u9a6cX5\\u53c2\\u6570\\u8868", "宝马X5参数表"),
+        ("\\u5965\\u8feaA4\\u8fd0\\u52a8\\u578b", "奥迪A4运动型"),
+    ]
+
+    print("Testing Unicode decoding...")
+    all_passed = True
+
+    for input_text, expected in test_cases:
+        result = decode_unicode_escapes(input_text)
+        passed = result == expected
+        status = "✓" if passed else "✗"
+        print(f"{status} '{input_text}' -> '{result}' (expected: '{expected}')")
+
+        if not passed:
+            all_passed = False
+
+    # Test dictionary decoding
+    print("\nTesting dictionary decoding...")
+    test_dict = {
+        "title": "25\\u6b3e\\u8fdc\\u9014\\u88c5\\u9970",
+        "author": "\\u8f66\\u5728\\u7ebf",
+        "manufacturer": "\\u5b9d\\u9a6c",
+        "normal_field": "normal text"
+    }
+
+    decoded_dict = decode_unicode_in_dict(test_dict)
+    expected_dict = {
+        "title": "25款远途装饰",
+        "author": "车在线",
+        "manufacturer": "宝马",
+        "normal_field": "normal text"
+    }
+
+    dict_passed = decoded_dict == expected_dict
+    status = "✓" if dict_passed else "✗"
+    print(f"{status} Dictionary decoding: {dict_passed}")
+
+    if not dict_passed:
+        print(f"  Expected: {expected_dict}")
+        print(f"  Got: {decoded_dict}")
+        all_passed = False
+
+    print(f"\nUnicode decoding test {'PASSED' if all_passed else 'FAILED'}.")
+    return all_passed
+
+
+if __name__ == "__main__":
+    # Run tests when module is executed directly
+    test_unicode_decoding()

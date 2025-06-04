@@ -12,21 +12,13 @@ from src.models.schema import DocumentMetadata, DocumentSource
 
 
 class PDFLoader:
-    """
-    Enhanced class for loading and processing PDF documents with GPU acceleration.
-    
-    Extracts text and metadata from PDFs, with special handling
-    for automotive service manuals and specification sheets.
-    Adds OCR capabilities for scanned PDFs using GPU acceleration.
-    """
-
     def __init__(
-        self,
-        chunk_size: int = 1000,
-        chunk_overlap: int = 200,
-        device: Optional[str] = None,
-        use_ocr: bool = True,
-        ocr_languages: str = "en+ch_doc"
+            self,
+            chunk_size: int = 1000,
+            chunk_overlap: int = 200,
+            device: Optional[str] = None,
+            use_ocr: bool = True,
+            ocr_languages: str = "en+ch_doc"
     ):
         """
         Initialize the PDF loader.
@@ -86,32 +78,32 @@ class PDFLoader:
         """
         if not os.path.exists(file_path):
             raise FileNotFoundError(f"PDF file not found: {file_path}")
-        
+
         # Use instance setting if not overridden
         use_ocr = self.use_ocr if use_ocr is None else use_ocr
-            
+
         # Try standard PDF extraction first
         loader = PyPDFLoader(file_path)
         documents = loader.load()
-        
+
         # Check if we need OCR by examining if text was extracted
         total_text = sum(len(doc.page_content.strip()) for doc in documents)
-        
+
         # If minimal text was extracted and OCR is enabled, apply OCR
         if total_text < 100 and use_ocr and self.ocr_model:
             print(f"PDF appears to be scanned or has minimal text. Applying OCR...")
             return self._apply_ocr(file_path, documents)
-        
+
         return documents
 
     def _apply_ocr(self, file_path: str, original_documents: List[Document]) -> List[Document]:
         """
-        Apply OCR to a PDF file using GPU acceleration.
-        
+        Apply OCR to a PDF file with comprehensive Unicode handling.
+
         Args:
             file_path: Path to the PDF file
             original_documents: Original documents with minimal text
-            
+
         Returns:
             List of documents with OCR-extracted text
         """
@@ -119,51 +111,91 @@ class PDFLoader:
             import fitz  # PyMuPDF
             import numpy as np
             from PIL import Image
-            
+            from src.utils.unicode_handler import decode_unicode_escapes
+
             ocr_documents = []
-            
+
             # Open the PDF
             pdf = fitz.open(file_path)
-            
+
             for i, page in enumerate(pdf):
                 # Get the page as a pixmap (image)
                 pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))  # 2x scaling for better OCR
-                
+
                 # Convert to PIL Image
                 img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-                
+
                 # Convert to numpy array for OCR
                 img_np = np.array(img)
-                
+
                 # Apply OCR
                 result = self.ocr_model.ocr(img_np, cls=True)
-                
-                # Extract text from OCR result
+
+                # ENHANCED: Extract and clean OCR text with Unicode handling
                 text = ""
                 if result[0]:
                     for line in result[0]:
-                        text += line[1][0] + "\n"
-                
-                # Create a new document with the OCR text
+                        line_text = line[1][0]
+
+                        # CRITICAL FIX: Apply Unicode decoding to OCR output
+                        if isinstance(line_text, str):
+                            # PaddleOCR sometimes returns Unicode escapes
+                            line_text = decode_unicode_escapes(line_text)
+
+                            # Additional OCR-specific cleaning
+                            line_text = self._clean_ocr_text(line_text)
+
+                        text += line_text + "\n"
+
+                # VALIDATION: Check for remaining Unicode escapes
+                if "\\u" in text:
+                    print(f"Warning: Unicode escapes still present in OCR text for page {i + 1}")
+                    # Apply additional decoding attempt
+                    text = decode_unicode_escapes(text)
+
+                # Create document with cleaned text
                 ocr_doc = Document(
                     page_content=text,
                     metadata={
                         **original_documents[i].metadata,
                         "ocr_applied": True,
-                        "page_number": i + 1
+                        "page_number": i + 1,
+                        "ocr_unicode_cleaned": True  # Flag for tracking
                     }
                 )
-                
+
                 ocr_documents.append(ocr_doc)
-            
+
             return ocr_documents
+
         except Exception as e:
-            print(f"OCR failed: {str(e)}. Falling back to original documents.")
+            print(f"OCR with Unicode handling failed: {str(e)}. Falling back to original documents.")
             return original_documents
+
+    def _clean_ocr_text(self, text: str) -> str:
+        """Clean OCR-specific artifacts and encoding issues"""
+        if not text:
+            return text
+
+        # Common OCR artifacts with Chinese text
+        ocr_fixes = {
+            # Common OCR misreads for Chinese characters
+            # Add specific fixes as needed based on your OCR results
+        }
+
+        # Apply OCR fixes
+        for old, new in ocr_fixes.items():
+            text = text.replace(old, new)
+
+        # Remove excessive whitespace that OCR sometimes introduces
+        text = re.sub(r'\s+', ' ', text)
+        text = text.strip()
+
+        return text
 
     def extract_automotive_metadata(self, text: str) -> Dict[str, any]:
         """
-        Extract automotive-specific metadata from PDF text.
+        Extract automotive-specific metadata from PDF text with Unicode handling.
 
         Args:
             text: Extracted text from PDF
@@ -171,233 +203,43 @@ class PDFLoader:
         Returns:
             Dictionary with automotive metadata
         """
+        from src.utils.unicode_handler import decode_unicode_escapes
+
+        # CRITICAL FIX: Decode Unicode escapes before metadata extraction
+        if isinstance(text, str) and "\\u" in text:
+            print("Decoding Unicode escapes in PDF text before metadata extraction")
+            text = decode_unicode_escapes(text)
+
         auto_metadata = {}
-        
-        # Common manufacturers with regex patterns
-        manufacturer_patterns = [
-            (r"toyota", "Toyota"),
-            (r"honda", "Honda"),
-            (r"ford", "Ford"),
-            (r"chevrolet|chevy", "Chevrolet"),
-            (r"bmw", "BMW"),
-            (r"mercedes|mercedes-benz", "Mercedes-Benz"),
-            (r"audi", "Audi"),
-            (r"volkswagen|vw", "Volkswagen"),
-            (r"nissan", "Nissan"),
-            (r"hyundai", "Hyundai"),
-            (r"kia", "Kia"),
-            (r"subaru", "Subaru"),
-            (r"mazda", "Mazda"),
-            (r"porsche", "Porsche"),
-            (r"ferrari", "Ferrari"),
-            (r"lamborghini", "Lamborghini"),
-            (r"tesla", "Tesla"),
-            (r"volvo", "Volvo"),
-            (r"jaguar", "Jaguar"),
-            (r"land rover", "Land Rover"),
-            (r"lexus", "Lexus"),
-            (r"acura", "Acura"),
-            (r"infiniti", "Infiniti"),
-            (r"cadillac", "Cadillac"),
-            (r"jeep", "Jeep"),
-        ]
-        
-        # Look for manufacturer
         text_lower = text.lower()
-        for pattern, manufacturer in manufacturer_patterns:
-            if re.search(pattern, text_lower):
-                auto_metadata["manufacturer"] = manufacturer
-                break
-                
-        # Extract year (4-digit number between 1900 and 2100)
-        year_match = re.search(r'(19\d{2}|20\d{2})', text)
-        if year_match:
-            auto_metadata["year"] = int(year_match.group(0))
-            
-        # Try to extract model
-        # This is more complex and varies by manufacturer
-        # Look for common patterns after manufacturer name
-        if "manufacturer" in auto_metadata:
-            manufacturer = auto_metadata["manufacturer"]
-            
-            # Pattern: "<Manufacturer> <Model>"
-            model_pattern = rf"{manufacturer}\s+([A-Z0-9][-A-Za-z0-9\s]+?)[\s\.,]"
-            model_match = re.search(model_pattern, text)
-            
-            if model_match:
-                auto_metadata["model"] = model_match.group(1).strip()
-                
-        # Categories
-        category_patterns = [
-            (r"sedan", "sedan"),
-            (r"suv|crossover", "suv"),
-            (r"truck|pickup", "truck"),
-            (r"sports car|supercar|hypercar", "sports"),
-            (r"minivan|van", "minivan"),
-            (r"coup[eé]", "coupe"),
-            (r"convertible|cabriolet", "convertible"),
-            (r"hatchback", "hatchback"),
-            (r"wagon|estate", "wagon"),
+
+        # ENHANCED: Chinese manufacturer patterns with proper Unicode
+        chinese_manufacturer_patterns = [
+            (r"宝马|bmw", "宝马"),
+            (r"奔驰|mercedes|mercedes-benz", "奔驰"),
+            (r"奥迪|audi", "奥迪"),
+            (r"丰田|toyota", "丰田"),
+            (r"本田|honda", "本田"),
+            (r"大众|volkswagen|vw", "大众"),
+            (r"福特|ford", "福特"),
+            (r"雪佛兰|chevrolet|chevy", "雪佛兰"),
+            (r"日产|nissan", "日产"),
+            (r"现代|hyundai", "现代"),
+            (r"起亚|kia", "起亚"),
+            (r"斯巴鲁|subaru", "斯巴鲁"),
+            (r"马自达|mazda", "马自达"),
+            (r"特斯拉|tesla", "特斯拉"),
+            (r"沃尔沃|volvo", "沃尔沃"),
+            (r"捷豹|jaguar", "捷豹"),
+            (r"路虎|land rover", "路虎"),
+            (r"雷克萨斯|lexus", "雷克萨斯"),
+            (r"讴歌|acura", "讴歌"),
+            (r"英菲尼迪|infiniti", "英菲尼迪"),
+            (r"凯迪拉克|cadillac", "凯迪拉克"),
+            (r"吉普|jeep", "吉普"),
         ]
-        
-        for pattern, category in category_patterns:
+
+        # Look for Chinese manufacturers first, then English
+        for pattern, manufacturer in chinese_manufacturer_patterns:
             if re.search(pattern, text_lower):
-                auto_metadata["category"] = category
-                break
-                
-        # Engine types
-        engine_patterns = [
-            (r"gasoline|petrol|gas engine", "gasoline"),
-            (r"diesel", "diesel"),
-            (r"electric|ev|battery-powered", "electric"),
-            (r"hybrid|phev|plug-in", "hybrid"),
-            (r"hydrogen|fuel cell", "hydrogen"),
-        ]
-        
-        for pattern, engine_type in engine_patterns:
-            if re.search(pattern, text_lower):
-                auto_metadata["engine_type"] = engine_type
-                break
-                
-        # Transmission types
-        transmission_patterns = [
-            (r"automatic transmission|auto transmission", "automatic"),
-            (r"manual transmission|stick shift", "manual"),
-            (r"cvt|continuously variable", "cvt"),
-            (r"dct|dual-clutch", "dct"),
-        ]
-        
-        for pattern, transmission in transmission_patterns:
-            if re.search(pattern, text_lower):
-                auto_metadata["transmission"] = transmission
-                break
-        
-        return auto_metadata
-
-    def extract_tables(self, file_path: str) -> List[Dict]:
-        """
-        Extract tables from PDF using GPU-accelerated detection.
-        
-        Args:
-            file_path: Path to the PDF file
-            
-        Returns:
-            List of dictionaries containing table data
-        """
-        try:
-            import camelot
-            import pandas as pd
-            
-            # Extract tables
-            tables = camelot.read_pdf(
-                file_path,
-                pages='all',
-                flavor='lattice'  # Try both 'lattice' and 'stream' for different table types
-            )
-            
-            result = []
-            
-            # Convert tables to structured data
-            for i, table in enumerate(tables):
-                # Convert to pandas DataFrame
-                df = table.df
-                
-                # Convert DataFrame to dictionary
-                table_dict = {
-                    "table_id": i + 1,
-                    "page_number": table.page,
-                    "data": df.to_dict(orient='records'),
-                    "headers": df.columns.tolist()
-                }
-                
-                result.append(table_dict)
-                
-            return result
-        except ImportError:
-            print("Camelot-py not installed. Table extraction disabled.")
-            print("To enable table extraction, install: pip install camelot-py opencv-python ghostscript")
-            return []
-        except Exception as e:
-            print(f"Table extraction failed: {str(e)}")
-            return []
-
-    def process_pdf(
-        self,
-        file_path: str,
-        custom_metadata: Optional[Dict[str, str]] = None,
-        extract_tables: bool = True
-    ) -> List[Document]:
-        """
-        Process a PDF file and return chunked Langchain documents with GPU-accelerated features.
-
-        Args:
-            file_path: Path to the PDF file
-            custom_metadata: Optional custom metadata
-            extract_tables: Whether to extract tables from the PDF
-
-        Returns:
-            List of Langchain Document objects with metadata
-        """
-        # Load PDF with OCR if needed
-        raw_documents = self.load_pdf(file_path)
-        
-        # Combine all pages to extract metadata
-        full_text = " ".join([doc.page_content for doc in raw_documents])
-        
-        # Extract automotive metadata
-        auto_metadata = self.extract_automotive_metadata(full_text)
-        
-        # Extract tables if requested
-        tables = []
-        if extract_tables:
-            try:
-                tables = self.extract_tables(file_path)
-            except Exception as e:
-                print(f"Table extraction error: {str(e)}")
-        
-        # Create metadata object
-        base_metadata = DocumentMetadata(
-            source=DocumentSource.PDF,
-            source_id=os.path.basename(file_path),
-            url=None,
-            title=custom_metadata.get("title") if custom_metadata else os.path.basename(file_path),
-            author=custom_metadata.get("author"),
-            published_date=None,
-            manufacturer=auto_metadata.get("manufacturer"),
-            model=auto_metadata.get("model"),
-            year=auto_metadata.get("year"),
-            category=auto_metadata.get("category"),
-            engine_type=auto_metadata.get("engine_type"),
-            transmission=auto_metadata.get("transmission"),
-            custom_metadata=custom_metadata or {},
-        )
-        
-        # Add extracted tables to metadata if any were found
-        if tables:
-            base_metadata.custom_metadata["has_tables"] = True
-            base_metadata.custom_metadata["table_count"] = len(tables)
-            
-            # Store tables in a simplified format in metadata
-            # (full table data would be too large for metadata)
-            table_info = []
-            for table in tables:
-                table_info.append({
-                    "table_id": table["table_id"],
-                    "page_number": table["page_number"],
-                    "columns": len(table["headers"]),
-                    "rows": len(table["data"])
-                })
-            base_metadata.custom_metadata["table_info"] = table_info
-        
-        # Update document metadata
-        for doc in raw_documents:
-            doc.metadata.update(base_metadata.dict())
-            
-            # Add OCR info if present
-            if "ocr_applied" in doc.metadata:
-                doc.metadata["custom_metadata"]["ocr_applied"] = True
-        
-        # Split documents into chunks
-        chunked_documents = self.text_splitter.split_documents(raw_documents)
-        
-        return chunked_documents
+                auto_metadata["manufacturer"] =

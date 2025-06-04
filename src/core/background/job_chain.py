@@ -1,5 +1,3 @@
-# The job_chain.py file stays mostly the same, but here are the key updates needed:
-
 import json
 import time
 import logging
@@ -26,7 +24,7 @@ class TaskStatus(Enum):
 
 class JobChain:
     """
-    Event-driven job chain with dedicated workers.
+    Event-driven job chain with dedicated workers and comprehensive Unicode handling.
     """
 
     def __init__(self):
@@ -36,36 +34,34 @@ class JobChain:
         # UPDATED: Ensure correct queue routing for dedicated workers
         self.workflows = {
             JobType.VIDEO_PROCESSING: [
-                ("download_video", "cpu_tasks"),           # CPU worker
-                ("transcribe_video", "transcription_tasks"), # Whisper worker
-                ("generate_embeddings", "embedding_tasks")   # Embedding worker
+                ("download_video", "cpu_tasks"),  # CPU worker
+                ("transcribe_video", "transcription_tasks"),  # Whisper worker
+                ("generate_embeddings", "embedding_tasks")  # Embedding worker
             ],
             JobType.PDF_PROCESSING: [
-                ("process_pdf", "cpu_tasks"),              # CPU worker
-                ("generate_embeddings", "embedding_tasks")   # Embedding worker
+                ("process_pdf", "cpu_tasks"),  # CPU worker
+                ("generate_embeddings", "embedding_tasks")  # Embedding worker
             ],
             JobType.TEXT_PROCESSING: [
-                ("process_text", "cpu_tasks"),             # CPU worker
-                ("generate_embeddings", "embedding_tasks")   # Embedding worker
+                ("process_text", "cpu_tasks"),  # CPU worker
+                ("generate_embeddings", "embedding_tasks")  # Embedding worker
             ],
             JobType.LLM_INFERENCE: [
-                ("retrieve_documents", "embedding_tasks"),   # Embedding worker
-                ("llm_inference", "inference_tasks")         # Inference worker
+                ("retrieve_documents", "embedding_tasks"),  # Embedding worker
+                ("llm_inference", "inference_tasks")  # Inference worker
             ]
         }
 
     def start_job_chain(self, job_id: str, job_type: JobType, initial_data: Dict[str, Any]) -> None:
-        """
-        Start a job chain. This immediately executes the first task.
-
-        Args:
-            job_id: Unique job identifier
-            job_type: Type of job to execute
-            initial_data: Data needed for the first task
-        """
+        """Start a job chain with Unicode handling for initial data."""
         workflow = self.workflows.get(job_type)
         if not workflow:
             raise ValueError(f"Unknown job type: {job_type}")
+
+        # Apply Unicode decoding to initial data
+        from src.utils.unicode_handler import decode_unicode_in_dict
+        if isinstance(initial_data, dict):
+            initial_data = decode_unicode_in_dict(initial_data)
 
         # Store the job chain state
         chain_state = {
@@ -94,10 +90,7 @@ class JobChain:
         self._execute_next_task(job_id)
 
     def _execute_next_task(self, job_id: str) -> None:
-        """
-        Execute the next task in the chain for a given job.
-        FIXED: Pass complete data to next task.
-        """
+        """Execute the next task in the chain with Unicode handling."""
         chain_state = self._get_chain_state(job_id)
         if not chain_state:
             logger.error(f"No chain state found for job {job_id}")
@@ -137,14 +130,12 @@ class JobChain:
         self._save_chain_state(job_id, chain_state)
 
         # CRITICAL FIX: Get the complete current data from job tracker
-        # This ensures we get ALL accumulated data from previous tasks
         current_job = job_tracker.get_job(job_id, include_progress=False)
         current_job_result = current_job.get("result", {}) if current_job else {}
 
         # Parse if string
         if isinstance(current_job_result, str):
             try:
-                import json
                 current_job_result = json.loads(current_job_result)
             except:
                 current_job_result = {}
@@ -156,26 +147,9 @@ class JobChain:
 
         logger.info(f"Executing {task_name} with data keys: {list(complete_data.keys())}")
 
-        # DEBUG: Log available data for troubleshooting
-        if "video_metadata" in complete_data:
-            vm = complete_data["video_metadata"]
-            logger.info(f"Passing video_metadata to {task_name} with URL: {vm.get('url', 'NO_URL')}")
-            logger.info(f"Passing video_metadata to {task_name} with title: {vm.get('title', 'NO_TITLE')}")
-
-        # Log what data is being passed to each task type
-        if task_name == "transcribe_video" and "media_path" in complete_data:
-            logger.info(f"Passing media_path to transcribe_video: {complete_data['media_path']}")
-        elif task_name == "generate_embeddings" and "documents" in complete_data:
-            doc_count = len(complete_data["documents"]) if isinstance(complete_data["documents"], list) else 0
-            logger.info(f"Passing {doc_count} documents to generate_embeddings")
-        elif task_name == "llm_inference" and "documents" in complete_data:
-            doc_count = len(complete_data["documents"]) if isinstance(complete_data["documents"], list) else 0
-            logger.info(f"Passing {doc_count} documents to llm_inference")
-
         # Check if there's already a running task for this queue type
         if self._is_queue_busy(queue_name):
             logger.info(f"Queue {queue_name} is busy, task {task_name} will wait")
-            # Queue the task - it will be picked up when the queue is free
             self._queue_task(job_id, task_name, queue_name, complete_data)
         else:
             # Execute immediately
@@ -220,19 +194,20 @@ class JobChain:
         }
 
         # Add to waiting queue
-        self.redis.lpush(f"waiting_tasks:{queue_name}", json.dumps(queued_task))
+        self.redis.lpush(f"waiting_tasks:{queue_name}", json.dumps(queued_task, ensure_ascii=False))
         logger.info(f"Queued task {task_name} for job {job_id} in {queue_name}")
 
         # Update job progress to show waiting
         job_tracker.update_job_progress(job_id, None, f"Waiting for {queue_name} to become available")
 
     def task_completed(self, job_id: str, result: Dict[str, Any]) -> None:
-        """
-        Called when a task completes successfully.
-        This automatically triggers the next task in the chain.
-        FIXED: Properly preserve and pass data between tasks.
-        """
+        """Called when a task completes successfully with Unicode preservation."""
         logger.info(f"Task completed for job {job_id}, triggering next task")
+
+        # Apply Unicode decoding to result
+        from src.utils.unicode_handler import decode_unicode_in_dict
+        if isinstance(result, dict):
+            result = decode_unicode_in_dict(result)
 
         # Update chain state
         chain_state = self._get_chain_state(job_id)
@@ -257,42 +232,21 @@ class JobChain:
             self._mark_queue_free(queue_name)
             self._process_waiting_tasks(queue_name)
 
-        # CRITICAL FIX: Get the CURRENT job data from job tracker
-        # This is the source of truth that includes all previous task results
+        # Get current job data from job tracker (source of truth)
         current_job = job_tracker.get_job(job_id, include_progress=False)
         existing_job_result = current_job.get("result", {}) if current_job else {}
 
         # Parse existing result if it's a string
         if isinstance(existing_job_result, str):
             try:
-                import json
                 existing_job_result = json.loads(existing_job_result)
             except:
                 existing_job_result = {}
 
         # CRITICAL: Merge task result with existing job data
-        # Ensure video_metadata is preserved across task boundaries
         combined_result = {}
         combined_result.update(existing_job_result)  # Preserve existing data first
         combined_result.update(result)  # Add new task result
-
-        # VERIFICATION: Log the merge for debugging
-        logger.info(f"Task completion merge for job {job_id}:")
-        logger.info(f"  Existing job result keys: {list(existing_job_result.keys())}")
-        logger.info(f"  New task result keys: {list(result.keys())}")
-        logger.info(f"  Combined result keys: {list(combined_result.keys())}")
-
-        # CRITICAL CHECK: Ensure video_metadata is preserved
-        if "video_metadata" in combined_result:
-            vm = combined_result["video_metadata"]
-            logger.info(f"  video_metadata preserved with URL: {vm.get('url', 'NO_URL')}")
-            logger.info(f"  video_metadata title: {vm.get('title', 'NO_TITLE')}")
-        elif "video_metadata" in result:
-            logger.info(f"  video_metadata found in new task result")
-        elif "video_metadata" in existing_job_result:
-            logger.info(f"  video_metadata found in existing job result")
-        else:
-            logger.warning(f"  video_metadata NOT found in either result!")
 
         # Update chain state data with the combined result
         chain_state["data"].update(combined_result)
@@ -305,13 +259,13 @@ class JobChain:
         job_tracker.update_job_progress(job_id, progress,
                                         f"Completed step {chain_state['current_step']}/{len(chain_state['workflow'])}")
 
-        # CRITICAL: Update job tracker with the combined result
+        # Update job tracker with the combined result
         job_tracker.update_job_status(
             job_id,
             "processing",
             result=combined_result,
             stage=f"completed_step_{current_step + 1}",
-            replace_result=True  # Complete step result - replace it
+            replace_result=True
         )
 
         # Save updated state
@@ -321,10 +275,7 @@ class JobChain:
         self._execute_next_task(job_id)
 
     def task_failed(self, job_id: str, error: str) -> None:
-        """
-        Called when a task fails.
-        This stops the chain and marks the job as failed.
-        """
+        """Called when a task fails."""
         logger.error(f"Task failed for job {job_id}: {error}")
 
         # Get chain state to free up the queue
@@ -351,7 +302,7 @@ class JobChain:
             job_id,
             JobStatus.FAILED,
             error=error,
-            replace_result=False  # Don't replace result on failure, preserve what we had
+            replace_result=False
         )
 
         # Update progress to show failure
@@ -368,12 +319,11 @@ class JobChain:
         chain_state = self._get_chain_state(job_id)
         total_duration = time.time() - chain_state["started_at"] if chain_state else 0
 
-        # CRITICAL FIX: Get the CURRENT job data, not chain data
+        # Get the CURRENT job data, not chain data
         current_job = job_tracker.get_job(job_id, include_progress=False)
 
         if not current_job:
             logger.error(f"No job data found for completed job {job_id}")
-            # Clean up and return
             self._delete_chain_state(job_id)
             return
 
@@ -382,12 +332,11 @@ class JobChain:
         # Parse existing result if it's a string
         if isinstance(existing_result, str):
             try:
-                import json
                 existing_result = json.loads(existing_result)
             except:
                 existing_result = {}
 
-        # Default completion info
+        # Completion info
         completion_info = {
             "job_chain_completion": {
                 "message": "Job chain completed successfully",
@@ -397,23 +346,14 @@ class JobChain:
             }
         }
 
-        # CRITICAL FIX: Preserve ALL existing result data
+        # Preserve ALL existing result data
         if existing_result and isinstance(existing_result, dict):
-            # Preserve everything and add completion info
             final_result = {}
             final_result.update(existing_result)  # Preserve all existing data first
             final_result.update(completion_info)  # Add completion info
 
             logger.info(f"Preserving all job data for {job_id} with keys: {list(existing_result.keys())}")
-
-            # VERIFICATION: Check video_metadata preservation
-            if "video_metadata" in final_result:
-                vm = final_result["video_metadata"]
-                logger.info(f"Final job completion: video_metadata preserved with URL: {vm.get('url', 'NO_URL')}")
-            else:
-                logger.warning(f"Final job completion: video_metadata NOT found in final result")
         else:
-            # No meaningful existing result
             final_result = completion_info
             logger.info(f"No existing result to preserve for job {job_id}")
 
@@ -422,7 +362,7 @@ class JobChain:
             job_id,
             "completed",
             result=final_result,
-            replace_result=True  # Final result - replace it
+            replace_result=True
         )
 
         # Update progress to 100%
@@ -442,7 +382,7 @@ class JobChain:
             "task_name": task_name,
             "started_at": time.time()
         }
-        self.redis.set(f"queue_busy:{queue_name}", json.dumps(busy_info), ex=3600)  # 1 hour timeout
+        self.redis.set(f"queue_busy:{queue_name}", json.dumps(busy_info, ensure_ascii=False), ex=3600)
         logger.info(f"Marked queue {queue_name} as busy for job {job_id}")
 
     def _mark_queue_free(self, queue_name: str) -> None:
@@ -483,7 +423,7 @@ class JobChain:
             "progress_percentage": (current_step / len(workflow)) * 100,
             "started_at": chain_state["started_at"],
             "step_timings": chain_state.get("step_timings", {}),
-            "data_keys": list(chain_state["data"].keys())  # Don't expose all data
+            "data_keys": list(chain_state["data"].keys())
         }
 
     def get_queue_status(self) -> Dict[str, Any]:
@@ -513,8 +453,8 @@ class JobChain:
         return queue_status
 
     def _save_chain_state(self, job_id: str, chain_state: Dict[str, Any]) -> None:
-        """Save chain state to Redis."""
-        self.redis.set(f"job_chain:{job_id}", json.dumps(chain_state), ex=86400)  # 24 hour expiry
+        """Save chain state to Redis with Unicode handling."""
+        self.redis.set(f"job_chain:{job_id}", json.dumps(chain_state, ensure_ascii=False), ex=86400)
 
     def _get_chain_state(self, job_id: str) -> Optional[Dict[str, Any]]:
         """Get chain state from Redis."""
@@ -532,38 +472,48 @@ class JobChain:
 job_chain = JobChain()
 
 
-# Task actor definitions - each one calls job_chain.task_completed() or job_chain.task_failed()
-
 # ==============================================================================
-# UPDATED TASK DEFINITIONS WITH DEDICATED WORKER SUPPORT
+# ENHANCED TASK DEFINITIONS WITH COMPREHENSIVE UNICODE SUPPORT
 # ==============================================================================
 
 @dramatiq.actor(queue_name="cpu_tasks", store_results=True, max_retries=2)
 def download_video_task(job_id: str, url: str, metadata: Optional[Dict] = None):
-    """Download video and trigger next task - FAIL if metadata extraction fails."""
+    """Download video and trigger next task with comprehensive Unicode handling."""
     try:
         logger.info(f"Downloading video for job {job_id}: {url}")
 
         from src.core.video_transcriber import VideoTranscriber
+        from src.utils.unicode_handler import decode_unicode_in_dict
+
+        # Apply Unicode decoding to metadata
+        if metadata and isinstance(metadata, dict):
+            metadata = decode_unicode_in_dict(metadata)
+
         transcriber = VideoTranscriber()
 
         # Extract audio
         media_path = transcriber.extract_audio(url)
 
-        # Get video metadata - THIS WILL RAISE EXCEPTION IF IT FAILS
+        # Get video metadata with enhanced Unicode handling
         try:
             video_metadata = transcriber.get_video_metadata(url)
 
-            # CRITICAL FIX: Ensure video_metadata has proper Unicode
-            from src.utils.unicode_handler import decode_unicode_in_dict
-            video_metadata = decode_unicode_in_dict(video_metadata)
+            # Additional Unicode validation
+            from src.utils.unicode_handler import validate_unicode_cleaning
+            title_clean = validate_unicode_cleaning(video_metadata.get("title", ""), "video_title")
+            author_clean = validate_unicode_cleaning(video_metadata.get("author", ""), "video_author")
 
-            logger.info(f"Successfully retrieved and decoded video metadata for job {job_id}")
+            if not title_clean or not author_clean:
+                error_msg = f"Video metadata contains unresolved Unicode escapes for {url}"
+                logger.error(error_msg)
+                job_chain.task_failed(job_id, error_msg)
+                return
+
+            logger.info(f"Successfully retrieved video metadata for job {job_id}")
             logger.info(f"Title: {video_metadata.get('title', 'NO_TITLE')}")
             logger.info(f"Author: {video_metadata.get('author', 'NO_AUTHOR')}")
 
         except Exception as e:
-            # NO FALLBACK - fail the entire job
             error_msg = f"Failed to extract video metadata: {str(e)}"
             logger.error(error_msg)
             job_chain.task_failed(job_id, error_msg)
@@ -580,25 +530,21 @@ def download_video_task(job_id: str, url: str, metadata: Optional[Dict] = None):
 
         download_result = {
             "media_path": media_path,
-            "video_metadata": video_metadata,  # CRITICAL: This must be preserved
+            "video_metadata": video_metadata,
             "download_completed_at": time.time(),
             "url": url,
             "custom_metadata": metadata or {}
         }
 
-        # CRITICAL FIX: Store the download result in job tracker BEFORE calling task_completed
-        # This ensures the video_metadata is available for the next task
+        # Store the download result in job tracker
         job_tracker.update_job_status(
             job_id,
             "processing",
-            result=download_result,  # Store the complete download result
+            result=download_result,
             stage="download_completed"
         )
 
-        logger.info(f"CRITICAL CHECK: video_metadata stored with keys: {list(video_metadata.keys())}")
-        logger.info(f"CRITICAL CHECK: video_metadata title: {video_metadata.get('title', 'NO_TITLE')}")
-
-        # Now trigger the next task
+        # Trigger the next task
         job_chain.task_completed(job_id, download_result)
 
     except Exception as e:
@@ -609,7 +555,7 @@ def download_video_task(job_id: str, url: str, metadata: Optional[Dict] = None):
 
 @dramatiq.actor(queue_name="transcription_tasks", store_results=True, max_retries=2)
 def transcribe_video_task(job_id: str, media_path: str):
-    """Transcribe video using preloaded Whisper model - FAIL if video_metadata is missing."""
+    """Transcribe video with ENHANCED Unicode handling for vector store"""
     try:
         logger.info(f"Transcribing video for job {job_id}: {media_path}")
 
@@ -617,6 +563,7 @@ def transcribe_video_task(job_id: str, media_path: str):
         from langchain_core.documents import Document
         from langchain_text_splitters import RecursiveCharacterTextSplitter
         from src.config.settings import settings
+        from src.utils.unicode_handler import decode_unicode_in_dict, decode_unicode_escapes, validate_unicode_cleaning
 
         # Get the preloaded Whisper model
         whisper_model = get_whisper_model()
@@ -638,6 +585,11 @@ def transcribe_video_task(job_id: str, media_path: str):
             logger.error(error_msg)
             job_chain.task_failed(job_id, error_msg)
             return
+
+        # Apply Unicode decoding to transcript
+        if transcript and "\\u" in transcript:
+            logger.info("Applying Unicode decoding to transcript...")
+            transcript = decode_unicode_escapes(transcript)
 
         # Apply Chinese conversion if needed
         if info.language == "zh":
@@ -671,7 +623,7 @@ def transcribe_video_task(job_id: str, media_path: str):
             except:
                 existing_result = {}
 
-        # FAIL if video_metadata is missing or invalid
+        # Get and validate video_metadata with comprehensive Unicode handling
         video_metadata = existing_result.get("video_metadata", {})
         if not video_metadata or not isinstance(video_metadata, dict):
             error_msg = f"video_metadata missing from previous step for job {job_id}"
@@ -679,31 +631,46 @@ def transcribe_video_task(job_id: str, media_path: str):
             job_chain.task_failed(job_id, error_msg)
             return
 
-        # FAIL if video_metadata is just fallback data
-        if (video_metadata.get("title") in ["Unknown Video", ""] or
-                video_metadata.get("author") in ["Unknown", "Unknown Author", ""]):
-            error_msg = f"video_metadata contains fallback/invalid data for job {job_id}"
+        # Apply comprehensive Unicode decoding to video_metadata
+        video_metadata = decode_unicode_in_dict(video_metadata)
+
+        # ENHANCED VALIDATION: Check that Unicode decoding was successful
+        title = video_metadata.get("title", "")
+        author = video_metadata.get("author", "")
+
+        # Validate that we have proper characters, not escape sequences
+        if not validate_unicode_cleaning(title, "title") or not validate_unicode_cleaning(author, "author"):
+            error_msg = f"Unicode decoding failed - escape sequences still present in metadata for job {job_id}"
             logger.error(error_msg)
             job_chain.task_failed(job_id, error_msg)
             return
 
-        # Get the original URL - MUST exist
+        # Additional validation for empty/invalid decoded content
+        if not title or title in ["Unknown Video", ""]:
+            error_msg = f"Title is empty or invalid after Unicode decoding for job {job_id}"
+            logger.error(error_msg)
+            job_chain.task_failed(job_id, error_msg)
+            return
+
+        if not author or author in ["Unknown", "Unknown Author", ""]:
+            error_msg = f"Author is empty or invalid after Unicode decoding for job {job_id}"
+            logger.error(error_msg)
+            job_chain.task_failed(job_id, error_msg)
+            return
+
+        logger.info(f"VALIDATED: Proper Unicode metadata for job {job_id}")
+        logger.info(f"  Title: {title}")
+        logger.info(f"  Author: {author}")
+
+        # Get other required fields
         original_url = video_metadata.get("url")
-        if not original_url:
-            error_msg = f"No URL found in video_metadata for job {job_id}"
-            logger.error(error_msg)
-            job_chain.task_failed(job_id, error_msg)
-            return
-
-        # Get video ID - MUST exist
         video_id = video_metadata.get("video_id")
-        if not video_id:
-            error_msg = f"No video_id found in video_metadata for job {job_id}"
+
+        if not original_url or not video_id:
+            error_msg = f"Missing URL or video_id in video_metadata for job {job_id}"
             logger.error(error_msg)
             job_chain.task_failed(job_id, error_msg)
             return
-
-        logger.info(f"Using valid video metadata: {video_metadata.get('title')} by {video_metadata.get('author')}")
 
         # Determine source type
         source_type = "video"
@@ -726,31 +693,39 @@ def transcribe_video_task(job_id: str, media_path: str):
 
         logger.info(f"Detected source type: {source_type} for job {job_id}")
 
-        # Create documents with VALIDATED metadata
+        # Create documents with VALIDATED, DECODED metadata
         documents = []
         for i, chunk in enumerate(chunks):
+            doc_metadata = {
+                "chunk_id": i,
+                "source": source_type,
+                "source_id": video_id,
+                "language": info.language,
+                "total_chunks": len(chunks),
+
+                # Use VALIDATED video metadata
+                "title": title,
+                "author": author,
+                "url": original_url,
+                "video_id": video_id,
+                "published_date": video_metadata.get("published_date"),
+                "description": decode_unicode_escapes(video_metadata.get("description", "")),
+                "length": video_metadata.get("length", 0),
+                "views": video_metadata.get("views", 0),
+
+                # Add custom metadata from job if any
+                "custom_metadata": job_metadata.get("custom_metadata", {})
+            }
+
+            # FINAL VALIDATION: Ensure no Unicode escapes in document metadata
+            for key, value in doc_metadata.items():
+                if isinstance(value, str) and not validate_unicode_cleaning(value, f"doc_metadata_{key}"):
+                    logger.warning(f"Unicode escape found in document metadata {key}: {value}")
+                    doc_metadata[key] = decode_unicode_escapes(value)
+
             doc = Document(
                 page_content=chunk,
-                metadata={
-                    "chunk_id": i,
-                    "source": source_type,
-                    "source_id": video_id,
-                    "language": info.language,
-                    "total_chunks": len(chunks),
-
-                    # Use VALIDATED video metadata
-                    "title": video_metadata["title"],
-                    "author": video_metadata["author"],
-                    "url": original_url,
-                    "video_id": video_id,
-                    "published_date": video_metadata.get("published_date"),
-                    "description": video_metadata.get("description", ""),
-                    "length": video_metadata.get("length", 0),
-                    "views": video_metadata.get("views", 0),
-
-                    # Add custom metadata from job if any
-                    "custom_metadata": job_metadata.get("custom_metadata", {})
-                }
+                metadata=doc_metadata
             )
             documents.append(doc)
 
@@ -771,16 +746,9 @@ def transcribe_video_task(job_id: str, media_path: str):
             "detected_source": source_type,
         })
 
-        # FINAL VALIDATION: Ensure video_metadata is still preserved
-        if "video_metadata" not in transcription_result:
-            error_msg = f"CRITICAL: video_metadata lost during transcription processing for job {job_id}"
-            logger.error(error_msg)
-            job_chain.task_failed(job_id, error_msg)
-            return
+        logger.info(f"SUCCESS: Transcription completed with validated metadata for job {job_id}")
 
-        logger.info(f"SUCCESS: Transcription completed with valid metadata for job {job_id}")
-
-        # On success, trigger next task
+        # Trigger next task
         job_chain.task_completed(job_id, transcription_result)
 
     except Exception as e:
@@ -791,13 +759,17 @@ def transcribe_video_task(job_id: str, media_path: str):
 
 @dramatiq.actor(queue_name="cpu_tasks", store_results=True, max_retries=2)
 def process_pdf_task(job_id: str, file_path: str, metadata: Optional[Dict] = None):
-    """Process PDF and trigger next task."""
+    """Process PDF with Unicode handling."""
     try:
         logger.info(f"Processing PDF for job {job_id}: {file_path}")
 
-        # Import here to avoid circular imports
         from src.core.pdf_loader import PDFLoader
         from src.config.settings import settings
+        from src.utils.unicode_handler import decode_unicode_in_dict
+
+        # Apply Unicode decoding to metadata
+        if metadata and isinstance(metadata, dict):
+            metadata = decode_unicode_in_dict(metadata)
 
         # Create PDF loader
         pdf_loader = PDFLoader(
@@ -808,7 +780,7 @@ def process_pdf_task(job_id: str, file_path: str, metadata: Optional[Dict] = Non
             ocr_languages=settings.ocr_languages
         )
 
-        # Process PDF
+        # Process PDF (now includes Unicode handling)
         documents = pdf_loader.process_pdf(
             file_path=file_path,
             custom_metadata=metadata,
@@ -824,7 +796,6 @@ def process_pdf_task(job_id: str, file_path: str, metadata: Optional[Dict] = Non
                 "metadata": doc.metadata
             })
 
-        # CRITICAL FIX: Store PDF processing result
         pdf_result = {
             "documents": document_dicts,
             "document_count": len(documents),
@@ -839,10 +810,10 @@ def process_pdf_task(job_id: str, file_path: str, metadata: Optional[Dict] = Non
             "processing",
             result=pdf_result,
             stage="pdf_processing_completed",
-            replace_result=True  # Complete task result - replace it
+            replace_result=True
         )
 
-        # On success, trigger next task
+        # Trigger next task
         job_chain.task_completed(job_id, pdf_result)
 
     except Exception as e:
@@ -852,14 +823,38 @@ def process_pdf_task(job_id: str, file_path: str, metadata: Optional[Dict] = Non
 
 @dramatiq.actor(queue_name="cpu_tasks", store_results=True, max_retries=2)
 def process_text_task(job_id: str, text: str, metadata: Optional[Dict] = None):
-    """Process text and trigger next task."""
+    """Process text with comprehensive Unicode handling."""
     try:
         logger.info(f"Processing text for job {job_id}")
 
-        # Import here to avoid circular imports
         from langchain_text_splitters import RecursiveCharacterTextSplitter
         from langchain_core.documents import Document
         from src.config.settings import settings
+        from src.utils.unicode_handler import decode_unicode_escapes, decode_unicode_in_dict, validate_unicode_cleaning
+
+        # CRITICAL FIX: Decode Unicode escapes in input text
+        if isinstance(text, str) and "\\u" in text:
+            logger.info(f"Decoding Unicode escapes in text input for job {job_id}")
+            original_text = text
+            text = decode_unicode_escapes(text)
+            logger.info(f"Text Unicode decoding: {len(original_text)} -> {len(text)} chars")
+
+        # CRITICAL FIX: Decode Unicode escapes in metadata
+        if metadata and isinstance(metadata, dict):
+            logger.info(f"Decoding Unicode escapes in text metadata for job {job_id}")
+            metadata = decode_unicode_in_dict(metadata)
+
+        # Validate decoded text
+        if not text or not text.strip():
+            error_msg = f"Text input is empty after Unicode decoding for job {job_id}"
+            logger.error(error_msg)
+            job_chain.task_failed(job_id, error_msg)
+            return
+
+        # Check for remaining Unicode escapes
+        if not validate_unicode_cleaning(text, "input_text"):
+            logger.warning(f"Unicode escapes still present in text after decoding for job {job_id}")
+            text = decode_unicode_escapes(text)
 
         # Split text into chunks
         text_splitter = RecursiveCharacterTextSplitter(
@@ -869,22 +864,39 @@ def process_text_task(job_id: str, text: str, metadata: Optional[Dict] = None):
 
         chunks = text_splitter.split_text(text)
 
-        # Convert chunks to documents with metadata
+        # Create documents with validated Unicode metadata
         documents = []
         for i, chunk_text in enumerate(chunks):
+            # Apply metadata extraction to the full text (not just chunks)
+            if i == 0:  # Only extract metadata once from full text
+                from src.utils.helpers import extract_metadata_from_text
+                extracted_metadata = extract_metadata_from_text(text)
+            else:
+                extracted_metadata = {}
+
+            # Combine extracted metadata with provided metadata
+            doc_metadata = {
+                "chunk_id": i,
+                "source": "manual",
+                "source_id": job_id,
+                "total_chunks": len(chunks),
+                **extracted_metadata,  # Automotive metadata from text analysis
+                **(metadata or {})  # User-provided metadata
+            }
+
+            # FINAL VALIDATION: Ensure no Unicode escapes in document metadata
+            for key, value in doc_metadata.items():
+                if isinstance(value, str) and not validate_unicode_cleaning(value, f"text_doc_metadata_{key}"):
+                    logger.warning(f"Unicode escape found in text document metadata {key}: {value}")
+                    doc_metadata[key] = decode_unicode_escapes(value)
+
             doc = Document(
                 page_content=chunk_text,
-                metadata={
-                    "chunk_id": i,
-                    "source": "manual",
-                    "source_id": job_id,
-                    "total_chunks": len(chunks),
-                    **(metadata or {})
-                }
+                metadata=doc_metadata
             )
             documents.append(doc)
 
-        logger.info(f"Text processing completed for job {job_id}: {len(chunks)} chunks")
+        logger.info(f"Text processing completed for job {job_id}: {len(chunks)} chunks with validated Unicode")
 
         # Convert documents to format for next task
         document_dicts = []
@@ -894,7 +906,6 @@ def process_text_task(job_id: str, text: str, metadata: Optional[Dict] = None):
                 "metadata": doc.metadata
             })
 
-        # CRITICAL FIX: Store text processing result
         text_result = {
             "documents": document_dicts,
             "chunk_count": len(chunks),
@@ -909,10 +920,10 @@ def process_text_task(job_id: str, text: str, metadata: Optional[Dict] = None):
             "processing",
             result=text_result,
             stage="text_processing_completed",
-            replace_result=True  # Complete task result - replace it
+            replace_result=True
         )
 
-        # On success, trigger next task
+        # Trigger next task
         job_chain.task_completed(job_id, text_result)
 
     except Exception as e:
@@ -922,12 +933,13 @@ def process_text_task(job_id: str, text: str, metadata: Optional[Dict] = None):
 
 @dramatiq.actor(queue_name="embedding_tasks", store_results=True, max_retries=2)
 def generate_embeddings_task(job_id: str, documents: List[Dict]):
-    """Generate embeddings using preloaded embedding model - FAIL if video_metadata is missing."""
+    """Generate embeddings with FINAL Unicode validation before vector store"""
     try:
         logger.info(f"Generating embeddings for job {job_id}: {len(documents)} documents")
 
         from .models import get_vector_store
         from langchain_core.documents import Document
+        from src.utils.unicode_handler import decode_unicode_escapes, decode_unicode_in_dict, validate_unicode_cleaning
 
         # Validate documents exist
         if not documents:
@@ -936,7 +948,7 @@ def generate_embeddings_task(job_id: str, documents: List[Dict]):
             job_chain.task_failed(job_id, error_msg)
             return
 
-        # Convert back to Document objects
+        # Convert back to Document objects with FINAL Unicode validation
         doc_objects = []
         for doc_dict in documents:
             if not doc_dict.get("content") or not doc_dict.get("metadata"):
@@ -945,65 +957,56 @@ def generate_embeddings_task(job_id: str, documents: List[Dict]):
                 job_chain.task_failed(job_id, error_msg)
                 return
 
+            # FINAL UNICODE VALIDATION AND CLEANING
+            content = doc_dict["content"]
+            metadata = doc_dict["metadata"]
+
+            # Apply final Unicode decoding to content
+            if isinstance(content, str):
+                content = decode_unicode_escapes(content)
+
+            # Apply final Unicode decoding to metadata
+            if isinstance(metadata, dict):
+                metadata = decode_unicode_in_dict(metadata)
+
+            # CRITICAL VALIDATION: Check for remaining Unicode escapes
+            critical_fields = ["title", "author", "description"]
+            for field in critical_fields:
+                if field in metadata and isinstance(metadata[field], str):
+                    if not validate_unicode_cleaning(metadata[field], f"final_{field}"):
+                        error_msg = f"CRITICAL: Unicode escapes still present in {field} before vector store: {metadata[field]}"
+                        logger.error(error_msg)
+                        job_chain.task_failed(job_id, error_msg)
+                        return
+
+            # Create document with FINAL validated metadata
             doc = Document(
-                page_content=doc_dict["content"],
-                metadata=doc_dict["metadata"]
+                page_content=content,
+                metadata=metadata
             )
             doc_objects.append(doc)
 
-        # CRITICAL: Get existing job data and VALIDATE video_metadata exists
-        current_job = job_tracker.get_job(job_id, include_progress=False)
-        if not current_job:
-            error_msg = f"Job {job_id} not found in tracker"
-            logger.error(error_msg)
-            job_chain.task_failed(job_id, error_msg)
-            return
+        # FINAL LOG: Confirm clean metadata before vector store
+        if doc_objects:
+            sample_doc = doc_objects[0]
+            logger.info(f"FINAL VALIDATION PASSED for job {job_id}")
+            logger.info(f"  Sample title: {sample_doc.metadata.get('title', 'NO_TITLE')}")
+            logger.info(f"  Sample author: {sample_doc.metadata.get('author', 'NO_AUTHOR')}")
+            logger.info(f"  Total documents: {len(doc_objects)}")
 
-        existing_result = current_job.get("result", {})
+        # Get existing job data for context
+        current_job = job_tracker.get_job(job_id, include_progress=False)
+        existing_result = current_job.get("result", {}) if current_job else {}
+
         if isinstance(existing_result, str):
             try:
                 existing_result = json.loads(existing_result)
             except:
                 existing_result = {}
 
-        # FAIL if video_metadata is missing or invalid
-        video_metadata = existing_result.get("video_metadata", {})
-        if not video_metadata or not isinstance(video_metadata, dict):
-            error_msg = f"video_metadata missing from previous steps for job {job_id}"
-            logger.error(error_msg)
-            job_chain.task_failed(job_id, error_msg)
-            return
-
-        # FAIL if video_metadata contains fallback/invalid data
-        if (video_metadata.get("title") in ["Unknown Video", ""] or
-                video_metadata.get("author") in ["Unknown", "Unknown Author", ""] or
-                not video_metadata.get("url") or
-                not video_metadata.get("video_id")):
-            error_msg = f"video_metadata contains invalid/fallback data for job {job_id}"
-            logger.error(error_msg)
-            job_chain.task_failed(job_id, error_msg)
-            return
-
-        logger.info(f"Using validated video_metadata: {video_metadata['title']} by {video_metadata['author']}")
-
-        # Get detected source type from previous step
-        detected_source = existing_result.get("detected_source")
-        if not detected_source:
-            error_msg = f"No detected_source from transcription step for job {job_id}"
-            logger.error(error_msg)
-            job_chain.task_failed(job_id, error_msg)
-            return
-
         # Add ingestion timestamp and job ID to ALL documents
         current_time = time.time()
         for doc in doc_objects:
-            # Validate document has required metadata
-            if not doc.metadata.get("title") or not doc.metadata.get("author"):
-                error_msg = f"Document missing required metadata (title/author) in job {job_id}"
-                logger.error(error_msg)
-                job_chain.task_failed(job_id, error_msg)
-                return
-
             # Ensure job_id is always present
             doc.metadata["job_id"] = job_id
 
@@ -1014,18 +1017,6 @@ def generate_embeddings_task(job_id: str, documents: List[Dict]):
             # Ensure document has an ID for proper indexing
             if "id" not in doc.metadata or not doc.metadata["id"]:
                 doc.metadata["id"] = f"doc-{job_id}-{len(doc_objects)}-{int(current_time)}"
-
-        # Validate that video_metadata is properly embedded in documents
-        for doc in doc_objects:
-            if (doc.metadata.get("title") in ["Unknown Video", ""] or
-                    doc.metadata.get("author") in ["Unknown", "Unknown Author", ""] or
-                    not doc.metadata.get("url")):
-                error_msg = f"Document metadata contains invalid data for job {job_id}"
-                logger.error(error_msg)
-                job_chain.task_failed(job_id, error_msg)
-                return
-
-        logger.info(f"All documents validated with proper metadata for job {job_id}")
 
         # Check if we're in metadata-only mode
         if not hasattr(job_tracker, '_metadata_only_mode'):
@@ -1039,7 +1030,7 @@ def generate_embeddings_task(job_id: str, documents: List[Dict]):
                 job_chain.task_failed(job_id, error_msg)
                 return
 
-            logger.info(f"Embedding generation completed for job {job_id}: {len(doc_ids)} document IDs")
+            logger.info(f"SUCCESS: {len(doc_ids)} documents with CLEAN Unicode metadata added to vector store")
         else:
             # In metadata-only mode, simulate doc IDs
             doc_ids = [f"sim-{job_id}-{i}" for i in range(len(doc_objects))]
@@ -1058,27 +1049,9 @@ def generate_embeddings_task(job_id: str, documents: List[Dict]):
             "ingestion_completed": True
         })
 
-        # FINAL VALIDATION: Ensure video_metadata is still preserved
-        if "video_metadata" not in final_result:
-            error_msg = f"CRITICAL: video_metadata lost during embedding generation for job {job_id}"
-            logger.error(error_msg)
-            job_chain.task_failed(job_id, error_msg)
-            return
-
-        # VALIDATE final video_metadata quality
-        final_vm = final_result["video_metadata"]
-        if (not final_vm.get("title") or final_vm.get("title") == "Unknown Video" or
-                not final_vm.get("author") or final_vm.get("author") in ["Unknown", "Unknown Author"] or
-                not final_vm.get("url")):
-            error_msg = f"CRITICAL: Final video_metadata is invalid for job {job_id}"
-            logger.error(error_msg)
-            job_chain.task_failed(job_id, error_msg)
-            return
-
         logger.info(f"SUCCESS: Embedding generation completed with validated metadata for job {job_id}")
-        logger.info(f"Final video_metadata: {final_vm['title']} by {final_vm['author']}")
 
-        # On success, complete the job (this is the final step for video processing)
+        # Complete the job (this is the final step for most processing jobs)
         job_chain.task_completed(job_id, final_result)
 
     except Exception as e:
@@ -1089,14 +1062,22 @@ def generate_embeddings_task(job_id: str, documents: List[Dict]):
 
 @dramatiq.actor(queue_name="embedding_tasks", store_results=True, max_retries=2)
 def retrieve_documents_task(job_id: str, query: str, metadata_filter: Optional[Dict] = None):
-    """Retrieve documents using preloaded embedding model."""
+    """Retrieve documents with Unicode handling."""
     try:
         logger.info(f"Retrieving documents for job {job_id}: {query}")
 
-        # Import here to avoid circular imports
         from .models import get_vector_store
         from src.config.settings import settings
+        from src.utils.unicode_handler import decode_unicode_escapes, decode_unicode_in_dict
         import numpy as np
+
+        # Apply Unicode decoding to query
+        if isinstance(query, str) and "\\u" in query:
+            query = decode_unicode_escapes(query)
+
+        # Apply Unicode decoding to metadata filter
+        if metadata_filter and isinstance(metadata_filter, dict):
+            metadata_filter = decode_unicode_in_dict(metadata_filter)
 
         # Get vector store with preloaded embedding model
         vector_store = get_vector_store()
@@ -1108,10 +1089,10 @@ def retrieve_documents_task(job_id: str, query: str, metadata_filter: Optional[D
             metadata_filter=metadata_filter
         )
 
-        # Format results for transfer to inference worker - FIXED VERSION
+        # Format results for transfer to inference worker
         serialized_docs = []
         for doc, score in results:
-            # CRITICAL FIX: Convert numpy.float32 to Python float
+            # Convert numpy.float32 to Python float
             json_safe_score = float(score) if isinstance(score, (np.floating, np.float32, np.float64)) else score
 
             # Clean metadata to ensure JSON serialization compatibility
@@ -1134,7 +1115,7 @@ def retrieve_documents_task(job_id: str, query: str, metadata_filter: Optional[D
 
         logger.info(f"Document retrieval completed for job {job_id}: {len(serialized_docs)} documents")
 
-        # On success, trigger LLM inference
+        # Trigger LLM inference
         job_chain.task_completed(job_id, {
             "documents": serialized_docs,
             "document_count": len(serialized_docs),
@@ -1148,15 +1129,19 @@ def retrieve_documents_task(job_id: str, query: str, metadata_filter: Optional[D
 
 @dramatiq.actor(queue_name="inference_tasks", store_results=True, max_retries=2)
 def llm_inference_task(job_id: str, query: str, documents: List[Dict]):
-    """Perform LLM inference using preloaded models."""
+    """Perform LLM inference with Unicode handling."""
     try:
         logger.info(f"Performing LLM inference for job {job_id}: {query}")
 
-        # Import here to avoid circular imports
         from .models import get_llm_model, get_colbert_reranker
         from langchain_core.documents import Document
         from src.config.settings import settings
+        from src.utils.unicode_handler import decode_unicode_escapes
         import numpy as np
+
+        # Apply Unicode decoding to query
+        if isinstance(query, str) and "\\u" in query:
+            query = decode_unicode_escapes(query)
 
         # Convert documents back to Document objects with scores
         doc_objects = []
@@ -1165,7 +1150,7 @@ def llm_inference_task(job_id: str, query: str, documents: List[Dict]):
                 page_content=doc_dict["content"],
                 metadata=doc_dict.get("metadata", {})
             )
-            # CRITICAL FIX: Convert numpy.float32 to Python float
+            # Convert numpy.float32 to Python float
             score = doc_dict.get("relevance_score", 0)
             if isinstance(score, (np.floating, np.float32, np.float64)):
                 score = float(score)
@@ -1191,7 +1176,7 @@ def llm_inference_task(job_id: str, query: str, documents: List[Dict]):
         # Prepare formatted documents for response with JSON-safe scores
         formatted_documents = []
         for doc, score in reranked_docs:
-            # CRITICAL FIX: Ensure all numeric values are JSON-serializable
+            # Ensure all numeric values are JSON-serializable
             json_safe_score = float(score) if isinstance(score, (np.floating, np.float32, np.float64)) else score
 
             # Clean metadata to ensure all values are JSON-serializable
@@ -1216,7 +1201,7 @@ def llm_inference_task(job_id: str, query: str, documents: List[Dict]):
 
         logger.info(f"LLM inference completed for job {job_id}")
 
-        # CRITICAL FIX: Create the complete inference result with JSON-safe data
+        # Create the complete inference result with JSON-safe data
         inference_result = {
             "query": query,
             "answer": answer,
@@ -1225,11 +1210,11 @@ def llm_inference_task(job_id: str, query: str, documents: List[Dict]):
             "inference_completed_at": time.time()
         }
 
-        # CRITICAL FIX: Store the complete result in job tracker BEFORE calling task_completed
+        # Store the complete result in job tracker
         job_tracker.update_job_status(
             job_id,
-            "processing",  # Keep as processing until job chain completes
-            result=inference_result,  # Store the actual inference result
+            "processing",
+            result=inference_result,
             stage="llm_inference_completed"
         )
 

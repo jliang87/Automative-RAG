@@ -3,7 +3,6 @@ import time
 import logging
 from typing import Dict, List, Optional, Any, Union
 import redis
-from src.utils.unicode_handler import decode_unicode_in_json_result
 
 from .common import JobStatus
 
@@ -11,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 
 class JobTracker:
-    """Simplified job tracker focused on basic job lifecycle management."""
+    """Enhanced job tracker with Unicode handling for Chinese text."""
 
     def __init__(self, redis_client=None):
         """Initialize the job tracker with Redis."""
@@ -26,7 +25,13 @@ class JobTracker:
         self.progress_key = "rag_system:job_progress"
 
     def create_job(self, job_id: str, job_type: str, metadata: Dict[str, Any]) -> None:
-        """Create a new job record."""
+        """Create a new job record with Unicode handling."""
+        # Apply Unicode decoding to metadata if needed
+        from src.utils.unicode_handler import decode_unicode_in_dict
+
+        if isinstance(metadata, dict):
+            metadata = decode_unicode_in_dict(metadata)
+
         job_data = {
             "job_id": job_id,
             "job_type": job_type,
@@ -35,15 +40,17 @@ class JobTracker:
             "updated_at": time.time(),
             "result": None,
             "error": None,
-            "metadata": json.dumps(metadata),
+            "metadata": json.dumps(metadata, ensure_ascii=False),  # Proper Unicode storage
             "progress": 0.0
         }
+
         # Store as a hash field with job_id as field name
-        self.redis.hset(self.job_key, job_id, json.dumps(job_data))
+        self.redis.hset(self.job_key, job_id, json.dumps(job_data, ensure_ascii=False))
         logger.info(f"Created job {job_id} of type {job_type}")
 
     def update_job_status(self, job_id: str, status: str, result: Any = None, error: str = None,
                           stage: str = None, replace_result: bool = False) -> None:
+        """Update job status with comprehensive Unicode handling."""
         job_data_json = self.redis.hget(self.job_key, job_id)
         if not job_data_json:
             logger.warning(f"Job {job_id} not found when updating status to {status}")
@@ -61,6 +68,7 @@ class JobTracker:
         # Handle result updating with Unicode decoding
         if result is not None:
             # CRITICAL FIX: Decode Unicode before storing
+            from src.utils.unicode_handler import decode_unicode_in_json_result
             decoded_result = decode_unicode_in_json_result(result)
 
             if replace_result or not job_data.get("result"):
@@ -99,10 +107,15 @@ class JobTracker:
         logger.info(f"Updated job {job_id} status to {status}" + (f", stage: {stage}" if stage else ""))
 
     def update_job_progress(self, job_id: str, progress: Union[int, float, None], message: str = "") -> None:
-        """Update the progress percentage and message for a job."""
+        """Update the progress percentage and message for a job with Unicode handling."""
         if progress is not None:
             # Ensure progress is between 0 and 100
             progress = max(0, min(100, progress))
+
+        # Apply Unicode decoding to progress message
+        if message and "\\u" in message:
+            from src.utils.unicode_handler import decode_unicode_escapes
+            message = decode_unicode_escapes(message)
 
         # Create progress entry
         progress_data = {
@@ -111,9 +124,9 @@ class JobTracker:
             "timestamp": time.time()
         }
 
-        # Store in Redis
+        # Store in Redis with proper Unicode encoding
         progress_key = f"{self.progress_key}:{job_id}"
-        self.redis.set(progress_key, json.dumps(progress_data), ex=86400)  # Expire after 24 hours
+        self.redis.set(progress_key, json.dumps(progress_data, ensure_ascii=False), ex=86400)  # Expire after 24 hours
 
         # Also update progress in the main job data
         job_data_json = self.redis.hget(self.job_key, job_id)
@@ -124,7 +137,7 @@ class JobTracker:
                     job_data["progress"] = progress
                 job_data["progress_message"] = message
                 job_data["progress_updated_at"] = time.time()
-                self.redis.hset(self.job_key, job_id, json.dumps(job_data))
+                self.redis.hset(self.job_key, job_id, json.dumps(job_data, ensure_ascii=False))
             except:
                 pass
 
@@ -132,7 +145,7 @@ class JobTracker:
             logger.debug(f"Updated job {job_id} progress to {progress}%: {message}")
 
     def get_job_progress(self, job_id: str) -> Dict[str, Any]:
-        """Get the current progress of a job."""
+        """Get the current progress of a job with Unicode decoding."""
         progress_key = f"{self.progress_key}:{job_id}"
         progress_data_json = self.redis.get(progress_key)
 
@@ -151,12 +164,20 @@ class JobTracker:
                 return {"progress": 0, "message": f"Status: {status}", "timestamp": time.time()}
 
         try:
-            return json.loads(progress_data_json)
+            progress_data = json.loads(progress_data_json)
+
+            # Apply Unicode decoding to message if needed
+            message = progress_data.get("message", "")
+            if message and "\\u" in message:
+                from src.utils.unicode_handler import decode_unicode_escapes
+                progress_data["message"] = decode_unicode_escapes(message)
+
+            return progress_data
         except:
             return {"progress": 0, "message": "Invalid progress data", "timestamp": time.time()}
 
     def get_job(self, job_id: str, include_progress: bool = True) -> Optional[Dict[str, Any]]:
-        """Get job information by ID with Unicode decoding."""
+        """Get job information by ID with comprehensive Unicode decoding."""
         job_data_json = self.redis.hget(self.job_key, job_id)
         if not job_data_json:
             return None
@@ -167,6 +188,7 @@ class JobTracker:
         if "metadata" in job_data and job_data["metadata"]:
             try:
                 metadata = json.loads(job_data["metadata"])
+                from src.utils.unicode_handler import decode_unicode_in_json_result
                 job_data["metadata"] = decode_unicode_in_json_result(metadata)
             except:
                 # If metadata isn't valid JSON, keep as string
@@ -176,6 +198,7 @@ class JobTracker:
         if "result" in job_data and job_data["result"] and isinstance(job_data["result"], str):
             try:
                 parsed_result = json.loads(job_data["result"])
+                from src.utils.unicode_handler import decode_unicode_in_json_result
                 job_data["result"] = decode_unicode_in_json_result(parsed_result)
             except:
                 pass  # Keep as string if it's not valid JSON
@@ -188,7 +211,7 @@ class JobTracker:
         return job_data
 
     def get_all_jobs(self, limit: int = 100, job_type: str = None) -> List[Dict[str, Any]]:
-        """Get all jobs, optionally filtered by type."""
+        """Get all jobs with Unicode decoding, optionally filtered by type."""
         all_jobs = self.redis.hgetall(self.job_key)
         jobs = []
 
@@ -202,14 +225,18 @@ class JobTracker:
             # Parse JSON metadata back to dict if it exists
             if "metadata" in job_data and job_data["metadata"]:
                 try:
-                    job_data["metadata"] = json.loads(job_data["metadata"])
+                    metadata = json.loads(job_data["metadata"])
+                    from src.utils.unicode_handler import decode_unicode_in_json_result
+                    job_data["metadata"] = decode_unicode_in_json_result(metadata)
                 except:
                     pass
 
-            # Parse result if it's JSON
+            # Parse result with Unicode decoding if it's JSON
             if "result" in job_data and job_data["result"] and isinstance(job_data["result"], str):
                 try:
-                    job_data["result"] = json.loads(job_data["result"])
+                    parsed_result = json.loads(job_data["result"])
+                    from src.utils.unicode_handler import decode_unicode_in_json_result
+                    job_data["result"] = decode_unicode_in_json_result(parsed_result)
                 except:
                     pass
 
