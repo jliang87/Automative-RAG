@@ -242,4 +242,287 @@ class PDFLoader:
         # Look for Chinese manufacturers first, then English
         for pattern, manufacturer in chinese_manufacturer_patterns:
             if re.search(pattern, text_lower):
-                auto_metadata["manufacturer"] =
+                auto_metadata["manufacturer"] = manufacturer
+                break
+
+        # ENHANCED: Chinese model patterns with proper Unicode
+        chinese_model_patterns = [
+            # BMW models
+            (r"[1-8]系|X[1-7]|i[3-8]|Z4", "宝马"),
+            # Mercedes models
+            (r"[A-Z]级|GLA|GLC|GLE|GLS|AMG", "奔驰"),
+            # Audi models
+            (r"A[1-8]|Q[2-8]|TT|R8", "奥迪"),
+            # Toyota models
+            (r"凯美瑞|卡罗拉|汉兰达|普拉多|陆地巡洋舰|camry|corolla|highlander|prado|land cruiser", "丰田"),
+            # Honda models
+            (r"雅阁|思域|crv|奥德赛|accord|civic|odyssey", "本田"),
+        ]
+
+        # Extract model if manufacturer is known
+        if "manufacturer" in auto_metadata:
+            manufacturer = auto_metadata["manufacturer"]
+            for pattern, manu in chinese_model_patterns:
+                if manufacturer == manu and re.search(pattern, text_lower, re.IGNORECASE):
+                    match = re.search(pattern, text_lower, re.IGNORECASE)
+                    if match:
+                        auto_metadata["model"] = match.group(0)
+                        break
+
+        # ENHANCED: Chinese category detection with proper Unicode
+        chinese_categories = [
+            (r"轿车|sedan|saloon", "轿车"),
+            (r"suv|越野车|运动型多用途车|sport utility vehicle", "SUV"),
+            (r"truck|pickup|卡车|皮卡|货车", "卡车"),
+            (r"sports car|supercar|跑车|运动车", "跑车"),
+            (r"minivan|van|面包车|mpv|多功能车", "面包车"),
+            (r"coupe|coupé|双门轿跑|轿跑车", "轿跑"),
+            (r"convertible|cabriolet|敞篷车|软顶车", "敞篷车"),
+            (r"hatchback|hot hatch|掀背车|两厢车", "掀背车"),
+            (r"wagon|estate|旅行车|瓦罐车", "旅行车"),
+        ]
+
+        for pattern, category in chinese_categories:
+            if re.search(pattern, text_lower):
+                auto_metadata["category"] = category
+                break
+
+        # ENHANCED: Chinese engine type detection with proper Unicode
+        chinese_engine_types = [
+            (r"汽油|gasoline|petrol|gas engine|汽油机", "汽油"),
+            (r"柴油|diesel|柴油机", "柴油"),
+            (r"电动|electric|ev|纯电|电池|battery|pure electric", "电动"),
+            (r"混合动力|hybrid|油电混合|插电混合|phev|plug-in hybrid", "混合动力"),
+            (r"氢燃料|hydrogen|fuel cell|氢气|燃料电池", "氢燃料"),
+        ]
+
+        for pattern, engine_type in chinese_engine_types:
+            if re.search(pattern, text_lower):
+                auto_metadata["engine_type"] = engine_type
+                break
+
+        # ENHANCED: Chinese transmission detection with proper Unicode
+        chinese_transmissions = [
+            (r"自动|automatic|auto|自动挡|自动变速箱", "自动"),
+            (r"手动|manual|stick|手动挡|手动变速箱|manual transmission", "手动"),
+            (r"cvt|无级变速|continuously variable|无级变速箱", "CVT"),
+            (r"dct|dual-clutch|双离合|双离合变速箱", "双离合"),
+        ]
+
+        for pattern, transmission in chinese_transmissions:
+            if re.search(pattern, text_lower):
+                auto_metadata["transmission"] = transmission
+                break
+
+        # ENHANCED: Year extraction with validation
+        year_patterns = [
+            r"(\d{4})年",  # Chinese year format
+            r"(20[0-9]{2})款",  # Model year format
+            r"(19|20)\d{2}",  # Standard year format
+        ]
+
+        for pattern in year_patterns:
+            match = re.search(pattern, text)
+            if match:
+                year = int(match.group(1)) if match.group(1).isdigit() else int(match.group(0))
+                if 1990 <= year <= 2030:  # Reasonable automotive year range
+                    auto_metadata["year"] = year
+                    break
+
+        return auto_metadata
+
+    def process_pdf(
+            self,
+            file_path: str,
+            custom_metadata: Optional[Dict[str, str]] = None,
+            extract_tables: bool = True
+    ) -> List[Document]:
+        """
+        Process a PDF file and return Langchain documents with comprehensive Unicode handling.
+
+        Args:
+            file_path: Path to the PDF file
+            custom_metadata: Optional custom metadata to add
+            extract_tables: Whether to extract table data
+
+        Returns:
+            List of processed Document objects with automotive metadata
+        """
+        from src.utils.unicode_handler import decode_unicode_in_dict, decode_unicode_escapes
+
+        # CRITICAL FIX: Apply Unicode decoding to custom metadata
+        if custom_metadata and isinstance(custom_metadata, dict):
+            print("Applying Unicode decoding to custom metadata")
+            custom_metadata = decode_unicode_in_dict(custom_metadata)
+
+        # Load the PDF
+        documents = self.load_pdf(file_path)
+
+        # Process each document
+        processed_documents = []
+
+        for i, doc in enumerate(documents):
+            # CRITICAL FIX: Apply Unicode decoding to document content
+            content = doc.page_content
+            if isinstance(content, str) and "\\u" in content:
+                print(f"Applying Unicode decoding to PDF content for page {i + 1}")
+                content = decode_unicode_escapes(content)
+
+            # Extract automotive metadata with Unicode handling
+            auto_metadata = self.extract_automotive_metadata(content)
+
+            # Clean and enhance existing metadata
+            existing_metadata = doc.metadata.copy()
+
+            # CRITICAL FIX: Apply Unicode decoding to existing metadata
+            if existing_metadata:
+                existing_metadata = decode_unicode_in_dict(existing_metadata)
+
+            # Create comprehensive metadata
+            enhanced_metadata = {
+                # Basic document info
+                "source": "pdf",
+                "source_id": os.path.basename(file_path),
+                "page_number": i + 1,
+                "total_pages": len(documents),
+                "file_path": file_path,
+
+                # Merge with existing metadata
+                **existing_metadata,
+
+                # Add automotive metadata
+                **auto_metadata,
+
+                # Add custom metadata if provided
+                **(custom_metadata or {}),
+
+                # Processing flags
+                "unicode_processed": True,
+                "metadata_extracted": True,
+            }
+
+            # FINAL VALIDATION: Ensure no Unicode escapes remain in metadata
+            for key, value in enhanced_metadata.items():
+                if isinstance(value, str) and "\\u" in value:
+                    print(f"Warning: Unicode escapes found in metadata field '{key}': {value}")
+                    enhanced_metadata[key] = decode_unicode_escapes(value)
+
+            # Create enhanced document
+            enhanced_doc = Document(
+                page_content=content,  # Already Unicode-decoded
+                metadata=enhanced_metadata
+            )
+
+            processed_documents.append(enhanced_doc)
+
+        # Split into chunks if documents are large
+        final_documents = []
+        for doc in processed_documents:
+            if len(doc.page_content) > self.chunk_size:
+                # Split large documents into chunks
+                chunks = self.text_splitter.split_text(doc.page_content)
+
+                for j, chunk in enumerate(chunks):
+                    chunk_metadata = doc.metadata.copy()
+                    chunk_metadata.update({
+                        "chunk_id": j,
+                        "total_chunks": len(chunks),
+                        "is_chunk": True
+                    })
+
+                    chunk_doc = Document(
+                        page_content=chunk,
+                        metadata=chunk_metadata
+                    )
+                    final_documents.append(chunk_doc)
+            else:
+                # Keep document as-is if it's not too large
+                final_documents.append(doc)
+
+        print(f"PDF processing completed: {len(final_documents)} documents with validated Unicode metadata")
+        return final_documents
+
+    def extract_tables(self, file_path: str) -> List[Dict[str, any]]:
+        """
+        Extract table data from PDF with Unicode handling.
+
+        Args:
+            file_path: Path to the PDF file
+
+        Returns:
+            List of table data dictionaries
+        """
+        try:
+            import camelot
+            from src.utils.unicode_handler import decode_unicode_escapes
+
+            # Extract tables using camelot
+            tables = camelot.read_pdf(file_path, pages='all')
+
+            table_data = []
+            for i, table in enumerate(tables):
+                # Convert table to dictionary format
+                df = table.df
+
+                # CRITICAL FIX: Apply Unicode decoding to table content
+                for col in df.columns:
+                    df[col] = df[col].apply(lambda x: decode_unicode_escapes(str(x)) if isinstance(x, str) and "\\u" in x else x)
+
+                table_dict = {
+                    "table_id": i,
+                    "page": table.page,
+                    "accuracy": table.accuracy,
+                    "data": df.to_dict('records'),
+                    "headers": list(df.columns),
+                    "unicode_processed": True
+                }
+
+                table_data.append(table_dict)
+
+            print(f"Extracted {len(table_data)} tables with Unicode processing")
+            return table_data
+
+        except ImportError:
+            print("Camelot not available for table extraction. Install with: pip install camelot-py[cv]")
+            return []
+        except Exception as e:
+            print(f"Error extracting tables: {str(e)}")
+            return []
+
+    def get_pdf_info(self, file_path: str) -> Dict[str, any]:
+        """
+        Get PDF file information with Unicode handling.
+
+        Args:
+            file_path: Path to the PDF file
+
+        Returns:
+            Dictionary with PDF information
+        """
+        try:
+            import fitz
+            from src.utils.unicode_handler import decode_unicode_escapes
+
+            pdf = fitz.open(file_path)
+            metadata = pdf.metadata
+
+            # CRITICAL FIX: Apply Unicode decoding to PDF metadata
+            if metadata:
+                for key, value in metadata.items():
+                    if isinstance(value, str) and "\\u" in value:
+                        metadata[key] = decode_unicode_escapes(value)
+
+            pdf_info = {
+                "file_path": file_path,
+                "file_size": os.path.getsize(file_path),
+                "page_count": pdf.page_count,
+                "metadata": metadata,
+                "unicode_processed": True
+            }
+
+            pdf.close()
+            return pdf_info
+
+        except Exception as e:
+            print(f"Error getting PDF info: {str(e)}")
+            return {"file_path": file_path, "error": str(e)}

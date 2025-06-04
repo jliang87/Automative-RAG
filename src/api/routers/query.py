@@ -1,5 +1,3 @@
-# src/api/routers/query.py - Handle both slash cases
-
 import uuid
 from typing import Dict, List, Optional, Any
 
