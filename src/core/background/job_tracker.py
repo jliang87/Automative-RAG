@@ -1,10 +1,9 @@
-# src/core/background/job_tracker.py (SIMPLIFIED - Remove Complex Progress Features)
-
 import json
 import time
 import logging
 from typing import Dict, List, Optional, Any, Union
 import redis
+from src.utils.unicode_handler import decode_unicode_in_json_result
 
 from .common import JobStatus
 
@@ -59,41 +58,44 @@ class JobTracker:
             job_data["current_stage"] = stage
             job_data["stage_updated_at"] = time.time()
 
-        # Handle result updating
+        # Handle result updating with Unicode decoding
         if result is not None:
+            # CRITICAL FIX: Decode Unicode before storing
+            decoded_result = decode_unicode_in_json_result(result)
+
             if replace_result or not job_data.get("result"):
                 # Replace entire result (for task completions)
-                if isinstance(result, (list, dict)):
-                    job_data["result"] = json.dumps(result)
+                if isinstance(decoded_result, (list, dict)):
+                    job_data["result"] = json.dumps(decoded_result, ensure_ascii=False)
                 else:
-                    job_data["result"] = str(result)
-                logger.debug(f"Replaced result for job {job_id}")
+                    job_data["result"] = str(decoded_result)
+                logger.debug(f"Replaced result for job {job_id} with Unicode decoding")
             else:
                 # Merge with existing result (for progress updates)
                 existing_result = job_data.get("result")
                 if isinstance(existing_result, str):
                     try:
                         existing_result = json.loads(existing_result)
+                        existing_result = decode_unicode_in_json_result(existing_result)
                     except:
                         existing_result = {}
 
-                if isinstance(existing_result, dict) and isinstance(result, dict):
+                if isinstance(existing_result, dict) and isinstance(decoded_result, dict):
                     merged_result = existing_result.copy()
-                    merged_result.update(result)
-                    job_data["result"] = json.dumps(merged_result)
-                    logger.debug(
-                        f"Merged result for job {job_id}: preserved {len(existing_result)} existing keys, added {len(result)} new keys")
+                    merged_result.update(decoded_result)
+                    job_data["result"] = json.dumps(merged_result, ensure_ascii=False)
+                    logger.debug(f"Merged result for job {job_id} with Unicode decoding")
                 else:
                     # Fall back to replacement if types don't match
-                    if isinstance(result, (list, dict)):
-                        job_data["result"] = json.dumps(result)
+                    if isinstance(decoded_result, (list, dict)):
+                        job_data["result"] = json.dumps(decoded_result, ensure_ascii=False)
                     else:
-                        job_data["result"] = str(result)
+                        job_data["result"] = str(decoded_result)
 
         if error is not None:
             job_data["error"] = str(error)
 
-        self.redis.hset(self.job_key, job_id, json.dumps(job_data))
+        self.redis.hset(self.job_key, job_id, json.dumps(job_data, ensure_ascii=False))
         logger.info(f"Updated job {job_id} status to {status}" + (f", stage: {stage}" if stage else ""))
 
     def update_job_progress(self, job_id: str, progress: Union[int, float, None], message: str = "") -> None:
@@ -154,7 +156,7 @@ class JobTracker:
             return {"progress": 0, "message": "Invalid progress data", "timestamp": time.time()}
 
     def get_job(self, job_id: str, include_progress: bool = True) -> Optional[Dict[str, Any]]:
-        """Get job information by ID."""
+        """Get job information by ID with Unicode decoding."""
         job_data_json = self.redis.hget(self.job_key, job_id)
         if not job_data_json:
             return None
@@ -164,15 +166,17 @@ class JobTracker:
         # Parse JSON metadata back to dict if it exists
         if "metadata" in job_data and job_data["metadata"]:
             try:
-                job_data["metadata"] = json.loads(job_data["metadata"])
+                metadata = json.loads(job_data["metadata"])
+                job_data["metadata"] = decode_unicode_in_json_result(metadata)
             except:
                 # If metadata isn't valid JSON, keep as string
                 pass
 
-        # Parse result if it's JSON
+        # Parse result with Unicode decoding if it's JSON
         if "result" in job_data and job_data["result"] and isinstance(job_data["result"], str):
             try:
-                job_data["result"] = json.loads(job_data["result"])
+                parsed_result = json.loads(job_data["result"])
+                job_data["result"] = decode_unicode_in_json_result(parsed_result)
             except:
                 pass  # Keep as string if it's not valid JSON
 

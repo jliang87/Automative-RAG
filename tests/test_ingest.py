@@ -8,7 +8,6 @@ from unittest.mock import patch, MagicMock, mock_open
 import torch
 from langchain_core.documents import Document
 
-from src.core.document_processor import DocumentProcessor
 from src.core.video_transcriber import VideoTranscriber
 from src.core.pdf_loader import PDFLoader
 
@@ -92,7 +91,6 @@ def test_process_pdf(vector_store):
 
 def test_process_text(vector_store):
     """Test processing manual text entry."""
-    processor = DocumentProcessor(vector_store=vector_store)
 
     # Create a manual ingest request
     from src.models.schema import DocumentMetadata, DocumentSource, ManualIngestRequest

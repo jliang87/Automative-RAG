@@ -239,12 +239,13 @@ class VideoTranscriber:
 
     def get_video_metadata(self, url: str) -> Dict[str, Union[str, int]]:
         """
-        Get metadata from a video using yt-dlp.
-        FAILS if metadata extraction fails - NO FALLBACKS!
+        Get metadata from a video using yt-dlp with proper Unicode handling.
+        ENHANCED VERSION: Properly handles Chinese characters and Unicode encoding.
         """
         try:
             video_id = self.extract_video_id(url)
 
+            # Use UTF-8 encoding explicitly for subprocess
             result = subprocess.run([
                 "yt-dlp",
                 "--dump-json",
@@ -255,22 +256,82 @@ class VideoTranscriber:
             if not result.stdout:
                 raise ValueError(f"yt-dlp returned empty output for {url}")
 
+            # Parse JSON with proper UTF-8 handling
             data = json.loads(result.stdout)
 
             # Validate that we got essential metadata
             if not data.get("title") or not data.get("uploader"):
                 raise ValueError(f"Missing essential metadata (title/uploader) for {url}")
 
+            # CRITICAL FIX: Properly decode Unicode escape sequences
+            def decode_unicode_field(field_value):
+                """Decode Unicode escape sequences in metadata fields"""
+                if not field_value or not isinstance(field_value, str):
+                    return field_value
+
+                try:
+                    # Handle Unicode escape sequences like \u6b3e
+                    if '\\u' in field_value:
+                        # First, try to decode as if it's a JSON string
+                        try:
+                            # If it looks like it might be double-encoded
+                            if field_value.startswith('"') and field_value.endswith('"'):
+                                decoded = json.loads(field_value)
+                            else:
+                                # Handle raw Unicode escapes
+                                decoded = field_value.encode('utf-8').decode('unicode_escape')
+                            return decoded
+                        except (json.JSONDecodeError, UnicodeDecodeError):
+                            # If JSON decoding fails, try manual Unicode escape decoding
+                            try:
+                                return field_value.encode('latin1').decode('unicode_escape')
+                            except (UnicodeDecodeError, UnicodeEncodeError):
+                                # If all else fails, use codecs
+                                import codecs
+                                return codecs.decode(field_value, 'unicode_escape')
+
+                    # For Chinese text that might be incorrectly encoded
+                    # Try to detect and fix common encoding issues
+                    if any(ord(char) > 127 for char in field_value):
+                        # Check if it's already properly encoded UTF-8
+                        try:
+                            field_value.encode('utf-8')
+                            return field_value  # Already proper UTF-8
+                        except UnicodeEncodeError:
+                            # Try to fix encoding issues
+                            try:
+                                return field_value.encode('latin1').decode('utf-8')
+                            except (UnicodeDecodeError, UnicodeEncodeError):
+                                pass
+
+                    return field_value
+
+                except Exception as e:
+                    logger.warning(f"Failed to decode Unicode in field: {field_value}, error: {e}")
+                    return field_value  # Return original if all decoding attempts fail
+
+            # Apply Unicode decoding to text fields
             metadata = {
-                "title": data.get("title"),
-                "author": data.get("uploader"),
-                "published_date": data.get("upload_date"),
+                "title": decode_unicode_field(data.get("title")),
+                "author": decode_unicode_field(data.get("uploader")),
+                "published_date": data.get("upload_date"),  # Date fields don't need Unicode decoding
                 "video_id": data.get("id", video_id),
                 "url": url,
                 "length": int(data.get("duration", 0)),
                 "views": data.get("view_count", 0),
-                "description": data.get("description", ""),
+                "description": decode_unicode_field(data.get("description", "")),
             }
+
+            # VALIDATION: Ensure decoded metadata is valid
+            if not metadata["title"] or metadata["title"] in ["", "Unknown Video"]:
+                raise ValueError(f"Title decoding failed or invalid for {url}")
+
+            if not metadata["author"] or metadata["author"] in ["", "Unknown", "Unknown Author"]:
+                raise ValueError(f"Author decoding failed or invalid for {url}")
+
+            logger.info(f"Successfully extracted and decoded metadata for {video_id}")
+            logger.info(f"Title: {metadata['title']}")
+            logger.info(f"Author: {metadata['author']}")
 
             return metadata
 

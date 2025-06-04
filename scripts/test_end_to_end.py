@@ -228,6 +228,39 @@ def cleanup_test_data(document_ids: List[str], api_key: str, base_url: str) -> N
             print(f"Error deleting document: {doc_id}")
 
 
+# Add this test function to validate the Unicode handling:
+def test_unicode_decoding():
+    """Test function to validate Unicode decoding works correctly"""
+    from src.utils.unicode_handler import decode_unicode_escapes
+
+    # Test cases with common Unicode escape patterns
+    test_cases = [
+        # Chinese characters with Unicode escapes
+        ("\\u6b3e", "款"),
+        ("\\u8f66\\u5728\\u7ebf", "车在线"),
+        ("25\\u6b3e\\u8fdc\\u9014\\u88c5\\u9970", "25款远途装饰"),
+
+        # Already properly encoded text
+        ("正常中文", "正常中文"),
+        ("Normal English", "Normal English"),
+
+        # Mixed content
+        ("2023\\u5e74\\u5b9d\\u9a6cX5", "2023年宝马X5"),
+
+        # Double-escaped
+        ("\\\\u6b3e", "款"),
+    ]
+
+    print("Testing Unicode decoding...")
+    for input_text, expected in test_cases:
+        result = decode_unicode_escapes(input_text)
+        status = "✓" if result == expected else "✗"
+        print(f"{status} '{input_text}' -> '{result}' (expected: '{expected}')")
+
+    print("Unicode decoding test completed.")
+
+
+
 def main():
     parser = argparse.ArgumentParser(description="Run end-to-end tests for the Automotive Specs RAG system")
     parser.add_argument("--api-key", default=settings.api_key, help="API key for authentication")
@@ -281,6 +314,8 @@ def main():
         with open(args.output, "w") as f:
             json.dump(output_data, f, indent=2)
             print(f"Results saved to {args.output}")
+
+    test_unicode_decoding()
     
     # Clean up test data
     if not args.no_cleanup:

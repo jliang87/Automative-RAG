@@ -553,7 +553,15 @@ def download_video_task(job_id: str, url: str, metadata: Optional[Dict] = None):
         # Get video metadata - THIS WILL RAISE EXCEPTION IF IT FAILS
         try:
             video_metadata = transcriber.get_video_metadata(url)
-            logger.info(f"Successfully retrieved video metadata for job {job_id}")
+
+            # CRITICAL FIX: Ensure video_metadata has proper Unicode
+            from src.utils.unicode_handler import decode_unicode_in_dict
+            video_metadata = decode_unicode_in_dict(video_metadata)
+
+            logger.info(f"Successfully retrieved and decoded video metadata for job {job_id}")
+            logger.info(f"Title: {video_metadata.get('title', 'NO_TITLE')}")
+            logger.info(f"Author: {video_metadata.get('author', 'NO_AUTHOR')}")
+
         except Exception as e:
             # NO FALLBACK - fail the entire job
             error_msg = f"Failed to extract video metadata: {str(e)}"

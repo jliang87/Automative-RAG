@@ -4,7 +4,9 @@ import uuid
 from typing import Dict, List, Optional, Any
 
 from fastapi import APIRouter, Depends, HTTPException
+from src.utils.unicode_handler import decode_unicode_in_dict
 import logging
+import numpy as np
 
 from src.core.background.job_chain import job_chain, JobType
 from src.core.background.job_tracker import job_tracker
@@ -103,21 +105,20 @@ async def get_query_result(job_id: str) -> Optional[QueryResponse]:
                 # Clean the metadata to avoid null values
                 doc_metadata = doc_data.get("metadata", {})
 
-                cleaned_metadata = {
-                    "source": doc_metadata.get("source", "unknown"),
-                    "source_id": doc_metadata.get("source_id", ""),
-                    "url": doc_metadata.get("url") or "",  # Convert null to empty string
-                    "title": doc_metadata.get("title") or "No title",
-                    "author": doc_metadata.get("author") or "Unknown",
-                    "published_date": doc_metadata.get("published_date"),
-                    "manufacturer": doc_metadata.get("manufacturer") or "",
-                    "model": doc_metadata.get("model") or "",
-                    "year": doc_metadata.get("year"),
-                    "category": doc_metadata.get("category") or "",
-                    "engine_type": doc_metadata.get("engine_type") or "",
-                    "transmission": doc_metadata.get("transmission") or "",
-                    "custom_metadata": doc_metadata.get("custom_metadata")
-                }
+                cleaned_metadata = {}
+                for key, value in doc_metadata.items():
+                    if isinstance(value, (np.floating, np.float32, np.float64)):
+                        cleaned_metadata[key] = float(value)
+                    elif isinstance(value, (np.integer, np.int32, np.int64)):
+                        cleaned_metadata[key] = int(value)
+                    elif isinstance(value, np.ndarray):
+                        cleaned_metadata[key] = value.tolist()
+                    elif isinstance(value, str):
+                        # CRITICAL FIX: Decode Unicode escape sequences
+                        from src.utils.unicode_handler import decode_unicode_escapes
+                        cleaned_metadata[key] = decode_unicode_escapes(value)
+                    else:
+                        cleaned_metadata[key] = value
 
                 cleaned_doc = {
                     "id": doc_data.get("id", ""),
