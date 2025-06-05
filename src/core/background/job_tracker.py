@@ -11,14 +11,11 @@ logger = logging.getLogger(__name__)
 
 class JobTracker:
     def __init__(self, redis_client=None):
-        self.redis = redis_client
-        if self.redis is None:
+        if redis_client is None:
             from .common import get_redis_client
-            self.redis = get_redis_client()
-
-        # CRITICAL FIX: Ensure Redis client uses UTF-8 encoding
-        self.redis.encoding = 'utf-8'
-        self.redis.decode_responses = True  # This is crucial!
+            self.redis = get_redis_client()  # This client supports UTF-8
+        else:
+            self.redis = redis_client
 
         self.job_key = "rag_system:jobs"
         self.progress_key = "rag_system:job_progress"
@@ -38,7 +35,7 @@ class JobTracker:
             "progress": 0.0
         }
 
-        # CRITICAL: Use ensure_ascii=False for proper Unicode storage
+        # CRITICAL: Use ensure_ascii=False for proper Chinese character storage
         job_json = json.dumps(job_data, ensure_ascii=False)
         self.redis.hset(self.job_key, job_id, job_json)
         logging.info(f"Created job {job_id} with UTF-8 encoding")
@@ -92,11 +89,6 @@ class JobTracker:
         if progress is not None:
             # Ensure progress is between 0 and 100
             progress = max(0, min(100, progress))
-
-        # Apply Unicode decoding to progress message
-        if message and "\\u" in message:
-            from src.utils.unicode_handler import decode_unicode_escapes
-            message = decode_unicode_escapes(message)
 
         # Create progress entry
         progress_data = {
@@ -165,26 +157,20 @@ class JobTracker:
 
         job_data = json.loads(job_data_json)
 
-        # Parse JSON metadata back to dict if it exists
-        if "metadata" in job_data and job_data["metadata"]:
+        # Parse metadata if it's JSON string
+        if "metadata" in job_data and isinstance(job_data["metadata"], str):
             try:
-                metadata = json.loads(job_data["metadata"])
-                from src.utils.unicode_handler import decode_unicode_in_json_result
-                job_data["metadata"] = decode_unicode_in_json_result(metadata)
+                job_data["metadata"] = json.loads(job_data["metadata"])
             except:
-                # If metadata isn't valid JSON, keep as string
                 pass
 
-        # Parse result with Unicode decoding if it's JSON
-        if "result" in job_data and job_data["result"] and isinstance(job_data["result"], str):
+        # Parse result if it's JSON string
+        if "result" in job_data and isinstance(job_data["result"], str):
             try:
-                parsed_result = json.loads(job_data["result"])
-                from src.utils.unicode_handler import decode_unicode_in_json_result
-                job_data["result"] = decode_unicode_in_json_result(parsed_result)
+                job_data["result"] = json.loads(job_data["result"])
             except:
-                pass  # Keep as string if it's not valid JSON
+                pass
 
-        # Add progress information if requested
         if include_progress:
             progress_data = self.get_job_progress(job_id)
             job_data["progress_info"] = progress_data

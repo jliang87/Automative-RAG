@@ -31,17 +31,27 @@ broker_kwargs = {
     "host": redis_host,
     "port": redis_port,
     "max_connections": 20,
-    "client_name": f"dramatiq-{worker_type}-{os.getpid()}",
-    # CRITICAL FIXES for UTF-8:
-    "encoding": "utf-8",
-    "decode_responses": True,  # This ensures strings are returned as str, not bytes
-    "charset": "utf-8"
+    "client_name": f"dramatiq-{worker_type}-{os.getpid()}"
 }
 if redis_password:
     broker_kwargs["password"] = redis_password
 
-# Create broker with simplified middleware
 redis_broker = RedisBroker(**broker_kwargs)
+dramatiq.set_broker(redis_broker)
+
+# Create single Redis client instance for our application data with UTF-8 support
+app_redis_kwargs = {
+    "host": redis_host,
+    "port": redis_port,
+    "encoding": "utf-8",
+    "decode_responses": True,  # This is OK for our app data, not Dramatiq
+    "charset": "utf-8"
+}
+if redis_password:
+    app_redis_kwargs["password"] = redis_password
+
+# Single instance for application data
+_app_redis_client = redis.Redis(**app_redis_kwargs)
 
 # Create Results backend
 results_backend = ResultsRedisBackend(
@@ -76,8 +86,8 @@ _heartbeat_stop_event = None
 
 
 def get_redis_client():
-    """Get the Redis client from the broker."""
-    return redis_broker.client
+    """Get the shared Redis client with UTF-8 support for application data."""
+    return _app_redis_client
 
 
 def start_worker_heartbeat(worker_id: str):

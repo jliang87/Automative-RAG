@@ -25,9 +25,6 @@ class TaskStatus(Enum):
 class JobChain:
     def __init__(self):
         self.redis = get_redis_client()
-        # CRITICAL FIX: Ensure Redis uses UTF-8
-        self.redis.encoding = 'utf-8'
-        self.redis.decode_responses = True
 
         # Define job workflows - each job type has a sequence of tasks
         # UPDATED: Ensure correct queue routing for dedicated workers
@@ -479,65 +476,25 @@ job_chain = JobChain()
 
 @dramatiq.actor(queue_name="cpu_tasks", store_results=True, max_retries=2)
 def download_video_task(job_id: str, url: str, metadata: Optional[Dict] = None):
-    """Download video and trigger next task with comprehensive Unicode handling."""
+    """Download video with UTF-8 metadata preservation."""
     try:
-        logger.info(f"Downloading video for job {job_id}: {url}")
-
         from src.core.video_transcriber import VideoTranscriber
-        from src.utils.unicode_handler import decode_unicode_in_dict
-
-        # Apply Unicode decoding to metadata
-        if metadata and isinstance(metadata, dict):
-            metadata = decode_unicode_in_dict(metadata)
 
         transcriber = VideoTranscriber()
-
-        # Extract audio
         media_path = transcriber.extract_audio(url)
 
-        # Get video metadata with enhanced Unicode handling
-        try:
-            video_metadata = transcriber.get_video_metadata(url)
-
-            # Additional Unicode validation
-            from src.utils.unicode_handler import validate_unicode_cleaning
-            title_clean = validate_unicode_cleaning(video_metadata.get("title", ""), "video_title")
-            author_clean = validate_unicode_cleaning(video_metadata.get("author", ""), "video_author")
-
-            if not title_clean or not author_clean:
-                error_msg = f"Video metadata contains unresolved Unicode escapes for {url}"
-                logger.error(error_msg)
-                job_chain.task_failed(job_id, error_msg)
-                return
-
-            logger.info(f"Successfully retrieved video metadata for job {job_id}")
-            logger.info(f"Title: {video_metadata.get('title', 'NO_TITLE')}")
-            logger.info(f"Author: {video_metadata.get('author', 'NO_AUTHOR')}")
-
-        except Exception as e:
-            error_msg = f"Failed to extract video metadata: {str(e)}"
-            logger.error(error_msg)
-            job_chain.task_failed(job_id, error_msg)
-            return
-
-        # Validate metadata completeness
-        if not video_metadata.get("title") or video_metadata.get("title") == "Unknown Video":
-            error_msg = f"Extracted metadata is incomplete or invalid for {url}"
-            logger.error(error_msg)
-            job_chain.task_failed(job_id, error_msg)
-            return
-
-        logger.info(f"Video download completed for job {job_id}: {video_metadata['title']}")
+        # Get UTF-8 metadata (no decoding needed)
+        video_metadata = transcriber.get_video_metadata(url)
 
         download_result = {
             "media_path": media_path,
-            "video_metadata": video_metadata,
+            "video_metadata": video_metadata,  # Already UTF-8 strings
             "download_completed_at": time.time(),
             "url": url,
             "custom_metadata": metadata or {}
         }
 
-        # Store the download result in job tracker
+        # Store with UTF-8 preservation
         job_tracker.update_job_status(
             job_id,
             "processing",
@@ -545,13 +502,10 @@ def download_video_task(job_id: str, url: str, metadata: Optional[Dict] = None):
             stage="download_completed"
         )
 
-        # Trigger the next task
         job_chain.task_completed(job_id, download_result)
 
     except Exception as e:
-        error_msg = f"Video download failed for job {job_id}: {str(e)}"
-        logger.error(error_msg)
-        job_chain.task_failed(job_id, error_msg)
+        job_chain.task_failed(job_id, str(e))
 
 
 @dramatiq.actor(queue_name="transcription_tasks", store_results=True, max_retries=2)
