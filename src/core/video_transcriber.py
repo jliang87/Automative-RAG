@@ -14,7 +14,6 @@ from src.models.schema import DocumentMetadata, DocumentSource
 from src.config.settings import settings
 from src.utils.helpers import (
     extract_metadata_from_text,
-    generate_unique_id
 )
 
 logger = logging.getLogger(__name__)
