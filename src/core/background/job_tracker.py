@@ -10,100 +10,81 @@ logger = logging.getLogger(__name__)
 
 
 class JobTracker:
-    """Enhanced job tracker with Unicode handling for Chinese text."""
-
     def __init__(self, redis_client=None):
-        """Initialize the job tracker with Redis."""
         self.redis = redis_client
         if self.redis is None:
             from .common import get_redis_client
             self.redis = get_redis_client()
 
-        # Use a Redis hash to store job information
+        # CRITICAL FIX: Ensure Redis client uses UTF-8 encoding
+        self.redis.encoding = 'utf-8'
+        self.redis.decode_responses = True  # This is crucial!
+
         self.job_key = "rag_system:jobs"
-        # Key for simple progress updates
         self.progress_key = "rag_system:job_progress"
 
     def create_job(self, job_id: str, job_type: str, metadata: Dict[str, Any]) -> None:
-        """Create a new job record with Unicode handling."""
-        # Apply Unicode decoding to metadata if needed
-        from src.utils.unicode_handler import decode_unicode_in_dict
-
-        if isinstance(metadata, dict):
-            metadata = decode_unicode_in_dict(metadata)
+        """Create a new job record with proper UTF-8 encoding."""
 
         job_data = {
             "job_id": job_id,
             "job_type": job_type,
-            "status": JobStatus.PENDING,
+            "status": "pending",
             "created_at": time.time(),
             "updated_at": time.time(),
             "result": None,
             "error": None,
-            "metadata": json.dumps(metadata, ensure_ascii=False),  # Proper Unicode storage
+            "metadata": metadata,  # Store as dict, not JSON string
             "progress": 0.0
         }
 
-        # Store as a hash field with job_id as field name
-        self.redis.hset(self.job_key, job_id, json.dumps(job_data, ensure_ascii=False))
-        logger.info(f"Created job {job_id} of type {job_type}")
+        # CRITICAL: Use ensure_ascii=False for proper Unicode storage
+        job_json = json.dumps(job_data, ensure_ascii=False)
+        self.redis.hset(self.job_key, job_id, job_json)
+        logging.info(f"Created job {job_id} with UTF-8 encoding")
 
-    def update_job_status(self, job_id: str, status: str, result: Any = None, error: str = None,
-                          stage: str = None, replace_result: bool = False) -> None:
-        """Update job status with comprehensive Unicode handling."""
+    def update_job_status(self, job_id: str, status: str, result: Any = None,
+                          error: str = None, stage: str = None, replace_result: bool = False) -> None:
+        """Update job status with proper UTF-8 encoding."""
+
         job_data_json = self.redis.hget(self.job_key, job_id)
         if not job_data_json:
-            logger.warning(f"Job {job_id} not found when updating status to {status}")
+            logging.warning(f"Job {job_id} not found")
             return
 
         job_data = json.loads(job_data_json)
         job_data["status"] = status
         job_data["updated_at"] = time.time()
 
-        # Add current stage if provided
         if stage:
             job_data["current_stage"] = stage
             job_data["stage_updated_at"] = time.time()
 
-        # Handle result updating with Unicode decoding
         if result is not None:
-            # CRITICAL FIX: Decode Unicode before storing
-            from src.utils.unicode_handler import decode_unicode_in_json_result
-            decoded_result = decode_unicode_in_json_result(result)
-
             if replace_result or not job_data.get("result"):
-                # Replace entire result (for task completions)
-                if isinstance(decoded_result, (list, dict)):
-                    job_data["result"] = json.dumps(decoded_result, ensure_ascii=False)
-                else:
-                    job_data["result"] = str(decoded_result)
-                logger.debug(f"Replaced result for job {job_id} with Unicode decoding")
+                # Store result as dict/object, not JSON string
+                job_data["result"] = result
             else:
-                # Merge with existing result (for progress updates)
-                existing_result = job_data.get("result")
+                # Merge with existing result
+                existing_result = job_data.get("result", {})
                 if isinstance(existing_result, str):
                     try:
                         existing_result = json.loads(existing_result)
-                        existing_result = decode_unicode_in_json_result(existing_result)
                     except:
                         existing_result = {}
 
-                if isinstance(existing_result, dict) and isinstance(decoded_result, dict):
-                    merged_result = existing_result.copy()
-                    merged_result.update(decoded_result)
-                    job_data["result"] = json.dumps(merged_result, ensure_ascii=False)
-                    logger.debug(f"Merged result for job {job_id} with Unicode decoding")
+                if isinstance(existing_result, dict) and isinstance(result, dict):
+                    existing_result.update(result)
+                    job_data["result"] = existing_result
                 else:
-                    # Fall back to replacement if types don't match
-                    if isinstance(decoded_result, (list, dict)):
-                        job_data["result"] = json.dumps(decoded_result, ensure_ascii=False)
-                    else:
-                        job_data["result"] = str(decoded_result)
+                    job_data["result"] = result
 
         if error is not None:
             job_data["error"] = str(error)
 
-        self.redis.hset(self.job_key, job_id, json.dumps(job_data, ensure_ascii=False))
+        # CRITICAL: Use ensure_ascii=False for UTF-8 storage
+        job_json = json.dumps(job_data, ensure_ascii=False)
+        self.redis.hset(self.job_key, job_id, job_json)
         logger.info(f"Updated job {job_id} status to {status}" + (f", stage: {stage}" if stage else ""))
 
     def update_job_progress(self, job_id: str, progress: Union[int, float, None], message: str = "") -> None:

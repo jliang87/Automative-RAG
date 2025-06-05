@@ -31,7 +31,11 @@ broker_kwargs = {
     "host": redis_host,
     "port": redis_port,
     "max_connections": 20,
-    "client_name": f"dramatiq-{worker_type}-{os.getpid()}"
+    "client_name": f"dramatiq-{worker_type}-{os.getpid()}",
+    # CRITICAL FIXES for UTF-8:
+    "encoding": "utf-8",
+    "decode_responses": True,  # This ensures strings are returned as str, not bytes
+    "charset": "utf-8"
 }
 if redis_password:
     broker_kwargs["password"] = redis_password

@@ -23,12 +23,11 @@ class TaskStatus(Enum):
     FAILED = "failed"
 
 class JobChain:
-    """
-    Event-driven job chain with dedicated workers and comprehensive Unicode handling.
-    """
-
     def __init__(self):
         self.redis = get_redis_client()
+        # CRITICAL FIX: Ensure Redis uses UTF-8
+        self.redis.encoding = 'utf-8'
+        self.redis.decode_responses = True
 
         # Define job workflows - each job type has a sequence of tasks
         # UPDATED: Ensure correct queue routing for dedicated workers
@@ -453,8 +452,10 @@ class JobChain:
         return queue_status
 
     def _save_chain_state(self, job_id: str, chain_state: Dict[str, Any]) -> None:
-        """Save chain state to Redis with Unicode handling."""
-        self.redis.set(f"job_chain:{job_id}", json.dumps(chain_state, ensure_ascii=False), ex=86400)
+        """Save chain state with proper UTF-8 encoding."""
+        # CRITICAL: Use ensure_ascii=False for Chinese characters
+        state_json = json.dumps(chain_state, ensure_ascii=False)
+        self.redis.set(f"job_chain:{job_id}", state_json, ex=86400)
 
     def _get_chain_state(self, job_id: str) -> Optional[Dict[str, Any]]:
         """Get chain state from Redis."""

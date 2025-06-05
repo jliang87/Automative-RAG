@@ -271,16 +271,16 @@ class VideoTranscriber:
                     logger.warning(f"Failed to decode Unicode in field: {field_value}, error: {e}")
                     return field_value  # Return original if decoding fails
 
-            # Apply Unicode decoding to text fields
+            # CRITICAL: Don't encode/decode - keep as UTF-8 strings
             metadata = {
-                "title": decode_unicode_field(data.get("title")),
-                "author": decode_unicode_field(data.get("uploader")),
-                "published_date": data.get("upload_date"),  # Date fields don't need Unicode decoding
+                "title": data.get("title", ""),  # Keep as UTF-8 string
+                "author": data.get("uploader", ""),  # Keep as UTF-8 string
+                "published_date": data.get("upload_date"),
                 "video_id": data.get("id", video_id),
                 "url": url,
                 "length": int(data.get("duration", 0)),
                 "views": data.get("view_count", 0),
-                "description": decode_unicode_field(data.get("description", "")),
+                "description": data.get("description", ""),  # Keep as UTF-8 string
             }
 
             # ENHANCED VALIDATION: Ensure decoded metadata is valid
