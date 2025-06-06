@@ -139,7 +139,7 @@ with tab2:
         with st.spinner("正在上传和处理PDF文件..."):
             job_id = submit_upload("pdf", {
                 "data": {
-                    "metadata": json.dumps(metadata) if metadata else None,
+                    "metadata": json.dumps(metadata, ensure_ascii=False) if metadata else None,
                     "use_ocr": "true" if use_ocr else "false",
                     "extract_tables": "true" if extract_tables else "false"
                 },

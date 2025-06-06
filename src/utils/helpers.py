@@ -9,6 +9,18 @@ __all__ = [
 
 
 def clean_text(text: str) -> str:
+    """
+    Clean text by removing extra whitespace, newlines, etc.
+
+    SIMPLIFIED: Global Dramatiq patch handles Unicode automatically.
+    This function only handles basic text cleanup.
+
+    Args:
+        text: Text to clean
+
+    Returns:
+        Cleaned text
+    """
     if not isinstance(text, str):
         return text
 
@@ -55,6 +67,18 @@ def extract_year_from_text(text: str) -> Optional[int]:
 
 
 def extract_metadata_from_text(text: str) -> Dict[str, Any]:
+    """
+    Extract automotive metadata from text.
+
+    SIMPLIFIED: Global Dramatiq patch ensures text is already properly decoded.
+    Focus on pattern matching without Unicode handling complexity.
+
+    Args:
+        text: Text to extract metadata from
+
+    Returns:
+        Dictionary of extracted metadata
+    """
     if not isinstance(text, str):
         return {}
 

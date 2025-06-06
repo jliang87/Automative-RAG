@@ -12,6 +12,13 @@ from src.models.schema import DocumentMetadata, DocumentSource
 
 
 class PDFLoader:
+    """
+    PDF loader with OCR support for scanned documents.
+
+    SIMPLIFIED: Global Dramatiq patch handles all Unicode cleaning automatically.
+    No manual Unicode decoding needed anywhere in the pipeline.
+    """
+
     def __init__(
             self,
             chunk_size: int = 1000,
@@ -97,6 +104,18 @@ class PDFLoader:
         return documents
 
     def _apply_ocr(self, file_path: str, original_documents: List[Document]) -> List[Document]:
+        """
+        Apply OCR to a PDF file.
+
+        SIMPLIFIED: Global Dramatiq patch handles Unicode cleaning automatically.
+
+        Args:
+            file_path: Path to the PDF file
+            original_documents: Original documents with minimal text
+
+        Returns:
+            List of documents with OCR-extracted text
+        """
         try:
             import fitz  # PyMuPDF
             import numpy as np
@@ -162,6 +181,17 @@ class PDFLoader:
         return text
 
     def extract_automotive_metadata(self, text: str) -> Dict[str, any]:
+        """
+        Extract automotive-specific metadata from PDF text.
+
+        SIMPLIFIED: Global Dramatiq patch ensures text is already properly decoded.
+
+        Args:
+            text: Extracted text from PDF
+
+        Returns:
+            Dictionary with automotive metadata
+        """
         auto_metadata = {}
         text_lower = text.lower()
 
@@ -289,6 +319,19 @@ class PDFLoader:
             custom_metadata: Optional[Dict[str, str]] = None,
             extract_tables: bool = True
     ) -> List[Document]:
+        """
+        Process a PDF file and return Langchain documents.
+
+        SIMPLIFIED: Global Dramatiq patch handles all Unicode automatically.
+
+        Args:
+            file_path: Path to the PDF file
+            custom_metadata: Optional custom metadata to add
+            extract_tables: Whether to extract table data
+
+        Returns:
+            List of processed Document objects with automotive metadata
+        """
         # Load the PDF
         documents = self.load_pdf(file_path)
 
@@ -357,6 +400,17 @@ class PDFLoader:
         return final_documents
 
     def extract_tables(self, file_path: str) -> List[Dict[str, any]]:
+        """
+        Extract table data from PDF.
+
+        SIMPLIFIED: Global Dramatiq patch handles Unicode in table content.
+
+        Args:
+            file_path: Path to the PDF file
+
+        Returns:
+            List of table data dictionaries
+        """
         try:
             import camelot
 

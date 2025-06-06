@@ -38,6 +38,21 @@ if redis_password:
 # Create Dramatiq broker
 redis_broker = RedisBroker(**broker_kwargs)
 
+# CRITICAL: Apply Unicode patch BEFORE setting broker
+# This must happen before any actors are imported or registered
+def apply_unicode_fix():
+    """Apply the global Unicode cleaning fix for all Dramatiq actors."""
+    try:
+        from .unicode_actor import patch_dramatiq_unicode_handling
+        patch_dramatiq_unicode_handling()
+        logger.info("✅ Global Unicode cleaning enabled for all Dramatiq tasks")
+    except Exception as e:
+        logger.error(f"❌ Failed to apply Unicode patch: {e}")
+        raise
+
+# Apply the Unicode fix EARLY
+apply_unicode_fix()
+
 # Set the broker as default AFTER Unicode patch is applied
 dramatiq.set_broker(redis_broker)
 

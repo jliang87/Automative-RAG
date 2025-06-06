@@ -1,3 +1,10 @@
+"""
+Simplified background tasks system using job chains with dedicated workers.
+
+This package provides a streamlined background processing system that uses
+event-driven job chains with specialized GPU workers.
+"""
+
 import os
 import logging
 import dramatiq

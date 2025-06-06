@@ -185,7 +185,7 @@ class JobChain:
         }
 
         # Add to waiting queue
-        self.redis.lpush(f"waiting_tasks:{queue_name}", json.dumps(queued_task))
+        self.redis.lpush(f"waiting_tasks:{queue_name}", json.dumps(queued_task, ensure_ascii=False))
         logger.info(f"Queued task {task_name} for job {job_id} in {queue_name}")
 
         # Update job progress to show waiting
@@ -368,7 +368,7 @@ class JobChain:
             "task_name": task_name,
             "started_at": time.time()
         }
-        self.redis.set(f"queue_busy:{queue_name}", json.dumps(busy_info), ex=3600)
+        self.redis.set(f"queue_busy:{queue_name}", json.dumps(busy_info, ensure_ascii=False), ex=3600)
         logger.info(f"Marked queue {queue_name} as busy for job {job_id}")
 
     def _mark_queue_free(self, queue_name: str) -> None:
@@ -440,7 +440,8 @@ class JobChain:
 
     def _save_chain_state(self, job_id: str, chain_state: Dict[str, Any]) -> None:
         """Save chain state with proper UTF-8 encoding."""
-        state_json = json.dumps(chain_state)
+        # CRITICAL: Use ensure_ascii=False for Chinese characters
+        state_json = json.dumps(chain_state, ensure_ascii=False)
         self.redis.set(f"job_chain:{job_id}", state_json, ex=86400)
 
     def _get_chain_state(self, job_id: str) -> Optional[Dict[str, Any]]:
