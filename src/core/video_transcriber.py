@@ -12,17 +12,17 @@ from faster_whisper import WhisperModel
 
 from src.models.schema import DocumentMetadata, DocumentSource
 from src.config.settings import settings
-from src.utils.helpers import (
-    extract_metadata_from_text,
-)
+from src.utils.helpers import extract_metadata_from_text
 
 logger = logging.getLogger(__name__)
+
 
 class VideoTranscriber:
     """
     Unified video transcriber that handles multiple platforms (YouTube, Bilibili, etc.)
     using faster-whisper for CPU-optimized transcription.
-    ENHANCED with comprehensive Unicode handling for Chinese content.
+
+    SIMPLIFIED: Global Dramatiq patch handles all Unicode cleaning automatically.
     """
 
     def __init__(
@@ -30,7 +30,7 @@ class VideoTranscriber:
             output_dir: str = "data/videos",
             whisper_model_size: str = "medium",
             device: Optional[str] = "cpu",
-            num_workers: int = 3  # Number of threads for parallel processing
+            num_workers: int = 3
     ):
         """
         Initialize the video transcriber with CPU-optimized faster-whisper.
@@ -70,11 +70,9 @@ class VideoTranscriber:
                 # Check if using custom model path
                 if hasattr(settings, 'whisper_model_full_path') and settings.whisper_model_full_path and os.path.exists(
                         settings.whisper_model_full_path):
-                    # Load from local path
                     model_path = settings.whisper_model_full_path
                     print(f"Loading faster-whisper model from local path: {model_path}")
                 else:
-                    # Use model name for faster-whisper to download
                     model_path = self.whisper_model_size
 
                 # Initialize the faster-whisper model with CPU optimizations
@@ -82,8 +80,8 @@ class VideoTranscriber:
                     model_path,
                     device="cpu",
                     compute_type="int8",  # Use int8 quantization for CPU efficiency
-                    cpu_threads=self.num_workers,  # Use multiple CPU threads
-                    num_workers=self.num_workers  # Number of workers for parallel processing
+                    cpu_threads=self.num_workers,
+                    num_workers=self.num_workers
                 )
 
                 print(f"faster-whisper model loaded successfully with {self.num_workers} parallel workers")
@@ -230,14 +228,15 @@ class VideoTranscriber:
 
     def get_video_metadata(self, url: str) -> Dict[str, Union[str, int]]:
         """
-        Get metadata from a video using yt-dlp with comprehensive Unicode handling.
-        ENHANCED VERSION: Properly handles Chinese characters and Unicode encoding.
-        FAILS if metadata extraction fails - NO FALLBACKS!
+        Get metadata from a video using yt-dlp.
+
+        SIMPLIFIED: Global Dramatiq patch automatically cleans all Unicode.
+        No manual decoding needed - just extract and validate basic fields.
         """
         try:
             video_id = self.extract_video_id(url)
 
-            # Use UTF-8 encoding explicitly for subprocess
+            # Use UTF-8 encoding for subprocess
             result = subprocess.run([
                 "yt-dlp",
                 "--dump-json",
@@ -248,55 +247,33 @@ class VideoTranscriber:
             if not result.stdout:
                 raise ValueError(f"yt-dlp returned empty output for {url}")
 
-            # Parse JSON with proper UTF-8 handling
+            # Parse JSON - Global patch will clean any escapes automatically
             data = json.loads(result.stdout)
 
-            # Validate that we got essential metadata
+            # Validate essential metadata exists
             if not data.get("title") or not data.get("uploader"):
                 raise ValueError(f"Missing essential metadata (title/uploader) for {url}")
 
-            # CRITICAL FIX: Properly decode Unicode escape sequences
-            def decode_unicode_field(field_value):
-                """Decode Unicode escape sequences in metadata fields"""
-                if not field_value or not isinstance(field_value, str):
-                    return field_value
-
-                try:
-                    # Import Unicode handler
-                    from src.utils.unicode_handler import decode_unicode_escapes
-                    return decode_unicode_escapes(field_value)
-
-                except Exception as e:
-                    logger.warning(f"Failed to decode Unicode in field: {field_value}, error: {e}")
-                    return field_value  # Return original if decoding fails
-
-            # CRITICAL: Don't encode/decode - keep as UTF-8 strings
+            # Extract metadata - no manual Unicode cleaning needed
             metadata = {
-                "title": data.get("title", ""),  # Keep as UTF-8 string
-                "author": data.get("uploader", ""),  # Keep as UTF-8 string
+                "title": data.get("title", ""),
+                "author": data.get("uploader", ""),
                 "published_date": data.get("upload_date"),
                 "video_id": data.get("id", video_id),
                 "url": url,
                 "length": int(data.get("duration", 0)),
                 "views": data.get("view_count", 0),
-                "description": data.get("description", ""),  # Keep as UTF-8 string
+                "description": data.get("description", ""),
             }
 
-            # ENHANCED VALIDATION: Ensure decoded metadata is valid
+            # Basic validation - no need to check for Unicode escapes
             if not metadata["title"] or metadata["title"] in ["", "Unknown Video"]:
-                raise ValueError(f"Title decoding failed or invalid for {url}")
+                raise ValueError(f"Invalid title for {url}")
 
             if not metadata["author"] or metadata["author"] in ["", "Unknown", "Unknown Author"]:
-                raise ValueError(f"Author decoding failed or invalid for {url}")
+                raise ValueError(f"Invalid author for {url}")
 
-            # CRITICAL VALIDATION: Check for remaining Unicode escapes
-            if "\\u" in metadata["title"]:
-                raise ValueError(f"Title still contains Unicode escapes after decoding: {metadata['title']}")
-
-            if "\\u" in metadata["author"]:
-                raise ValueError(f"Author still contains Unicode escapes after decoding: {metadata['author']}")
-
-            logger.info(f"Successfully extracted and decoded metadata for {video_id}")
+            logger.info(f"Successfully extracted metadata for {video_id}")
             logger.info(f"Title: {metadata['title']}")
             logger.info(f"Author: {metadata['author']}")
 
@@ -317,7 +294,7 @@ class VideoTranscriber:
             logger.error(error_msg)
             raise ValueError(error_msg)
 
-    def transcribe_with_whisper(self, media_path: str) -> str:
+    def transcribe_with_whisper(self, media_path: str) -> Tuple[str, any]:
         """
         Transcribe audio or video file using faster-whisper with CPU parallelization.
 
@@ -325,12 +302,8 @@ class VideoTranscriber:
             media_path: Path to the audio or video file
 
         Returns:
-            Transcribed text
+            Tuple of (transcribed text, transcription info)
         """
-        # # Try to free up GPU memory
-        # if self.device.startswith("cuda"):
-        #     torch.cuda.empty_cache()
-
         # Load model if not already loaded
         self._load_whisper_model()
 
@@ -339,23 +312,15 @@ class VideoTranscriber:
         # Use faster-whisper to transcribe
         segments, info = self.whisper_model.transcribe(
             media_path,
-            beam_size=5,  # Larger beam size for better accuracy
-            vad_filter=True,  # Voice activity detection for better segmentation
-            vad_parameters=dict(  # Fine-tuned VAD parameters
-                min_silence_duration_ms=500
-            )
+            beam_size=5,
+            vad_filter=True,
+            vad_parameters=dict(min_silence_duration_ms=500)
         )
 
         all_text = [segment.text for segment in segments]
         transcript = " ".join(all_text)
 
-        # ENHANCED: Apply Unicode decoding to transcript
-        if transcript and "\\u" in transcript:
-            logger.info("Applying Unicode decoding to transcript...")
-            from src.utils.unicode_handler import decode_unicode_escapes
-            transcript = decode_unicode_escapes(transcript)
-
-        # ✅ Convert only if detected language is Chinese
+        # Convert to Simplified Chinese if detected language is Chinese
         if info.language.startswith("zh") and self.chinese_converter:
             print("Detected Chinese. Converting to Simplified Chinese...")
             transcript = self.chinese_converter.convert(transcript)
@@ -368,7 +333,8 @@ class VideoTranscriber:
     ) -> List[Document]:
         """
         Process a video and return Langchain documents using Whisper for transcription.
-        ENHANCED with comprehensive Unicode handling.
+
+        SIMPLIFIED: Global Dramatiq patch handles all Unicode automatically.
 
         Args:
             url: Video URL
@@ -380,17 +346,13 @@ class VideoTranscriber:
         # Detect platform from URL
         platform = self.detect_platform(url)
 
-        # Extract metadata with Unicode handling
+        # Extract metadata - no manual Unicode cleaning needed
         video_metadata = self.get_video_metadata(url)
 
-        # Apply Unicode decoding to custom metadata if provided
-        if custom_metadata:
-            from src.utils.unicode_handler import decode_unicode_in_dict
-            custom_metadata = decode_unicode_in_dict(custom_metadata)
-
-        # Extract automotive metadata using helper function (with Unicode-decoded text)
-        auto_metadata = extract_metadata_from_text(video_metadata.get("title", "") + " " +
-                                                  video_metadata.get("description", ""))
+        # Extract automotive metadata using helper function
+        auto_metadata = extract_metadata_from_text(
+            video_metadata.get("title", "") + " " + video_metadata.get("description", "")
+        )
 
         # Determine the source based on platform
         source = DocumentSource.YOUTUBE if platform == "youtube" else DocumentSource.BILIBILI
@@ -400,10 +362,14 @@ class VideoTranscriber:
             # Extract audio
             media_path = self.extract_audio(url)
 
-            # Transcribe with Whisper (now includes Unicode handling)
+            # Transcribe with Whisper
             transcript_text, info = self.transcribe_with_whisper(media_path)
-            custom_metadata = custom_metadata or {}
+
+            # Add language to custom metadata
+            if custom_metadata is None:
+                custom_metadata = {}
             custom_metadata["language"] = info.language
+
             print(f"Using Whisper transcription for video ID: {video_metadata['video_id']}")
         except Exception as e:
             raise ValueError(f"Error transcribing video with Whisper: {str(e)}")
@@ -411,13 +377,13 @@ class VideoTranscriber:
         if not transcript_text:
             raise ValueError("Transcription failed: no text was generated")
 
-        # Create metadata object with Unicode-safe data
+        # Create metadata object - all data is already clean
         metadata = DocumentMetadata(
             source=source,
             source_id=video_metadata["video_id"],
             url=url,
-            title=video_metadata["title"],  # Already Unicode-decoded
-            author=video_metadata["author"],  # Already Unicode-decoded
+            title=video_metadata["title"],
+            author=video_metadata["author"],
             published_date=video_metadata["published_date"],
             manufacturer=auto_metadata.get("manufacturer"),
             model=custom_metadata.get("model") if custom_metadata else None,
@@ -431,14 +397,11 @@ class VideoTranscriber:
         # Add transcription info to metadata
         metadata.custom_metadata["transcription_method"] = "whisper"
         metadata.custom_metadata["whisper_model"] = self.whisper_model_size
-        metadata.custom_metadata["unicode_processed"] = True  # Flag for tracking
-
-        # Add platform information
         metadata.custom_metadata["platform"] = platform
 
-        # Create document with Unicode-safe content
+        # Create document
         document = Document(
-            page_content=transcript_text,  # Already Unicode-decoded
+            page_content=transcript_text,
             metadata=metadata.dict(),
         )
 
@@ -449,7 +412,6 @@ class VideoTranscriber:
     ) -> Dict[str, Union[List[str], Dict[str, str]]]:
         """
         Process multiple videos in batch using Whisper for transcription.
-        ENHANCED with Unicode handling for all videos.
 
         Args:
             urls: List of Video URLs
@@ -472,8 +434,6 @@ class VideoTranscriber:
             metadata = custom_metadata[i] if custom_metadata else None
             try:
                 documents = self.process_video(url, metadata)
-                # Extract document IDs after they're added to the vector store
-                # This will be handled by the DocumentProcessor that calls this method
                 results[url] = [doc.metadata.get("id", "") for doc in documents]
                 print(f"Successfully processed video {i + 1}/{len(urls)}: {url}")
             except Exception as e:

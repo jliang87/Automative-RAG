@@ -1,8 +1,3 @@
-"""
-Clean background tasks page - src/ui/pages/后台任务.py
-Focus: Individual job tracking, progress, results, management
-"""
-
 import streamlit as st
 import time
 import json
@@ -74,7 +69,11 @@ def format_time(timestamp: float) -> str:
         return "时间格式错误"
 
 def display_job_card(job: Dict[str, Any], context: str, index: int):
-    """Display a job card with progress and actions - FIXED DUPLICATE KEYS"""
+    """
+    Display a job card with progress and actions.
+
+    SIMPLIFIED: No manual Unicode decoding needed - data is already clean.
+    """
     job_id = job.get("job_id", "")
     job_type = job.get("job_type", "")
     status = job.get("status", "")
@@ -94,7 +93,7 @@ def display_job_card(job: Dict[str, Any], context: str, index: int):
 
     config = status_config.get(status, {"icon": "❓", "color": "#808080"})
 
-    # FIXED: Create unique keys with context and index
+    # Create unique keys with context and index
     job_short_id = job_id[:8]
     expand_key = f"expand_{context}_{index}_{job_short_id}"
 
@@ -116,7 +115,6 @@ def display_job_card(job: Dict[str, Any], context: str, index: int):
             st.caption(f"创建: {format_time(created_at)}")
 
         with col4:
-            # FIXED: Unique key for detail button
             if st.button("📄 详情", key=f"detail_{context}_{index}_{job_short_id}"):
                 # Toggle the expansion state for this specific job
                 if expand_key not in st.session_state:
@@ -137,9 +135,8 @@ def display_job_card(job: Dict[str, Any], context: str, index: int):
                 st.progress(0.0)
                 st.caption("处理中...")
 
-        # FIXED: Show details inline with UNIQUE KEYS
+        # Show details inline with unique keys
         if st.session_state.get(expand_key, False):
-            # Use a simple container instead of expander
             st.markdown("---")
             st.markdown("### 📋 任务详情")
 
@@ -183,7 +180,7 @@ def display_job_card(job: Dict[str, Any], context: str, index: int):
                 result = job_detail.get('result', {})
 
                 if metadata and isinstance(metadata, dict):
-                    # Basic job metadata
+                    # Basic job metadata - no decoding needed, data is already clean
                     if metadata.get('url'):
                         st.write(f"**🔗 URL:** {metadata['url']}")
                     if metadata.get('query'):
@@ -203,18 +200,7 @@ def display_job_card(job: Dict[str, Any], context: str, index: int):
                 if job_detail.get('status') == 'completed':
                     if result and isinstance(result, dict):
 
-                        # Helper function to decode Unicode escape sequences
-                        def decode_unicode(text):
-                            """Decode Unicode escape sequences in text"""
-                            if isinstance(text, str):
-                                try:
-                                    # Handle Unicode escape sequences like \\u6b3e
-                                    return text.encode('utf-8').decode('unicode_escape')
-                                except:
-                                    return text
-                            return text
-
-                        # ENHANCED: Show video metadata with proper Unicode handling
+                        # Show video metadata - NO MANUAL UNICODE DECODING NEEDED
                         video_metadata = result.get('video_metadata', {})
 
                         if video_metadata and isinstance(video_metadata, dict):
@@ -222,14 +208,11 @@ def display_job_card(job: Dict[str, Any], context: str, index: int):
 
                             video_col1, video_col2 = st.columns(2)
                             with video_col1:
+                                # Data is already clean thanks to global patch
                                 if video_metadata.get('title'):
-                                    # Decode Unicode title
-                                    title = decode_unicode(video_metadata['title'])
-                                    st.write(f"**标题:** {title}")
+                                    st.write(f"**标题:** {video_metadata['title']}")
                                 if video_metadata.get('author'):
-                                    # Decode Unicode author
-                                    author = decode_unicode(video_metadata['author'])
-                                    st.write(f"**作者:** {author}")
+                                    st.write(f"**作者:** {video_metadata['author']}")
                                 if video_metadata.get('published_date'):
                                     pub_date = video_metadata['published_date']
                                     # Format date if it's in YYYYMMDD format
@@ -260,13 +243,12 @@ def display_job_card(job: Dict[str, Any], context: str, index: int):
                                     lang_display = {"zh": "中文", "en": "英文"}.get(language, language)
                                     st.write(f"**语言:** {lang_display}")
 
-                            # Show description if available
+                            # Show description if available - no decoding needed
                             if video_metadata.get('description') and video_metadata['description'] != '-':
-                                description = decode_unicode(video_metadata['description'])
+                                description = video_metadata['description']
                                 st.write("**📝 视频描述:**")
 
                                 if len(description) > 300:
-                                    # FIXED: Unique key for description toggle
                                     desc_key = f"show_desc_{context}_{index}_{job_short_id}"
                                     if desc_key not in st.session_state:
                                         st.session_state[desc_key] = False
@@ -288,15 +270,12 @@ def display_job_card(job: Dict[str, Any], context: str, index: int):
                                     st.text_area("视频描述", description, height=80, disabled=True,
                                                  key=f"desc_{context}_{index}_{job_short_id}")
 
-                        # ENHANCED: Show transcription with better formatting
+                        # Show transcription with better formatting - no decoding needed
                         transcript = result.get('transcript', '')
                         if transcript:
                             st.markdown("**🎤 转录内容:**")
 
-                            # Decode Unicode in transcript
-                            transcript = decode_unicode(transcript)
-
-                            # FIXED: Unique key for transcript toggle
+                            # Data is already clean from global patch
                             transcript_key = f"show_transcript_{context}_{index}_{job_short_id}"
                             if transcript_key not in st.session_state:
                                 st.session_state[transcript_key] = False
@@ -334,13 +313,12 @@ def display_job_card(job: Dict[str, Any], context: str, index: int):
                                     key=f"transcript_{context}_{index}_{job_short_id}"
                                 )
 
-                        # Document processing results - ENHANCED
+                        # Document processing results - no decoding needed
                         if 'document_count' in result:
                             st.success(f"✅ 成功生成 {result['document_count']} 个文档片段")
 
                             documents = result.get('documents', [])
                             if documents:
-                                # FIXED: Unique key for documents toggle
                                 show_docs_key = f"show_docs_{context}_{index}_{job_short_id}"
 
                                 if show_docs_key not in st.session_state:
@@ -361,7 +339,7 @@ def display_job_card(job: Dict[str, Any], context: str, index: int):
                                         with st.container():
                                             st.markdown(f"**片段 {i + 1}/{len(documents)}:**")
 
-                                            # Enhanced metadata display
+                                            # Enhanced metadata display - no decoding needed
                                             doc_metadata = doc.get('metadata', {})
                                             if doc_metadata:
                                                 meta_cols = st.columns(4)
@@ -380,21 +358,17 @@ def display_job_card(job: Dict[str, Any], context: str, index: int):
                                                     if doc_metadata.get('total_chunks'):
                                                         st.caption(f"📊 总片段: {doc_metadata['total_chunks']}")
 
-                                                # Video-specific metadata from document
+                                                # Video-specific metadata - data is already clean
                                                 if doc_metadata.get('title'):
-                                                    title = decode_unicode(doc_metadata['title'])
-                                                    st.caption(f"📺 标题: {title}")
+                                                    st.caption(f"📺 标题: {doc_metadata['title']}")
                                                 if doc_metadata.get('author'):
-                                                    author = decode_unicode(doc_metadata['author'])
-                                                    st.caption(f"👤 作者: {author}")
+                                                    st.caption(f"👤 作者: {doc_metadata['author']}")
                                                 if doc_metadata.get('url'):
                                                     st.caption(f"🔗 [视频链接]({doc_metadata['url']})")
 
-                                            # Show content
+                                            # Show content - no decoding needed
                                             content = doc.get('content', '')
                                             if content:
-                                                content = decode_unicode(content)
-
                                                 if len(content) > 500:
                                                     st.text_area(
                                                         f"内容片段 {i + 1}",
@@ -404,7 +378,6 @@ def display_job_card(job: Dict[str, Any], context: str, index: int):
                                                         disabled=True
                                                     )
 
-                                                    # FIXED: Unique key for full content toggle
                                                     full_key = f"show_full_{context}_{index}_{job_short_id}_{i}"
                                                     if full_key not in st.session_state:
                                                         st.session_state[full_key] = False
@@ -433,11 +406,12 @@ def display_job_card(job: Dict[str, Any], context: str, index: int):
 
                                             st.markdown("---")
 
-                        # Query results (unchanged)
+                        # Query results - clean up LLM artifacts only
                         if 'answer' in result:
                             st.write("**❓ 查询答案:**")
                             answer = result['answer']
-                            # Clean up LLM thinking artifacts
+
+                            # Clean up LLM thinking artifacts (not Unicode issues)
                             if "</think>" in answer:
                                 answer = answer.split("</think>")[-1].strip()
                             if answer.startswith("<think>"):
@@ -463,7 +437,7 @@ def display_job_card(job: Dict[str, Any], context: str, index: int):
                     if error:
                         st.error(f"❌ **错误:** {error}")
 
-                # Quick actions with FIXED UNIQUE KEYS
+                # Quick actions with unique keys
                 action_col1, action_col2 = st.columns(2)
                 with action_col1:
                     if st.button("🔄 刷新", key=f"refresh_{context}_{index}_{job_short_id}"):
@@ -494,7 +468,7 @@ with tab1:  # Processing jobs
         st.write(f"**当前有 {len(processing_jobs)} 个任务正在处理**")
 
         for i, job in enumerate(processing_jobs):
-            display_job_card(job, f"processing", i)  # ADDED index parameter
+            display_job_card(job, f"processing", i)
 
         # Auto-refresh option for processing jobs
         if st.checkbox("⚡ 自动刷新 (5秒)", key="auto_refresh_processing"):
@@ -510,7 +484,7 @@ with tab2:  # Completed jobs
         st.write(f"**已完成 {len(completed_jobs)} 个任务**")
 
         for i, job in enumerate(completed_jobs):
-            display_job_card(job, f"completed", i)  # ADDED index parameter
+            display_job_card(job, f"completed", i)
     else:
         st.info("📭 暂无已完成的任务")
 
@@ -518,7 +492,7 @@ with tab3:  # All jobs
     st.write(f"**显示最近 {len(jobs)} 个任务**")
 
     for i, job in enumerate(jobs):
-        display_job_card(job, f"all", i)  # ADDED index parameter
+        display_job_card(job, f"all", i)
 
 
 # === PAGE ACTIONS ===

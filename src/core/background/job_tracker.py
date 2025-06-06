@@ -138,13 +138,6 @@ class JobTracker:
 
         try:
             progress_data = json.loads(progress_data_json)
-
-            # Apply Unicode decoding to message if needed
-            message = progress_data.get("message", "")
-            if message and "\\u" in message:
-                from src.utils.unicode_handler import decode_unicode_escapes
-                progress_data["message"] = decode_unicode_escapes(message)
-
             return progress_data
         except:
             return {"progress": 0, "message": "Invalid progress data", "timestamp": time.time()}
@@ -188,24 +181,6 @@ class JobTracker:
             # Filter by job type if specified
             if job_type and job_data.get("job_type") != job_type:
                 continue
-
-            # Parse JSON metadata back to dict if it exists
-            if "metadata" in job_data and job_data["metadata"]:
-                try:
-                    metadata = json.loads(job_data["metadata"])
-                    from src.utils.unicode_handler import decode_unicode_in_json_result
-                    job_data["metadata"] = decode_unicode_in_json_result(metadata)
-                except:
-                    pass
-
-            # Parse result with Unicode decoding if it's JSON
-            if "result" in job_data and job_data["result"] and isinstance(job_data["result"], str):
-                try:
-                    parsed_result = json.loads(job_data["result"])
-                    from src.utils.unicode_handler import decode_unicode_in_json_result
-                    job_data["result"] = decode_unicode_in_json_result(parsed_result)
-                except:
-                    pass
 
             jobs.append(job_data)
 

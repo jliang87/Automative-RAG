@@ -1,11 +1,5 @@
-import os
 import re
-import time
-import uuid
-from typing import Any, Dict, List, Optional, Tuple, Union
-import json
-from datetime import datetime
-
+from typing import Any, Dict, Optional
 
 __all__ = [
     "clean_text",
@@ -17,7 +11,9 @@ __all__ = [
 def clean_text(text: str) -> str:
     """
     Clean text by removing extra whitespace, newlines, etc.
-    ENHANCED with Unicode handling.
+
+    SIMPLIFIED: Global Dramatiq patch handles Unicode automatically.
+    This function only handles basic text cleanup.
 
     Args:
         text: Text to clean
@@ -25,13 +21,8 @@ def clean_text(text: str) -> str:
     Returns:
         Cleaned text
     """
-    # Apply Unicode decoding if needed
-    if isinstance(text, str) and "\\u" in text:
-        try:
-            from src.utils.unicode_handler import decode_unicode_escapes
-            text = decode_unicode_escapes(text)
-        except ImportError:
-            pass  # Unicode handler not available
+    if not isinstance(text, str):
+        return text
 
     # Replace multiple whitespace with single space
     text = re.sub(r'\s+', ' ', text)
@@ -39,14 +30,14 @@ def clean_text(text: str) -> str:
     # Strip whitespace from beginning and end
     text = text.strip()
 
-    # Replace common Unicode characters
+    # Replace common Unicode characters that might still appear
     replacements = {
         '\u2018': "'",  # Left single quotation mark
         '\u2019': "'",  # Right single quotation mark
         '\u201c': '"',  # Left double quotation mark
         '\u201d': '"',  # Right double quotation mark
         '\u2013': '-',  # En dash
-        '\u2014': '--', # Em dash
+        '\u2014': '--',  # Em dash
         '\u00a0': ' ',  # Non-breaking space
     }
 
@@ -59,7 +50,6 @@ def clean_text(text: str) -> str:
 def extract_year_from_text(text: str) -> Optional[int]:
     """
     Extract a year (between 1900 and 2100) from text.
-    ENHANCED with Unicode handling.
 
     Args:
         text: Text to search for year
@@ -67,13 +57,8 @@ def extract_year_from_text(text: str) -> Optional[int]:
     Returns:
         Year as integer or None if not found
     """
-    # Apply Unicode decoding if needed
-    if isinstance(text, str) and "\\u" in text:
-        try:
-            from src.utils.unicode_handler import decode_unicode_escapes
-            text = decode_unicode_escapes(text)
-        except ImportError:
-            pass
+    if not isinstance(text, str):
+        return None
 
     year_match = re.search(r'(19\d{2}|20\d{2})', text)
     if year_match:
@@ -83,8 +68,10 @@ def extract_year_from_text(text: str) -> Optional[int]:
 
 def extract_metadata_from_text(text: str) -> Dict[str, Any]:
     """
-    Extract automotive metadata from text with comprehensive Unicode handling.
-    ENHANCED to handle both Chinese and English automotive terms.
+    Extract automotive metadata from text.
+
+    SIMPLIFIED: Global Dramatiq patch ensures text is already properly decoded.
+    Focus on pattern matching without Unicode handling complexity.
 
     Args:
         text: Text to extract metadata from
@@ -92,13 +79,8 @@ def extract_metadata_from_text(text: str) -> Dict[str, Any]:
     Returns:
         Dictionary of extracted metadata
     """
-    # Apply Unicode decoding if needed
-    if isinstance(text, str) and "\\u" in text:
-        try:
-            from src.utils.unicode_handler import decode_unicode_escapes
-            text = decode_unicode_escapes(text)
-        except ImportError:
-            pass
+    if not isinstance(text, str):
+        return {}
 
     metadata = {}
     text_lower = text.lower()
@@ -108,7 +90,7 @@ def extract_metadata_from_text(text: str) -> Dict[str, Any]:
     if year:
         metadata["year"] = year
 
-    # ENHANCED: Chinese and English manufacturer detection
+    # Chinese and English manufacturer detection
     manufacturers = [
         # Chinese names with English alternatives
         ("宝马", "BMW"), ("奔驰", "Mercedes-Benz"), ("奥迪", "Audi"),
@@ -132,14 +114,14 @@ def extract_metadata_from_text(text: str) -> Dict[str, Any]:
     for chinese_name, english_name in manufacturers:
         # Check for Chinese name first
         if chinese_name in text:
-            metadata["manufacturer"] = chinese_name  # Prefer Chinese name
+            metadata["manufacturer"] = chinese_name
             break
         # Check for English name (case insensitive)
         elif english_name.lower() in text_lower:
             metadata["manufacturer"] = english_name
             break
 
-    # ENHANCED: Chinese category detection
+    # Chinese category detection
     categories = {
         "轿车": ["轿车", "sedan", "saloon"],
         "SUV": ["suv", "越野车", "运动型多用途车", "sport utility vehicle", "crossover"],
@@ -160,7 +142,7 @@ def extract_metadata_from_text(text: str) -> Dict[str, Any]:
         if "category" in metadata:
             break
 
-    # ENHANCED: Chinese engine type detection
+    # Chinese engine type detection
     engine_types = {
         "汽油": ["汽油", "gasoline", "petrol", "gas engine", "汽油机"],
         "柴油": ["柴油", "diesel", "柴油机"],
@@ -177,7 +159,7 @@ def extract_metadata_from_text(text: str) -> Dict[str, Any]:
         if "engine_type" in metadata:
             break
 
-    # ENHANCED: Chinese transmission type detection
+    # Chinese transmission type detection
     transmission_types = {
         "自动": ["自动", "automatic", "auto", "自动挡", "自动变速箱"],
         "手动": ["手动", "manual", "stick", "手动挡", "手动变速箱", "manual transmission"],
@@ -193,8 +175,7 @@ def extract_metadata_from_text(text: str) -> Dict[str, Any]:
         if "transmission" in metadata:
             break
 
-    # ENHANCED: Extract Chinese model names (common patterns)
-    # This is more complex for Chinese models, so we use pattern matching
+    # Extract Chinese model names (common patterns)
     if "manufacturer" in metadata:
         manufacturer = metadata["manufacturer"]
 
@@ -205,7 +186,6 @@ def extract_metadata_from_text(text: str) -> Dict[str, Any]:
             "奥迪": [r"(A[1-8]|Q[2-8]|TT|R8)", r"(A[1-8]|Q[2-8]|TT|R8)"],
             "丰田": [r"(凯美瑞|卡罗拉|汉兰达|普拉多|陆地巡洋舰)", r"(Camry|Corolla|Highlander|Prado|Land Cruiser)"],
             "本田": [r"(雅阁|思域|CR-V|奥德赛)", r"(Accord|Civic|CR-V|Odyssey)"],
-            # Add more patterns as needed
         }
 
         if manufacturer in model_patterns:

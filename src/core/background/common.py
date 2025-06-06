@@ -8,7 +8,8 @@ import dramatiq
 from dramatiq.brokers.redis import RedisBroker
 from dramatiq.middleware.callbacks import Callbacks
 from dramatiq.middleware.age_limit import AgeLimit
-from dramatiq.middleware.retries import TimeLimit, Retries
+from dramatiq.middleware.time_limit import TimeLimit  # FIXED: Correct import path
+from dramatiq.middleware.retries import Retries  # FIXED: Separate import
 from dramatiq.results import Results
 from dramatiq.results.backends import RedisBackend as ResultsRedisBackend
 from datetime import datetime
@@ -92,7 +93,7 @@ class JobStatus:
 # Add middleware to broker
 redis_broker.add_middleware(Callbacks())
 redis_broker.add_middleware(AgeLimit())
-redis_broker.add_middleware(TimeLimit(time_limit=300_000))  # 5 minutes (you had wrong import)
+redis_broker.add_middleware(TimeLimit(time_limit=300_000))  # 5 minutes - FIXED import
 redis_broker.add_middleware(Retries(max_retries=2))
 redis_broker.add_middleware(Results(backend=results_backend))
 

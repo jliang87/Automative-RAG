@@ -1,9 +1,3 @@
-"""
-Simplified upload page - src/ui/pages/数据摄取.py
-Clean upload interface - jobs auto-queue, no capability checks needed
-FIXED VERSION with navigation outside success blocks
-"""
-
 import streamlit as st
 import json
 from src.ui.api_client import api_request
@@ -145,7 +139,7 @@ with tab2:
         with st.spinner("正在上传和处理PDF文件..."):
             job_id = submit_upload("pdf", {
                 "data": {
-                    "metadata": json.dumps(metadata) if metadata else None,
+                    "metadata": json.dumps(metadata, ensure_ascii=False) if metadata else None,
                     "use_ocr": "true" if use_ocr else "false",
                     "extract_tables": "true" if extract_tables else "false"
                 },

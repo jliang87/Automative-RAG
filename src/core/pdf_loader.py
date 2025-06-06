@@ -12,6 +12,13 @@ from src.models.schema import DocumentMetadata, DocumentSource
 
 
 class PDFLoader:
+    """
+    PDF loader with OCR support for scanned documents.
+
+    SIMPLIFIED: Global Dramatiq patch handles all Unicode cleaning automatically.
+    No manual Unicode decoding needed anywhere in the pipeline.
+    """
+
     def __init__(
             self,
             chunk_size: int = 1000,
@@ -54,7 +61,7 @@ class PDFLoader:
             # Initialize PaddleOCR with GPU support and multilingual capability
             self.ocr_model = PaddleOCR(
                 use_angle_cls=True,
-                lang=self.ocr_languages,  # This will be "en+ch_doc"
+                lang=self.ocr_languages,
                 use_gpu=False,
                 show_log=False
             )
@@ -98,7 +105,9 @@ class PDFLoader:
 
     def _apply_ocr(self, file_path: str, original_documents: List[Document]) -> List[Document]:
         """
-        Apply OCR to a PDF file with comprehensive Unicode handling.
+        Apply OCR to a PDF file.
+
+        SIMPLIFIED: Global Dramatiq patch handles Unicode cleaning automatically.
 
         Args:
             file_path: Path to the PDF file
@@ -111,7 +120,6 @@ class PDFLoader:
             import fitz  # PyMuPDF
             import numpy as np
             from PIL import Image
-            from src.utils.unicode_handler import decode_unicode_escapes
 
             ocr_documents = []
 
@@ -131,36 +139,25 @@ class PDFLoader:
                 # Apply OCR
                 result = self.ocr_model.ocr(img_np, cls=True)
 
-                # ENHANCED: Extract and clean OCR text with Unicode handling
+                # Extract OCR text - no manual Unicode cleaning needed
                 text = ""
                 if result[0]:
                     for line in result[0]:
                         line_text = line[1][0]
 
-                        # CRITICAL FIX: Apply Unicode decoding to OCR output
+                        # Basic OCR cleaning only
                         if isinstance(line_text, str):
-                            # PaddleOCR sometimes returns Unicode escapes
-                            line_text = decode_unicode_escapes(line_text)
-
-                            # Additional OCR-specific cleaning
                             line_text = self._clean_ocr_text(line_text)
 
                         text += line_text + "\n"
 
-                # VALIDATION: Check for remaining Unicode escapes
-                if "\\u" in text:
-                    print(f"Warning: Unicode escapes still present in OCR text for page {i + 1}")
-                    # Apply additional decoding attempt
-                    text = decode_unicode_escapes(text)
-
-                # Create document with cleaned text
+                # Create document with OCR text
                 ocr_doc = Document(
                     page_content=text,
                     metadata={
                         **original_documents[i].metadata,
                         "ocr_applied": True,
                         "page_number": i + 1,
-                        "ocr_unicode_cleaned": True  # Flag for tracking
                     }
                 )
 
@@ -169,23 +166,13 @@ class PDFLoader:
             return ocr_documents
 
         except Exception as e:
-            print(f"OCR with Unicode handling failed: {str(e)}. Falling back to original documents.")
+            print(f"OCR failed: {str(e)}. Falling back to original documents.")
             return original_documents
 
     def _clean_ocr_text(self, text: str) -> str:
-        """Clean OCR-specific artifacts and encoding issues"""
+        """Clean OCR-specific artifacts (not Unicode - that's handled by global patch)"""
         if not text:
             return text
-
-        # Common OCR artifacts with Chinese text
-        ocr_fixes = {
-            # Common OCR misreads for Chinese characters
-            # Add specific fixes as needed based on your OCR results
-        }
-
-        # Apply OCR fixes
-        for old, new in ocr_fixes.items():
-            text = text.replace(old, new)
 
         # Remove excessive whitespace that OCR sometimes introduces
         text = re.sub(r'\s+', ' ', text)
@@ -195,7 +182,9 @@ class PDFLoader:
 
     def extract_automotive_metadata(self, text: str) -> Dict[str, any]:
         """
-        Extract automotive-specific metadata from PDF text with Unicode handling.
+        Extract automotive-specific metadata from PDF text.
+
+        SIMPLIFIED: Global Dramatiq patch ensures text is already properly decoded.
 
         Args:
             text: Extracted text from PDF
@@ -203,17 +192,10 @@ class PDFLoader:
         Returns:
             Dictionary with automotive metadata
         """
-        from src.utils.unicode_handler import decode_unicode_escapes
-
-        # CRITICAL FIX: Decode Unicode escapes before metadata extraction
-        if isinstance(text, str) and "\\u" in text:
-            print("Decoding Unicode escapes in PDF text before metadata extraction")
-            text = decode_unicode_escapes(text)
-
         auto_metadata = {}
         text_lower = text.lower()
 
-        # ENHANCED: Chinese manufacturer patterns with proper Unicode
+        # Chinese manufacturer patterns
         chinese_manufacturer_patterns = [
             (r"宝马|bmw", "宝马"),
             (r"奔驰|mercedes|mercedes-benz", "奔驰"),
@@ -245,7 +227,7 @@ class PDFLoader:
                 auto_metadata["manufacturer"] = manufacturer
                 break
 
-        # ENHANCED: Chinese model patterns with proper Unicode
+        # Chinese model patterns
         chinese_model_patterns = [
             # BMW models
             (r"[1-8]系|X[1-7]|i[3-8]|Z4", "宝马"),
@@ -269,7 +251,7 @@ class PDFLoader:
                         auto_metadata["model"] = match.group(0)
                         break
 
-        # ENHANCED: Chinese category detection with proper Unicode
+        # Chinese category detection
         chinese_categories = [
             (r"轿车|sedan|saloon", "轿车"),
             (r"suv|越野车|运动型多用途车|sport utility vehicle", "SUV"),
@@ -287,7 +269,7 @@ class PDFLoader:
                 auto_metadata["category"] = category
                 break
 
-        # ENHANCED: Chinese engine type detection with proper Unicode
+        # Chinese engine type detection
         chinese_engine_types = [
             (r"汽油|gasoline|petrol|gas engine|汽油机", "汽油"),
             (r"柴油|diesel|柴油机", "柴油"),
@@ -301,7 +283,7 @@ class PDFLoader:
                 auto_metadata["engine_type"] = engine_type
                 break
 
-        # ENHANCED: Chinese transmission detection with proper Unicode
+        # Chinese transmission detection
         chinese_transmissions = [
             (r"自动|automatic|auto|自动挡|自动变速箱", "自动"),
             (r"手动|manual|stick|手动挡|手动变速箱|manual transmission", "手动"),
@@ -314,7 +296,7 @@ class PDFLoader:
                 auto_metadata["transmission"] = transmission
                 break
 
-        # ENHANCED: Year extraction with validation
+        # Year extraction with validation
         year_patterns = [
             r"(\d{4})年",  # Chinese year format
             r"(20[0-9]{2})款",  # Model year format
@@ -338,7 +320,9 @@ class PDFLoader:
             extract_tables: bool = True
     ) -> List[Document]:
         """
-        Process a PDF file and return Langchain documents with comprehensive Unicode handling.
+        Process a PDF file and return Langchain documents.
+
+        SIMPLIFIED: Global Dramatiq patch handles all Unicode automatically.
 
         Args:
             file_path: Path to the PDF file
@@ -348,13 +332,6 @@ class PDFLoader:
         Returns:
             List of processed Document objects with automotive metadata
         """
-        from src.utils.unicode_handler import decode_unicode_in_dict, decode_unicode_escapes
-
-        # CRITICAL FIX: Apply Unicode decoding to custom metadata
-        if custom_metadata and isinstance(custom_metadata, dict):
-            print("Applying Unicode decoding to custom metadata")
-            custom_metadata = decode_unicode_in_dict(custom_metadata)
-
         # Load the PDF
         documents = self.load_pdf(file_path)
 
@@ -362,21 +339,11 @@ class PDFLoader:
         processed_documents = []
 
         for i, doc in enumerate(documents):
-            # CRITICAL FIX: Apply Unicode decoding to document content
+            # Content is already clean thanks to global patch
             content = doc.page_content
-            if isinstance(content, str) and "\\u" in content:
-                print(f"Applying Unicode decoding to PDF content for page {i + 1}")
-                content = decode_unicode_escapes(content)
 
-            # Extract automotive metadata with Unicode handling
+            # Extract automotive metadata
             auto_metadata = self.extract_automotive_metadata(content)
-
-            # Clean and enhance existing metadata
-            existing_metadata = doc.metadata.copy()
-
-            # CRITICAL FIX: Apply Unicode decoding to existing metadata
-            if existing_metadata:
-                existing_metadata = decode_unicode_in_dict(existing_metadata)
 
             # Create comprehensive metadata
             enhanced_metadata = {
@@ -388,28 +355,18 @@ class PDFLoader:
                 "file_path": file_path,
 
                 # Merge with existing metadata
-                **existing_metadata,
+                **doc.metadata,
 
                 # Add automotive metadata
                 **auto_metadata,
 
                 # Add custom metadata if provided
                 **(custom_metadata or {}),
-
-                # Processing flags
-                "unicode_processed": True,
-                "metadata_extracted": True,
             }
-
-            # FINAL VALIDATION: Ensure no Unicode escapes remain in metadata
-            for key, value in enhanced_metadata.items():
-                if isinstance(value, str) and "\\u" in value:
-                    print(f"Warning: Unicode escapes found in metadata field '{key}': {value}")
-                    enhanced_metadata[key] = decode_unicode_escapes(value)
 
             # Create enhanced document
             enhanced_doc = Document(
-                page_content=content,  # Already Unicode-decoded
+                page_content=content,
                 metadata=enhanced_metadata
             )
 
@@ -439,12 +396,14 @@ class PDFLoader:
                 # Keep document as-is if it's not too large
                 final_documents.append(doc)
 
-        print(f"PDF processing completed: {len(final_documents)} documents with validated Unicode metadata")
+        print(f"PDF processing completed: {len(final_documents)} documents")
         return final_documents
 
     def extract_tables(self, file_path: str) -> List[Dict[str, any]]:
         """
-        Extract table data from PDF with Unicode handling.
+        Extract table data from PDF.
+
+        SIMPLIFIED: Global Dramatiq patch handles Unicode in table content.
 
         Args:
             file_path: Path to the PDF file
@@ -454,7 +413,6 @@ class PDFLoader:
         """
         try:
             import camelot
-            from src.utils.unicode_handler import decode_unicode_escapes
 
             # Extract tables using camelot
             tables = camelot.read_pdf(file_path, pages='all')
@@ -464,22 +422,17 @@ class PDFLoader:
                 # Convert table to dictionary format
                 df = table.df
 
-                # CRITICAL FIX: Apply Unicode decoding to table content
-                for col in df.columns:
-                    df[col] = df[col].apply(lambda x: decode_unicode_escapes(str(x)) if isinstance(x, str) and "\\u" in x else x)
-
                 table_dict = {
                     "table_id": i,
                     "page": table.page,
                     "accuracy": table.accuracy,
                     "data": df.to_dict('records'),
                     "headers": list(df.columns),
-                    "unicode_processed": True
                 }
 
                 table_data.append(table_dict)
 
-            print(f"Extracted {len(table_data)} tables with Unicode processing")
+            print(f"Extracted {len(table_data)} tables")
             return table_data
 
         except ImportError:
@@ -491,7 +444,7 @@ class PDFLoader:
 
     def get_pdf_info(self, file_path: str) -> Dict[str, any]:
         """
-        Get PDF file information with Unicode handling.
+        Get PDF file information.
 
         Args:
             file_path: Path to the PDF file
@@ -501,23 +454,15 @@ class PDFLoader:
         """
         try:
             import fitz
-            from src.utils.unicode_handler import decode_unicode_escapes
 
             pdf = fitz.open(file_path)
             metadata = pdf.metadata
-
-            # CRITICAL FIX: Apply Unicode decoding to PDF metadata
-            if metadata:
-                for key, value in metadata.items():
-                    if isinstance(value, str) and "\\u" in value:
-                        metadata[key] = decode_unicode_escapes(value)
 
             pdf_info = {
                 "file_path": file_path,
                 "file_size": os.path.getsize(file_path),
                 "page_count": pdf.page_count,
                 "metadata": metadata,
-                "unicode_processed": True
             }
 
             pdf.close()

@@ -2,7 +2,6 @@ import uuid
 from typing import Dict, List, Optional, Any
 
 from fastapi import APIRouter, Depends, HTTPException
-from src.utils.unicode_handler import decode_unicode_in_dict
 import logging
 import numpy as np
 
@@ -111,10 +110,6 @@ async def get_query_result(job_id: str) -> Optional[QueryResponse]:
                         cleaned_metadata[key] = int(value)
                     elif isinstance(value, np.ndarray):
                         cleaned_metadata[key] = value.tolist()
-                    elif isinstance(value, str):
-                        # CRITICAL FIX: Decode Unicode escape sequences
-                        from src.utils.unicode_handler import decode_unicode_escapes
-                        cleaned_metadata[key] = decode_unicode_escapes(value)
                     else:
                         cleaned_metadata[key] = value
 

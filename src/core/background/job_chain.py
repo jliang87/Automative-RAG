@@ -54,11 +54,6 @@ class JobChain:
         if not workflow:
             raise ValueError(f"Unknown job type: {job_type}")
 
-        # Apply Unicode decoding to initial data
-        from src.utils.unicode_handler import decode_unicode_in_dict
-        if isinstance(initial_data, dict):
-            initial_data = decode_unicode_in_dict(initial_data)
-
         # Store the job chain state
         chain_state = {
             "job_id": job_id,
