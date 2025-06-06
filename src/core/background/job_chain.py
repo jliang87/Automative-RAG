@@ -464,8 +464,6 @@ job_chain = JobChain()
 # ENHANCED TASK DEFINITIONS WITH COMPREHENSIVE UNICODE SUPPORT
 # ==============================================================================
 
-# Add this debug logging to your download_video_task in job_chain.py
-
 @dramatiq.actor(queue_name="cpu_tasks", store_results=True, max_retries=2)
 def download_video_task(job_id: str, url: str, metadata: Optional[Dict] = None):
     """Download video - Unicode cleaning happens automatically!"""
@@ -482,16 +480,6 @@ def download_video_task(job_id: str, url: str, metadata: Optional[Dict] = None):
         # Get video metadata - no cleaning needed, parameters are already clean
         try:
             video_metadata = transcriber.get_video_metadata(url)
-
-            # DEBUG: Check Unicode status at each step
-            title = video_metadata.get('title', '')
-            author = video_metadata.get('author', '')
-
-            logger.info(f"UNICODE DEBUG - After yt-dlp extraction:")
-            logger.info(f"  Title repr: {repr(title)}")
-            logger.info(f"  Author repr: {repr(author)}")
-            logger.info(f"  Title has escapes: {'\\u' in title or '\\x' in title}")
-            logger.info(f"  Author has escapes: {'\\u' in author or '\\x' in author}")
 
             logger.info(f"Successfully retrieved video metadata for job {job_id}")
             logger.info(f"Title: {video_metadata.get('title', 'NO_TITLE')}")
@@ -520,15 +508,6 @@ def download_video_task(job_id: str, url: str, metadata: Optional[Dict] = None):
             "custom_metadata": metadata or {}
         }
 
-        # DEBUG: Check Unicode before passing to job tracker
-        import json
-        result_json = json.dumps(download_result, ensure_ascii=False)
-        has_escapes = "\\u" in result_json or "\\x" in result_json
-        logger.info(f"UNICODE DEBUG - Before job tracker update:")
-        logger.info(f"  Result has Unicode escapes: {has_escapes}")
-        if has_escapes:
-            logger.warning(f"  Escapes found in result JSON: {result_json[:200]}...")
-
         # Store the download result in job tracker
         job_tracker.update_job_status(
             job_id,
@@ -536,20 +515,6 @@ def download_video_task(job_id: str, url: str, metadata: Optional[Dict] = None):
             result=download_result,
             stage="download_completed"
         )
-
-        # DEBUG: Check what got stored in Redis
-        stored_job = job_tracker.get_job(job_id, include_progress=False)
-        if stored_job:
-            stored_result = stored_job.get("result", {})
-            if isinstance(stored_result, str):
-                stored_result = json.loads(stored_result)
-
-            stored_metadata = stored_result.get("video_metadata", {})
-            stored_title = stored_metadata.get("title", "")
-
-            logger.info(f"UNICODE DEBUG - After Redis storage:")
-            logger.info(f"  Stored title repr: {repr(stored_title)}")
-            logger.info(f"  Stored title has escapes: {'\\u' in stored_title or '\\x' in stored_title}")
 
         # Trigger the next task
         job_chain.task_completed(job_id, download_result)
