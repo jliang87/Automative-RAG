@@ -1,5 +1,3 @@
-# src/core/background/common.py - Fixed heartbeat section
-
 import os
 import time
 import logging
@@ -10,13 +8,13 @@ import dramatiq
 from dramatiq.brokers.redis import RedisBroker
 from dramatiq.middleware.callbacks import Callbacks
 from dramatiq.middleware.age_limit import AgeLimit
-from dramatiq.middleware.retries import Retries
+from dramatiq.middleware.retries import TimeLimit, Retries
 from dramatiq.results import Results
 from dramatiq.results.backends import RedisBackend as ResultsRedisBackend
 from datetime import datetime
 import threading
 
-# Set up logging
+# Set up logging FIRST
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
@@ -26,7 +24,7 @@ redis_port = int(os.environ.get("REDIS_PORT", "6379"))
 redis_password = os.environ.get("REDIS_PASSWORD", None)
 worker_type = os.environ.get("WORKER_TYPE", "unknown")
 
-# Initialize Redis broker
+# Initialize Redis broker WITHOUT decode_responses (for Dramatiq)
 broker_kwargs = {
     "host": redis_host,
     "port": redis_port,
@@ -36,10 +34,28 @@ broker_kwargs = {
 if redis_password:
     broker_kwargs["password"] = redis_password
 
+# Create Dramatiq broker
 redis_broker = RedisBroker(**broker_kwargs)
+
+# CRITICAL: Apply Unicode patch BEFORE setting broker
+# This must happen before any actors are imported or registered
+def apply_unicode_fix():
+    """Apply the global Unicode cleaning fix for all Dramatiq actors."""
+    try:
+        from .unicode_actor import patch_dramatiq_unicode_handling
+        patch_dramatiq_unicode_handling()
+        logger.info("✅ Global Unicode cleaning enabled for all Dramatiq tasks")
+    except Exception as e:
+        logger.error(f"❌ Failed to apply Unicode patch: {e}")
+        raise
+
+# Apply the Unicode fix EARLY
+apply_unicode_fix()
+
+# Set the broker as default AFTER Unicode patch is applied
 dramatiq.set_broker(redis_broker)
 
-# Create single Redis client instance for our application data with UTF-8 support
+# Create separate Redis client instance for application data with UTF-8 support
 app_redis_kwargs = {
     "host": redis_host,
     "port": redis_port,
@@ -53,13 +69,16 @@ if redis_password:
 # Single instance for application data
 _app_redis_client = redis.Redis(**app_redis_kwargs)
 
-# Create Results backend
+def get_redis_client():
+    """Get the shared Redis client with UTF-8 support for application data."""
+    return _app_redis_client
+
+# Create Results backend using Dramatiq broker client (NOT our UTF-8 client)
 results_backend = ResultsRedisBackend(
-    client=redis_broker.client,
+    client=redis_broker.client,  # Use Dramatiq's client, not our UTF-8 client
     prefix="dramatiq:results",
     ttl=3600000  # 1 hour
 )
-
 
 # Define job status constants
 class JobStatus:
@@ -70,25 +89,16 @@ class JobStatus:
     FAILED = "failed"
     TIMEOUT = "timeout"
 
-
-# Add simplified middleware
+# Add middleware to broker
 redis_broker.add_middleware(Callbacks())
 redis_broker.add_middleware(AgeLimit())
-redis_broker.add_middleware(Retries(max_retries=2))  # Reduced retries
+redis_broker.add_middleware(TimeLimit(time_limit=300_000))  # 5 minutes (you had wrong import)
+redis_broker.add_middleware(Retries(max_retries=2))
 redis_broker.add_middleware(Results(backend=results_backend))
-
-# Set the broker as default
-dramatiq.set_broker(redis_broker)
 
 # Global variables for heartbeat management
 _heartbeat_thread = None
 _heartbeat_stop_event = None
-
-
-def get_redis_client():
-    """Get the shared Redis client with UTF-8 support for application data."""
-    return _app_redis_client
-
 
 def start_worker_heartbeat(worker_id: str):
     """Start an improved worker heartbeat system."""
@@ -143,7 +153,6 @@ def start_worker_heartbeat(worker_id: str):
     except Exception as e:
         logger.error(f"Failed to set up worker heartbeat for {worker_id}: {e}")
 
-
 def stop_worker_heartbeat():
     """Stop the worker heartbeat."""
     global _heartbeat_thread, _heartbeat_stop_event
@@ -154,10 +163,8 @@ def stop_worker_heartbeat():
     if _heartbeat_thread and _heartbeat_thread.is_alive():
         _heartbeat_thread.join(timeout=5)
 
-
 # Simplified worker setup
 from dramatiq.middleware import Middleware
-
 
 class SimpleWorkerSetup(Middleware):
     """Simplified worker setup middleware for dedicated workers."""
@@ -191,7 +198,6 @@ class SimpleWorkerSetup(Middleware):
         """Clean up after worker shutdown."""
         logger.info("Worker shutting down, stopping heartbeat...")
         stop_worker_heartbeat()
-
 
 # Add the worker setup middleware
 redis_broker.add_middleware(SimpleWorkerSetup())

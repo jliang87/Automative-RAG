@@ -200,11 +200,6 @@ class JobChain:
         """Called when a task completes successfully with Unicode preservation."""
         logger.info(f"Task completed for job {job_id}, triggering next task")
 
-        # Apply Unicode decoding to result
-        from src.utils.unicode_handler import decode_unicode_in_dict
-        if isinstance(result, dict):
-            result = decode_unicode_in_dict(result)
-
         # Update chain state
         chain_state = self._get_chain_state(job_id)
         if not chain_state:
@@ -255,7 +250,7 @@ class JobChain:
         job_tracker.update_job_progress(job_id, progress,
                                         f"Completed step {chain_state['current_step']}/{len(chain_state['workflow'])}")
 
-        # Update job tracker with the combined result
+        # Update job tracker with the combined result (now with cleaned Unicode)
         job_tracker.update_job_status(
             job_id,
             "processing",
@@ -264,7 +259,7 @@ class JobChain:
             replace_result=True
         )
 
-        # Save updated state
+        # Save updated chain state
         self._save_chain_state(job_id, chain_state)
 
         # Execute next task
@@ -476,25 +471,49 @@ job_chain = JobChain()
 
 @dramatiq.actor(queue_name="cpu_tasks", store_results=True, max_retries=2)
 def download_video_task(job_id: str, url: str, metadata: Optional[Dict] = None):
-    """Download video with UTF-8 metadata preservation."""
+    """Download video - Unicode cleaning happens automatically!"""
     try:
+        logger.info(f"Downloading video for job {job_id}: {url}")
+
         from src.core.video_transcriber import VideoTranscriber
 
         transcriber = VideoTranscriber()
+
+        # Extract audio
         media_path = transcriber.extract_audio(url)
 
-        # Get UTF-8 metadata (no decoding needed)
-        video_metadata = transcriber.get_video_metadata(url)
+        # Get video metadata - no cleaning needed, parameters are already clean
+        try:
+            video_metadata = transcriber.get_video_metadata(url)
+
+            logger.info(f"Successfully retrieved video metadata for job {job_id}")
+            logger.info(f"Title: {video_metadata.get('title', 'NO_TITLE')}")
+            logger.info(f"Author: {video_metadata.get('author', 'NO_AUTHOR')}")
+
+        except Exception as e:
+            error_msg = f"Failed to extract video metadata: {str(e)}"
+            logger.error(error_msg)
+            job_chain.task_failed(job_id, error_msg)
+            return
+
+        # Validate metadata completeness
+        if not video_metadata.get("title") or video_metadata.get("title") == "Unknown Video":
+            error_msg = f"Extracted metadata is incomplete or invalid for {url}"
+            logger.error(error_msg)
+            job_chain.task_failed(job_id, error_msg)
+            return
+
+        logger.info(f"Video download completed for job {job_id}: {video_metadata['title']}")
 
         download_result = {
             "media_path": media_path,
-            "video_metadata": video_metadata,  # Already UTF-8 strings
+            "video_metadata": video_metadata,
             "download_completed_at": time.time(),
             "url": url,
             "custom_metadata": metadata or {}
         }
 
-        # Store with UTF-8 preservation
+        # Store the download result in job tracker
         job_tracker.update_job_status(
             job_id,
             "processing",
@@ -502,15 +521,18 @@ def download_video_task(job_id: str, url: str, metadata: Optional[Dict] = None):
             stage="download_completed"
         )
 
+        # Trigger the next task
         job_chain.task_completed(job_id, download_result)
 
     except Exception as e:
-        job_chain.task_failed(job_id, str(e))
+        error_msg = f"Video download failed for job {job_id}: {str(e)}"
+        logger.error(error_msg)
+        job_chain.task_failed(job_id, error_msg)
 
 
 @dramatiq.actor(queue_name="transcription_tasks", store_results=True, max_retries=2)
 def transcribe_video_task(job_id: str, media_path: str):
-    """Transcribe video with ENHANCED Unicode handling for vector store"""
+    """Transcribe video - Unicode cleaning happens automatically!"""
     try:
         logger.info(f"Transcribing video for job {job_id}: {media_path}")
 
@@ -518,7 +540,6 @@ def transcribe_video_task(job_id: str, media_path: str):
         from langchain_core.documents import Document
         from langchain_text_splitters import RecursiveCharacterTextSplitter
         from src.config.settings import settings
-        from src.utils.unicode_handler import decode_unicode_in_dict, decode_unicode_escapes, validate_unicode_cleaning
 
         # Get the preloaded Whisper model
         whisper_model = get_whisper_model()
@@ -541,11 +562,6 @@ def transcribe_video_task(job_id: str, media_path: str):
             job_chain.task_failed(job_id, error_msg)
             return
 
-        # Apply Unicode decoding to transcript
-        if transcript and "\\u" in transcript:
-            logger.info("Applying Unicode decoding to transcript...")
-            transcript = decode_unicode_escapes(transcript)
-
         # Apply Chinese conversion if needed
         if info.language == "zh":
             try:
@@ -563,7 +579,7 @@ def transcribe_video_task(job_id: str, media_path: str):
         )
         chunks = text_splitter.split_text(transcript)
 
-        # CRITICAL: Get existing job data and VALIDATE video_metadata exists
+        # Get existing job data and validate video_metadata exists
         current_job = job_tracker.get_job(job_id, include_progress=False)
         if not current_job:
             error_msg = f"Job {job_id} not found in tracker"
@@ -578,7 +594,7 @@ def transcribe_video_task(job_id: str, media_path: str):
             except:
                 existing_result = {}
 
-        # Get and validate video_metadata with comprehensive Unicode handling
+        # Get and validate video_metadata
         video_metadata = existing_result.get("video_metadata", {})
         if not video_metadata or not isinstance(video_metadata, dict):
             error_msg = f"video_metadata missing from previous step for job {job_id}"
@@ -586,34 +602,23 @@ def transcribe_video_task(job_id: str, media_path: str):
             job_chain.task_failed(job_id, error_msg)
             return
 
-        # Apply comprehensive Unicode decoding to video_metadata
-        video_metadata = decode_unicode_in_dict(video_metadata)
-
-        # ENHANCED VALIDATION: Check that Unicode decoding was successful
+        # Validate essential fields exist
         title = video_metadata.get("title", "")
         author = video_metadata.get("author", "")
 
-        # Validate that we have proper characters, not escape sequences
-        if not validate_unicode_cleaning(title, "title") or not validate_unicode_cleaning(author, "author"):
-            error_msg = f"Unicode decoding failed - escape sequences still present in metadata for job {job_id}"
-            logger.error(error_msg)
-            job_chain.task_failed(job_id, error_msg)
-            return
-
-        # Additional validation for empty/invalid decoded content
         if not title or title in ["Unknown Video", ""]:
-            error_msg = f"Title is empty or invalid after Unicode decoding for job {job_id}"
+            error_msg = f"Title is empty or invalid for job {job_id}"
             logger.error(error_msg)
             job_chain.task_failed(job_id, error_msg)
             return
 
         if not author or author in ["Unknown", "Unknown Author", ""]:
-            error_msg = f"Author is empty or invalid after Unicode decoding for job {job_id}"
+            error_msg = f"Author is empty or invalid for job {job_id}"
             logger.error(error_msg)
             job_chain.task_failed(job_id, error_msg)
             return
 
-        logger.info(f"VALIDATED: Proper Unicode metadata for job {job_id}")
+        logger.info(f"Validated metadata for job {job_id}")
         logger.info(f"  Title: {title}")
         logger.info(f"  Author: {author}")
 
@@ -648,7 +653,7 @@ def transcribe_video_task(job_id: str, media_path: str):
 
         logger.info(f"Detected source type: {source_type} for job {job_id}")
 
-        # Create documents with VALIDATED, DECODED metadata
+        # Create documents with validated metadata
         documents = []
         for i, chunk in enumerate(chunks):
             doc_metadata = {
@@ -658,25 +663,19 @@ def transcribe_video_task(job_id: str, media_path: str):
                 "language": info.language,
                 "total_chunks": len(chunks),
 
-                # Use VALIDATED video metadata
+                # Use video metadata (already clean from global fix)
                 "title": title,
                 "author": author,
                 "url": original_url,
                 "video_id": video_id,
                 "published_date": video_metadata.get("published_date"),
-                "description": decode_unicode_escapes(video_metadata.get("description", "")),
+                "description": video_metadata.get("description", ""),
                 "length": video_metadata.get("length", 0),
                 "views": video_metadata.get("views", 0),
 
                 # Add custom metadata from job if any
                 "custom_metadata": job_metadata.get("custom_metadata", {})
             }
-
-            # FINAL VALIDATION: Ensure no Unicode escapes in document metadata
-            for key, value in doc_metadata.items():
-                if isinstance(value, str) and not validate_unicode_cleaning(value, f"doc_metadata_{key}"):
-                    logger.warning(f"Unicode escape found in document metadata {key}: {value}")
-                    doc_metadata[key] = decode_unicode_escapes(value)
 
             doc = Document(
                 page_content=chunk,
@@ -701,7 +700,7 @@ def transcribe_video_task(job_id: str, media_path: str):
             "detected_source": source_type,
         })
 
-        logger.info(f"SUCCESS: Transcription completed with validated metadata for job {job_id}")
+        logger.info(f"Transcription completed for job {job_id}")
 
         # Trigger next task
         job_chain.task_completed(job_id, transcription_result)
@@ -714,17 +713,12 @@ def transcribe_video_task(job_id: str, media_path: str):
 
 @dramatiq.actor(queue_name="cpu_tasks", store_results=True, max_retries=2)
 def process_pdf_task(job_id: str, file_path: str, metadata: Optional[Dict] = None):
-    """Process PDF with Unicode handling."""
+    """Process PDF - Unicode cleaning happens automatically!"""
     try:
         logger.info(f"Processing PDF for job {job_id}: {file_path}")
 
         from src.core.pdf_loader import PDFLoader
         from src.config.settings import settings
-        from src.utils.unicode_handler import decode_unicode_in_dict
-
-        # Apply Unicode decoding to metadata
-        if metadata and isinstance(metadata, dict):
-            metadata = decode_unicode_in_dict(metadata)
 
         # Create PDF loader
         pdf_loader = PDFLoader(
@@ -735,7 +729,7 @@ def process_pdf_task(job_id: str, file_path: str, metadata: Optional[Dict] = Non
             ocr_languages=settings.ocr_languages
         )
 
-        # Process PDF (now includes Unicode handling)
+        # Process PDF (metadata is already clean from global fix)
         documents = pdf_loader.process_pdf(
             file_path=file_path,
             custom_metadata=metadata,
@@ -778,38 +772,20 @@ def process_pdf_task(job_id: str, file_path: str, metadata: Optional[Dict] = Non
 
 @dramatiq.actor(queue_name="cpu_tasks", store_results=True, max_retries=2)
 def process_text_task(job_id: str, text: str, metadata: Optional[Dict] = None):
-    """Process text with comprehensive Unicode handling."""
+    """Process text - Unicode cleaning happens automatically!"""
     try:
         logger.info(f"Processing text for job {job_id}")
 
         from langchain_text_splitters import RecursiveCharacterTextSplitter
         from langchain_core.documents import Document
         from src.config.settings import settings
-        from src.utils.unicode_handler import decode_unicode_escapes, decode_unicode_in_dict, validate_unicode_cleaning
 
-        # CRITICAL FIX: Decode Unicode escapes in input text
-        if isinstance(text, str) and "\\u" in text:
-            logger.info(f"Decoding Unicode escapes in text input for job {job_id}")
-            original_text = text
-            text = decode_unicode_escapes(text)
-            logger.info(f"Text Unicode decoding: {len(original_text)} -> {len(text)} chars")
-
-        # CRITICAL FIX: Decode Unicode escapes in metadata
-        if metadata and isinstance(metadata, dict):
-            logger.info(f"Decoding Unicode escapes in text metadata for job {job_id}")
-            metadata = decode_unicode_in_dict(metadata)
-
-        # Validate decoded text
+        # Validate text input (already clean from global fix)
         if not text or not text.strip():
-            error_msg = f"Text input is empty after Unicode decoding for job {job_id}"
+            error_msg = f"Text input is empty for job {job_id}"
             logger.error(error_msg)
             job_chain.task_failed(job_id, error_msg)
             return
-
-        # Check for remaining Unicode escapes
-        if not validate_unicode_cleaning(text, "input_text"):
-            logger.warning(f"Unicode escapes still present in text after decoding for job {job_id}")
-            text = decode_unicode_escapes(text)
 
         # Split text into chunks
         text_splitter = RecursiveCharacterTextSplitter(
@@ -819,7 +795,7 @@ def process_text_task(job_id: str, text: str, metadata: Optional[Dict] = None):
 
         chunks = text_splitter.split_text(text)
 
-        # Create documents with validated Unicode metadata
+        # Create documents
         documents = []
         for i, chunk_text in enumerate(chunks):
             # Apply metadata extraction to the full text (not just chunks)
@@ -829,7 +805,7 @@ def process_text_task(job_id: str, text: str, metadata: Optional[Dict] = None):
             else:
                 extracted_metadata = {}
 
-            # Combine extracted metadata with provided metadata
+            # Combine extracted metadata with provided metadata (both already clean)
             doc_metadata = {
                 "chunk_id": i,
                 "source": "manual",
@@ -839,19 +815,13 @@ def process_text_task(job_id: str, text: str, metadata: Optional[Dict] = None):
                 **(metadata or {})  # User-provided metadata
             }
 
-            # FINAL VALIDATION: Ensure no Unicode escapes in document metadata
-            for key, value in doc_metadata.items():
-                if isinstance(value, str) and not validate_unicode_cleaning(value, f"text_doc_metadata_{key}"):
-                    logger.warning(f"Unicode escape found in text document metadata {key}: {value}")
-                    doc_metadata[key] = decode_unicode_escapes(value)
-
             doc = Document(
                 page_content=chunk_text,
                 metadata=doc_metadata
             )
             documents.append(doc)
 
-        logger.info(f"Text processing completed for job {job_id}: {len(chunks)} chunks with validated Unicode")
+        logger.info(f"Text processing completed for job {job_id}: {len(chunks)} chunks")
 
         # Convert documents to format for next task
         document_dicts = []
@@ -888,13 +858,12 @@ def process_text_task(job_id: str, text: str, metadata: Optional[Dict] = None):
 
 @dramatiq.actor(queue_name="embedding_tasks", store_results=True, max_retries=2)
 def generate_embeddings_task(job_id: str, documents: List[Dict]):
-    """Generate embeddings with FINAL Unicode validation before vector store"""
+    """Generate embeddings - Unicode cleaning happens automatically!"""
     try:
         logger.info(f"Generating embeddings for job {job_id}: {len(documents)} documents")
 
         from .models import get_vector_store
         from langchain_core.documents import Document
-        from src.utils.unicode_handler import decode_unicode_escapes, decode_unicode_in_dict, validate_unicode_cleaning
 
         # Validate documents exist
         if not documents:
@@ -903,7 +872,7 @@ def generate_embeddings_task(job_id: str, documents: List[Dict]):
             job_chain.task_failed(job_id, error_msg)
             return
 
-        # Convert back to Document objects with FINAL Unicode validation
+        # Convert back to Document objects (data is already clean from global fix)
         doc_objects = []
         for doc_dict in documents:
             if not doc_dict.get("content") or not doc_dict.get("metadata"):
@@ -912,39 +881,17 @@ def generate_embeddings_task(job_id: str, documents: List[Dict]):
                 job_chain.task_failed(job_id, error_msg)
                 return
 
-            # FINAL UNICODE VALIDATION AND CLEANING
-            content = doc_dict["content"]
-            metadata = doc_dict["metadata"]
-
-            # Apply final Unicode decoding to content
-            if isinstance(content, str):
-                content = decode_unicode_escapes(content)
-
-            # Apply final Unicode decoding to metadata
-            if isinstance(metadata, dict):
-                metadata = decode_unicode_in_dict(metadata)
-
-            # CRITICAL VALIDATION: Check for remaining Unicode escapes
-            critical_fields = ["title", "author", "description"]
-            for field in critical_fields:
-                if field in metadata and isinstance(metadata[field], str):
-                    if not validate_unicode_cleaning(metadata[field], f"final_{field}"):
-                        error_msg = f"CRITICAL: Unicode escapes still present in {field} before vector store: {metadata[field]}"
-                        logger.error(error_msg)
-                        job_chain.task_failed(job_id, error_msg)
-                        return
-
-            # Create document with FINAL validated metadata
+            # Create document (no cleaning needed - data is already clean)
             doc = Document(
-                page_content=content,
-                metadata=metadata
+                page_content=doc_dict["content"],
+                metadata=doc_dict["metadata"]
             )
             doc_objects.append(doc)
 
-        # FINAL LOG: Confirm clean metadata before vector store
+        # Log sample for verification
         if doc_objects:
             sample_doc = doc_objects[0]
-            logger.info(f"FINAL VALIDATION PASSED for job {job_id}")
+            logger.info(f"Sample document for job {job_id}")
             logger.info(f"  Sample title: {sample_doc.metadata.get('title', 'NO_TITLE')}")
             logger.info(f"  Sample author: {sample_doc.metadata.get('author', 'NO_AUTHOR')}")
             logger.info(f"  Total documents: {len(doc_objects)}")
@@ -985,12 +932,11 @@ def generate_embeddings_task(job_id: str, documents: List[Dict]):
                 job_chain.task_failed(job_id, error_msg)
                 return
 
-            logger.info(f"SUCCESS: {len(doc_ids)} documents with CLEAN Unicode metadata added to vector store")
+            logger.info(f"Successfully added {len(doc_ids)} documents to vector store")
         else:
             # In metadata-only mode, simulate doc IDs
             doc_ids = [f"sim-{job_id}-{i}" for i in range(len(doc_objects))]
-            logger.info(
-                f"Simulated embedding generation for job {job_id}: {len(doc_ids)} document IDs (metadata-only mode)")
+            logger.info(f"Simulated embedding generation for job {job_id}: {len(doc_ids)} document IDs (metadata-only mode)")
 
         # Create final result while PRESERVING ALL existing data
         final_result = {}
@@ -1004,7 +950,7 @@ def generate_embeddings_task(job_id: str, documents: List[Dict]):
             "ingestion_completed": True
         })
 
-        logger.info(f"SUCCESS: Embedding generation completed with validated metadata for job {job_id}")
+        logger.info(f"Embedding generation completed for job {job_id}")
 
         # Complete the job (this is the final step for most processing jobs)
         job_chain.task_completed(job_id, final_result)
@@ -1017,24 +963,15 @@ def generate_embeddings_task(job_id: str, documents: List[Dict]):
 
 @dramatiq.actor(queue_name="embedding_tasks", store_results=True, max_retries=2)
 def retrieve_documents_task(job_id: str, query: str, metadata_filter: Optional[Dict] = None):
-    """Retrieve documents with Unicode handling."""
+    """Retrieve documents - Unicode cleaning happens automatically!"""
     try:
         logger.info(f"Retrieving documents for job {job_id}: {query}")
 
         from .models import get_vector_store
         from src.config.settings import settings
-        from src.utils.unicode_handler import decode_unicode_escapes, decode_unicode_in_dict
         import numpy as np
 
-        # Apply Unicode decoding to query
-        if isinstance(query, str) and "\\u" in query:
-            query = decode_unicode_escapes(query)
-
-        # Apply Unicode decoding to metadata filter
-        if metadata_filter and isinstance(metadata_filter, dict):
-            metadata_filter = decode_unicode_in_dict(metadata_filter)
-
-        # Get vector store with preloaded embedding model
+        # Get vector store with preloaded embedding model (query and metadata_filter are already clean)
         vector_store = get_vector_store()
 
         # Perform retrieval
@@ -1084,21 +1021,16 @@ def retrieve_documents_task(job_id: str, query: str, metadata_filter: Optional[D
 
 @dramatiq.actor(queue_name="inference_tasks", store_results=True, max_retries=2)
 def llm_inference_task(job_id: str, query: str, documents: List[Dict]):
-    """Perform LLM inference with Unicode handling."""
+    """Perform LLM inference - Unicode cleaning happens automatically!"""
     try:
         logger.info(f"Performing LLM inference for job {job_id}: {query}")
 
         from .models import get_llm_model, get_colbert_reranker
         from langchain_core.documents import Document
         from src.config.settings import settings
-        from src.utils.unicode_handler import decode_unicode_escapes
         import numpy as np
 
-        # Apply Unicode decoding to query
-        if isinstance(query, str) and "\\u" in query:
-            query = decode_unicode_escapes(query)
-
-        # Convert documents back to Document objects with scores
+        # Convert documents back to Document objects with scores (data is already clean)
         doc_objects = []
         for doc_dict in documents:
             doc = Document(

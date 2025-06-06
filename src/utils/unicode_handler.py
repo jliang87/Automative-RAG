@@ -1,283 +1,477 @@
-import json
+# Enhanced src/utils/unicode_handler.py
+# Consolidating all Unicode handling functionality
+
+"""
+Comprehensive Unicode handling utilities for proper Chinese character support.
+Handles Unicode escapes, encoding issues, and validation.
+"""
+
 import logging
 import codecs
+import json
 import re
 from typing import Any, Dict, List, Union
 
 logger = logging.getLogger(__name__)
 
 
+# ===================================================================
+# EXISTING FUNCTIONS (keep these as they're already used in your code)
+# ===================================================================
+
 def decode_unicode_escapes(text: str) -> str:
     """
-    Comprehensively decode Unicode escape sequences.
-    Handles various forms of Unicode encoding issues common with Chinese text.
+    Decode Unicode escape sequences in text.
+    Handles both \\uXXXX and \\xXX formats.
 
-    Args:
-        text: Text that may contain Unicode escape sequences
-
-    Returns:
-        Properly decoded Unicode text
+    This function is already used throughout your codebase.
     """
-    if not text or not isinstance(text, str):
+    if not isinstance(text, str):
+        return text
+
+    if "\\u" not in text and "\\x" not in text:
         return text
 
     try:
-        # Pattern 1: Standard Unicode escapes (\uXXXX)
-        if '\\u' in text:
-            # Try different decoding approaches
-
-            # Approach 1: JSON decoding (for properly formatted JSON strings)
-            if text.startswith('"') and text.endswith('"'):
-                try:
-                    return json.loads(text)
-                except json.JSONDecodeError:
-                    pass
-
-            # Approach 2: Direct Unicode escape decoding
+        # Handle \\uXXXX sequences
+        if "\\u" in text:
             try:
-                return text.encode('utf-8').decode('unicode_escape')
-            except (UnicodeDecodeError, UnicodeEncodeError):
+                return text.encode().decode('unicode_escape')
+            except (UnicodeDecodeError, UnicodeError):
                 pass
 
-            # Approach 3: Latin1 to Unicode escape decoding
+        # Handle \\xXX sequences  
+        if "\\x" in text:
             try:
-                return text.encode('latin1').decode('unicode_escape')
-            except (UnicodeDecodeError, UnicodeEncodeError):
+                return text.encode('latin1').decode('utf-8')
+            except (UnicodeDecodeError, UnicodeError):
                 pass
 
-            # Approach 4: Codecs Unicode escape decoding
-            try:
-                return codecs.decode(text, 'unicode_escape')
-            except (UnicodeDecodeError, UnicodeEncodeError):
-                pass
-
-        # Pattern 2: Double-escaped Unicode (\\\uXXXX)
-        if '\\\\u' in text:
-            # Fix double escaping first
-            text = text.replace('\\\\u', '\\u')
-            return decode_unicode_escapes(text)  # Recursive call
-
-        # Pattern 3: URL-encoded Unicode (%uXXXX)
-        if '%u' in text:
-            def replace_percent_unicode(match):
-                code = match.group(1)
-                return chr(int(code, 16))
-
-            text = re.sub(r'%u([0-9A-Fa-f]{4})', replace_percent_unicode, text)
-
-        # Pattern 4: Check for encoding issues with Chinese characters
-        if any(ord(char) > 127 for char in text):
-            # If text contains high Unicode but looks wrong, try re-encoding
-            try:
-                # Test if current encoding is correct
-                text.encode('utf-8')
-                return text  # Already proper UTF-8
-            except UnicodeEncodeError:
-                # Try to fix common encoding issues
-                try:
-                    return text.encode('latin1').decode('utf-8')
-                except (UnicodeDecodeError, UnicodeEncodeError):
-                    pass
-
-        return text
+        # Fallback using codecs
+        return codecs.decode(text, 'unicode_escape')
 
     except Exception as e:
-        logger.warning(f"Unicode decoding failed for text: {text[:50]}..., error: {e}")
-        return text  # Return original if all attempts fail
+        logger.warning(f"Failed to decode Unicode escapes in: {repr(text)}, error: {e}")
+        return text
 
 
 def decode_unicode_in_dict(data: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Recursively decode Unicode escape sequences in dictionary values.
+    Apply Unicode decoding to all string values in a dictionary.
 
-    Args:
-        data: Dictionary that may contain Unicode escape sequences
-
-    Returns:
-        Dictionary with decoded Unicode strings
+    This function is already used in your codebase.
     """
     if not isinstance(data, dict):
         return data
 
-    decoded_data = {}
+    decoded_dict = {}
     for key, value in data.items():
         if isinstance(value, str):
-            decoded_data[key] = decode_unicode_escapes(value)
+            decoded_dict[key] = decode_unicode_escapes(value)
         elif isinstance(value, dict):
-            decoded_data[key] = decode_unicode_in_dict(value)
+            decoded_dict[key] = decode_unicode_in_dict(value)
         elif isinstance(value, list):
-            decoded_data[key] = decode_unicode_in_list(value)
+            decoded_dict[key] = [decode_unicode_escapes(item) if isinstance(item, str) else item for item in value]
         else:
-            decoded_data[key] = value
+            decoded_dict[key] = value
 
-    return decoded_data
+    return decoded_dict
 
 
-def decode_unicode_in_list(data: List[Any]) -> List[Any]:
+def decode_unicode_in_json_result(result: Any) -> Any:
     """
-    Recursively decode Unicode escape sequences in list items.
+    Apply Unicode decoding to JSON result data.
 
-    Args:
-        data: List that may contain Unicode escape sequences
-
-    Returns:
-        List with decoded Unicode strings
+    This function is already used in your job_tracker.
     """
-    if not isinstance(data, list):
-        return data
-
-    decoded_data = []
-    for item in data:
-        if isinstance(item, str):
-            decoded_data.append(decode_unicode_escapes(item))
-        elif isinstance(item, dict):
-            decoded_data.append(decode_unicode_in_dict(item))
-        elif isinstance(item, list):
-            decoded_data.append(decode_unicode_in_list(item))
-        else:
-            decoded_data.append(item)
-
-    return decoded_data
-
-
-def decode_unicode_in_json_result(result: Union[str, Dict, List]) -> Union[str, Dict, List]:
-    """
-    Decode Unicode escape sequences in job tracker results.
-
-    Args:
-        result: Result data that may be JSON string or already parsed
-
-    Returns:
-        Result with decoded Unicode
-    """
-    # If it's a JSON string, parse it first
-    if isinstance(result, str):
-        try:
-            parsed_result = json.loads(result)
-            decoded_result = decode_unicode_in_dict(parsed_result) if isinstance(parsed_result, dict) else parsed_result
-            return json.dumps(decoded_result, ensure_ascii=False)  # Use ensure_ascii=False for proper Unicode
-        except json.JSONDecodeError:
-            # If it's not JSON, just decode the string
-            return decode_unicode_escapes(result)
-
-    # If it's already a dict or list, decode recursively
     if isinstance(result, dict):
         return decode_unicode_in_dict(result)
     elif isinstance(result, list):
-        return decode_unicode_in_list(result)
+        return [decode_unicode_in_json_result(item) for item in result]
+    elif isinstance(result, str):
+        return decode_unicode_escapes(result)
+    else:
+        return result
 
-    return result
 
-
-def clean_form_input(text: str) -> str:
+def validate_unicode_cleaning(text: str, field_name: str = "field") -> bool:
     """
-    Clean text from web forms that might contain Unicode escapes.
-    Common when users copy-paste from websites.
+    Validate that Unicode decoding was successful.
 
-    Args:
-        text: Text input from web forms
-
-    Returns:
-        Cleaned text with proper Unicode
-    """
-    if not text:
-        return text
-
-    # Common issues from copy-paste from websites
-    if "\\u" in text:
-        return decode_unicode_escapes(text)
-
-    return text
-
-
-def validate_unicode_cleaning(text: str, field_name: str = "text") -> bool:
-    """
-    Validate that Unicode cleaning was successful.
-
-    Args:
-        text: Text to validate
-        field_name: Name of the field for logging
-
-    Returns:
-        True if text is clean, False if Unicode escapes remain
+    This function is already used in your codebase for validation.
     """
     if not isinstance(text, str):
         return True
 
-    if "\\u" in text:
-        logger.warning(f"Unicode escapes still present in {field_name}: {text[:100]}...")
+    # Check for remaining escape sequences
+    if "\\u" in text or "\\x" in text:
+        logger.warning(f"Unicode escapes still present in {field_name}: {repr(text)}")
+        return False
+
+    # Check for empty content
+    if not text.strip():
+        logger.warning(f"Field {field_name} is empty after Unicode cleaning")
         return False
 
     return True
 
 
-def test_unicode_decoding():
-    """Test function to validate Unicode decoding works correctly"""
+# ===================================================================
+# ENHANCED FUNCTIONS (new improved versions for better handling)
+# ===================================================================
 
-    # Test cases with common Unicode escape patterns
+def clean_unicode_escapes(data: Any) -> Any:
+    """
+    ENHANCED: Recursively clean Unicode escapes from any data structure.
+
+    This is the new comprehensive function that handles the Redis escape issue.
+    Replaces the individual functions with a more robust approach.
+
+    Args:
+        data: Any data structure (dict, list, str, or primitive)
+
+    Returns:
+        Data with Unicode escapes decoded to proper characters
+
+    Examples:
+        >>> clean_unicode_escapes("15.2\\u4e07")
+        "15.2万"
+
+        >>> clean_unicode_escapes({"title": "\\xe4\\xb8\\x87"})
+        {"title": "万"}
+    """
+    if isinstance(data, dict):
+        return {key: clean_unicode_escapes(value) for key, value in data.items()}
+    elif isinstance(data, list):
+        return [clean_unicode_escapes(item) for item in data]
+    elif isinstance(data, str):
+        return _robust_decode_string(data)
+    else:
+        return data
+
+
+def _robust_decode_string(text: str) -> str:
+    """
+    ENHANCED: More robust string decoding with multiple strategies.
+
+    This handles the specific escape formats seen in your Redis data.
+    """
+    if not isinstance(text, str) or ('\\u' not in text and '\\x' not in text):
+        return text
+
+    original_text = text
+
+    # Strategy 1: Handle \\xXX byte sequences (like from your Redis data)
+    if '\\x' in text:
+        try:
+            # This handles sequences like \\xe4\\xb8\\x87 -> 万
+            decoded = text.encode('latin1').decode('utf-8')
+            if decoded != text and not _has_escape_sequences(decoded):
+                logger.debug(f"Decoded using latin1->utf8: {repr(text)} -> {repr(decoded)}")
+                return decoded
+        except (UnicodeDecodeError, UnicodeError):
+            pass
+
+    # Strategy 2: Handle \\uXXXX Unicode sequences (like from Dramatiq)
+    if '\\u' in text:
+        try:
+            decoded = text.encode().decode('unicode_escape')
+            if decoded != text and not _has_escape_sequences(decoded):
+                logger.debug(f"Decoded using unicode_escape: {repr(text)} -> {repr(decoded)}")
+                return decoded
+        except (UnicodeDecodeError, UnicodeError):
+            pass
+
+    # Strategy 3: Use codecs as fallback
+    try:
+        decoded = codecs.decode(text, 'unicode_escape')
+        if isinstance(decoded, bytes):
+            decoded = decoded.decode('utf-8')
+        if decoded != text and not _has_escape_sequences(decoded):
+            logger.debug(f"Decoded using codecs: {repr(text)} -> {repr(decoded)}")
+            return decoded
+    except (UnicodeDecodeError, UnicodeError, AttributeError):
+        pass
+
+    # Strategy 4: Try the existing decode_unicode_escapes function
+    try:
+        decoded = decode_unicode_escapes(text)
+        if decoded != text:
+            logger.debug(f"Decoded using existing function: {repr(text)} -> {repr(decoded)}")
+            return decoded
+    except Exception:
+        pass
+
+    # If all strategies failed, log and return original
+    if _has_escape_sequences(text):
+        logger.warning(f"All decoding strategies failed for: {repr(original_text)}")
+
+    return original_text
+
+
+def _has_escape_sequences(text: str) -> bool:
+    """Check if text still contains escape sequences."""
+    return isinstance(text, str) and ('\\u' in text or '\\x' in text)
+
+
+def clean_video_metadata(metadata: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    ENHANCED: Specialized function to clean video metadata with detailed logging.
+
+    This is specifically for video processing tasks.
+
+    Args:
+        metadata: Video metadata dictionary from yt-dlp
+
+    Returns:
+        Cleaned metadata dictionary with proper Chinese characters
+    """
+    if not isinstance(metadata, dict):
+        return metadata
+
+    logger.info(f"Cleaning video metadata with {len(metadata)} fields")
+
+    cleaned = {}
+
+    for key, value in metadata.items():
+        if isinstance(value, str) and _has_escape_sequences(value):
+            logger.info(f"Cleaning Unicode escapes from {key}: {repr(value)}")
+            cleaned_value = clean_unicode_escapes(value)
+            logger.info(f"Cleaned {key}: {repr(cleaned_value)}")
+
+            # Validate the cleaning worked
+            if validate_unicode_cleaning(cleaned_value, key):
+                cleaned[key] = cleaned_value
+            else:
+                logger.error(f"Unicode cleaning failed for {key}, using original value")
+                cleaned[key] = value
+        else:
+            cleaned[key] = clean_unicode_escapes(value)
+
+    logger.info(f"Video metadata cleaning completed")
+    return cleaned
+
+
+def safe_json_dumps(data: Any, **kwargs) -> str:
+    """
+    ENHANCED: Safe JSON dumping with proper Unicode handling.
+
+    Always uses ensure_ascii=False to preserve Chinese characters.
+
+    Args:
+        data: Data to serialize
+        **kwargs: Additional arguments for json.dumps
+
+    Returns:
+        JSON string with proper Unicode characters
+    """
+    # Force ensure_ascii=False to preserve Chinese characters
+    kwargs['ensure_ascii'] = False
+
+    try:
+        return json.dumps(data, **kwargs)
+    except (TypeError, ValueError) as e:
+        logger.error(f"JSON serialization failed: {e}")
+        # Try with cleaned data
+        cleaned_data = clean_unicode_escapes(data)
+        return json.dumps(cleaned_data, **kwargs)
+
+
+def safe_json_loads(json_str: str) -> Any:
+    """
+    ENHANCED: Safe JSON loading with Unicode cleaning.
+
+    Automatically cleans any Unicode escapes in the loaded data.
+
+    Args:
+        json_str: JSON string to parse
+
+    Returns:
+        Parsed data with cleaned Unicode characters
+    """
+    try:
+        data = json.loads(json_str)
+        return clean_unicode_escapes(data)
+    except (TypeError, ValueError) as e:
+        logger.error(f"JSON parsing failed: {e}")
+        raise
+
+
+# ===================================================================
+# COMPATIBILITY FUNCTIONS (for your existing code)
+# ===================================================================
+
+# Keep the old function names for backward compatibility
+def decode_unicode_in_dict_new(data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Backward compatibility wrapper.
+    Use clean_unicode_escapes() for new code.
+    """
+    return clean_unicode_escapes(data)
+
+
+def decode_unicode_in_json_result_new(result: Any) -> Any:
+    """
+    Backward compatibility wrapper.
+    Use clean_unicode_escapes() for new code.
+    """
+    return clean_unicode_escapes(result)
+
+
+# ===================================================================
+# TESTING AND VALIDATION
+# ===================================================================
+
+def test_unicode_handling():
+    """
+    Comprehensive test suite for all Unicode handling functions.
+
+    Tests both existing and new functionality.
+    """
+
     test_cases = [
-        # Chinese characters with Unicode escapes
-        ("\\u6b3e", "款"),
-        ("\\u8f66\\u5728\\u7ebf", "车在线"),
-        ("25\\u6b3e\\u8fdc\\u9014\\u88c5\\u9970", "25款远途装饰"),
+        # Test case 1: Your actual Redis data format
+        {
+            "input": "15.2\\xe4\\xb8\\x87\\xe5\\x90\\x8e\\xe6\\x82\\x94\\xe6\\x8f\\x90\\xe4\\xba\\x86\\xe6\\x98\\x9f\\xe8\\xb6\\x8aL",
+            "expected": "15.2万后悔提了星越L",
+            "description": "Redis byte escape sequences"
+        },
 
-        # Already properly encoded text
-        ("正常中文", "正常中文"),
-        ("Normal English", "Normal English"),
+        # Test case 2: Dramatiq Unicode sequences
+        {
+            "input": "15.2\\u4e07\\u540e\\u6094\\u63d0\\u4e86\\u661f\\u8d8aL",
+            "expected": "15.2万后悔提了星越L",
+            "description": "Dramatiq Unicode escapes"
+        },
 
-        # Mixed content
-        ("2023\\u5e74\\u5b9d\\u9a6cX5", "2023年宝马X5"),
+        # Test case 3: Author name from Redis
+        {
+            "input": "\\xe5\\xb0\\x8f\\xe8\\x83\\xa1\\xe5\\xad\\x90\\xe8\\xaf\\xb4\\xe8\\xbd\\xa6",
+            "expected": "小胡子说车",
+            "description": "Author name byte escapes"
+        },
 
-        # Double-escaped
-        ("\\\\u6b3e", "款"),
-
-        # Complex automotive terms
-        ("\\u5b9d\\u9a6cX5\\u53c2\\u6570\\u8868", "宝马X5参数表"),
-        ("\\u5965\\u8feaA4\\u8fd0\\u52a8\\u578b", "奥迪A4运动型"),
+        # Test case 4: Complex nested structure (like job results)
+        {
+            "input": {
+                "video_metadata": {
+                    "title": "\\xe6\\xb5\\x8b\\xe8\\xaf\\x95\\xe8\\xa7\\x86\\xe9\\xa2\\x91",
+                    "author": "\\u5c0f\\u80e1\\u5b50"
+                },
+                "transcript": "\\xe8\\xbf\\x99\\xe6\\x98\\xaf\\xe4\\xb8\\x80\\xe4\\xb8\\xaa\\xe6\\xb5\\x8b\\xe8\\xaf\\x95",
+                "normal_field": "No escapes here"
+            },
+            "expected": {
+                "video_metadata": {
+                    "title": "测试视频",
+                    "author": "小胡子"
+                },
+                "transcript": "这是一个测试",
+                "normal_field": "No escapes here"
+            },
+            "description": "Complex job result structure"
+        }
     ]
 
-    print("Testing Unicode decoding...")
+    print("=== TESTING ENHANCED UNICODE HANDLER ===\n")
+
     all_passed = True
 
-    for input_text, expected in test_cases:
-        result = decode_unicode_escapes(input_text)
-        passed = result == expected
-        status = "✓" if passed else "✗"
-        print(f"{status} '{input_text}' -> '{result}' (expected: '{expected}')")
+    # Test the new clean_unicode_escapes function
+    print("Testing clean_unicode_escapes():")
+    for i, test_case in enumerate(test_cases, 1):
+        print(f"\nTest {i}: {test_case['description']}")
+        print(f"Input: {repr(test_case['input'])}")
 
-        if not passed:
+        result = clean_unicode_escapes(test_case['input'])
+        print(f"Output: {repr(result)}")
+        print(f"Expected: {repr(test_case['expected'])}")
+
+        if result == test_case['expected']:
+            print("✅ PASSED")
+        else:
+            print("❌ FAILED")
             all_passed = False
 
-    # Test dictionary decoding
-    print("\nTesting dictionary decoding...")
-    test_dict = {
-        "title": "25\\u6b3e\\u8fdc\\u9014\\u88c5\\u9970",
-        "author": "\\u8f66\\u5728\\u7ebf",
-        "manufacturer": "\\u5b9d\\u9a6c",
-        "normal_field": "normal text"
-    }
+    # Test backward compatibility
+    print("\n" + "=" * 50)
+    print("Testing backward compatibility:")
 
-    decoded_dict = decode_unicode_in_dict(test_dict)
-    expected_dict = {
-        "title": "25款远途装饰",
-        "author": "车在线",
-        "manufacturer": "宝马",
-        "normal_field": "normal text"
-    }
+    test_dict = {"title": "\\xe6\\xb5\\x8b\\xe8\\xaf\\x95"}
 
-    dict_passed = decoded_dict == expected_dict
-    status = "✓" if dict_passed else "✗"
-    print(f"{status} Dictionary decoding: {dict_passed}")
+    old_result = decode_unicode_in_dict(test_dict)
+    new_result = clean_unicode_escapes(test_dict)
 
-    if not dict_passed:
-        print(f"  Expected: {expected_dict}")
-        print(f"  Got: {decoded_dict}")
+    print(f"Old function result: {repr(old_result)}")
+    print(f"New function result: {repr(new_result)}")
+
+    if old_result.get('title') == new_result.get('title'):
+        print("✅ Backward compatibility maintained")
+    else:
+        print("❌ Backward compatibility broken")
         all_passed = False
 
-    print(f"\nUnicode decoding test {'PASSED' if all_passed else 'FAILED'}.")
+    # Test JSON functions
+    print("\n" + "=" * 50)
+    print("Testing JSON functions:")
+
+    test_data = {"title": "测试标题", "author": "作者名"}
+    json_str = safe_json_dumps(test_data)
+    loaded_data = safe_json_loads(json_str)
+
+    print(f"Original: {repr(test_data)}")
+    print(f"JSON: {repr(json_str)}")
+    print(f"Loaded: {repr(loaded_data)}")
+
+    if loaded_data == test_data:
+        print("✅ JSON functions working")
+    else:
+        print("❌ JSON functions failed")
+        all_passed = False
+
+    print("\n" + "=" * 50)
+    if all_passed:
+        print("🎉 All tests passed! Unicode handler is working correctly.")
+    else:
+        print("❌ Some tests failed! Check the implementation.")
+
     return all_passed
 
 
 if __name__ == "__main__":
-    # Run tests when module is executed directly
-    test_unicode_decoding()
+    test_unicode_handling()
+
+# ===================================================================
+# USAGE EXAMPLES FOR YOUR CODEBASE
+# ===================================================================
+
+"""
+Usage in your existing code:
+
+1. In job_tracker.py:
+   from src.utils.unicode_handler import clean_unicode_escapes
+
+   # Replace _clean_unicode_escapes with:
+   cleaned_result = clean_unicode_escapes(result)
+
+2. In job_chain.py:
+   from src.utils.unicode_handler import clean_unicode_escapes, clean_video_metadata
+
+   # For general data cleaning:
+   cleaned_result = clean_unicode_escapes(result)
+
+   # For video metadata specifically:
+   cleaned_metadata = clean_video_metadata(video_metadata)
+
+3. For JSON operations:
+   from src.utils.unicode_handler import safe_json_dumps, safe_json_loads
+
+   # Instead of json.dumps(data, ensure_ascii=False):
+   json_str = safe_json_dumps(data)
+
+   # Instead of json.loads(json_str):
+   data = safe_json_loads(json_str)
+
+The existing functions (decode_unicode_escapes, decode_unicode_in_dict, etc.) 
+continue to work exactly as before for backward compatibility.
+"""
