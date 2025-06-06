@@ -35,8 +35,7 @@ class JobTracker:
             "progress": 0.0
         }
 
-        # CRITICAL: Use ensure_ascii=False for proper Chinese character storage
-        job_json = json.dumps(job_data, ensure_ascii=False)
+        job_json = json.dumps(job_data)
         self.redis.hset(self.job_key, job_id, job_json)
         logging.info(f"Created job {job_id} with UTF-8 encoding")
 
@@ -79,8 +78,7 @@ class JobTracker:
         if error is not None:
             job_data["error"] = str(error)
 
-        # CRITICAL: Use ensure_ascii=False for UTF-8 storage
-        job_json = json.dumps(job_data, ensure_ascii=False)
+        job_json = json.dumps(job_data)
         self.redis.hset(self.job_key, job_id, job_json)
         logger.info(f"Updated job {job_id} status to {status}" + (f", stage: {stage}" if stage else ""))
 
@@ -99,7 +97,7 @@ class JobTracker:
 
         # Store in Redis with proper Unicode encoding
         progress_key = f"{self.progress_key}:{job_id}"
-        self.redis.set(progress_key, json.dumps(progress_data, ensure_ascii=False), ex=86400)  # Expire after 24 hours
+        self.redis.set(progress_key, json.dumps(progress_data), ex=86400)  # Expire after 24 hours
 
         # Also update progress in the main job data
         job_data_json = self.redis.hget(self.job_key, job_id)
@@ -110,7 +108,7 @@ class JobTracker:
                     job_data["progress"] = progress
                 job_data["progress_message"] = message
                 job_data["progress_updated_at"] = time.time()
-                self.redis.hset(self.job_key, job_id, json.dumps(job_data, ensure_ascii=False))
+                self.redis.hset(self.job_key, job_id, json.dumps(job_data))
             except:
                 pass
 

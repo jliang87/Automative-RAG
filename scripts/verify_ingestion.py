@@ -430,7 +430,7 @@ def main():
             "documents_found": len(documents),
             "documents": documents
         }
-        print(json.dumps(result, indent=2, ensure_ascii=False))
+        print(json.dumps(result, indent=2))
 
     elif args.command == "search-content":
         documents = search_documents_by_content(vector_store, args.search_term)
@@ -439,19 +439,19 @@ def main():
             "documents_found": len(documents),
             "documents": documents
         }
-        print(json.dumps(result, indent=2, ensure_ascii=False))
+        print(json.dumps(result, indent=2))
 
     elif args.command == "stats":
         stats = get_collection_stats(vector_store)
-        print(json.dumps(stats, indent=2, ensure_ascii=False))
+        print(json.dumps(stats, indent=2))
 
     elif args.command == "analyze-job":
         analysis = analyze_job_documents(vector_store, args.job_id)
-        print(json.dumps(analysis, indent=2, ensure_ascii=False))
+        print(json.dumps(analysis, indent=2))
 
     elif args.command == "debug-query":
         debug_info = debug_query_pipeline(vector_store, args.query, args.job_id)
-        print(json.dumps(debug_info, indent=2, ensure_ascii=False))
+        print(json.dumps(debug_info, indent=2))
 
 
 if __name__ == "__main__":

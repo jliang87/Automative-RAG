@@ -18,13 +18,6 @@ logger = logging.getLogger(__name__)
 
 
 class VideoTranscriber:
-    """
-    Unified video transcriber that handles multiple platforms (YouTube, Bilibili, etc.)
-    using faster-whisper for CPU-optimized transcription.
-
-    SIMPLIFIED: Global Dramatiq patch handles all Unicode cleaning automatically.
-    """
-
     def __init__(
             self,
             output_dir: str = "data/videos",
@@ -227,12 +220,6 @@ class VideoTranscriber:
             raise ValueError("yt-dlp not found. Please install it with: pip install yt-dlp")
 
     def get_video_metadata(self, url: str) -> Dict[str, Union[str, int]]:
-        """
-        Get metadata from a video using yt-dlp.
-
-        SIMPLIFIED: Global Dramatiq patch automatically cleans all Unicode.
-        No manual decoding needed - just extract and validate basic fields.
-        """
         try:
             video_id = self.extract_video_id(url)
 
@@ -331,18 +318,6 @@ class VideoTranscriber:
     def process_video(
             self, url: str, custom_metadata: Optional[Dict[str, str]] = None
     ) -> List[Document]:
-        """
-        Process a video and return Langchain documents using Whisper for transcription.
-
-        SIMPLIFIED: Global Dramatiq patch handles all Unicode automatically.
-
-        Args:
-            url: Video URL
-            custom_metadata: Optional custom metadata
-
-        Returns:
-            List of Langchain Document objects
-        """
         # Detect platform from URL
         platform = self.detect_platform(url)
 
