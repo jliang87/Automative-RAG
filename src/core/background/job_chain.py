@@ -490,12 +490,8 @@ def download_video_task(job_id: str, url: str, metadata: Optional[Dict] = None):
             logger.info(f"UNICODE DEBUG - After yt-dlp extraction:")
             logger.info(f"  Title repr: {repr(title)}")
             logger.info(f"  Author repr: {repr(author)}")
-
-            # Check for escapes (can't use backslashes in f-strings)
-            title_has_escapes = "\\u" in title or "\\x" in title
-            author_has_escapes = "\\u" in author or "\\x" in author
-            logger.info(f"  Title has escapes: {title_has_escapes}")
-            logger.info(f"  Author has escapes: {author_has_escapes}")
+            logger.info(f"  Title has escapes: {'\\u' in title or '\\x' in title}")
+            logger.info(f"  Author has escapes: {'\\u' in author or '\\x' in author}")
 
             logger.info(f"Successfully retrieved video metadata for job {job_id}")
             logger.info(f"Title: {video_metadata.get('title', 'NO_TITLE')}")
@@ -553,8 +549,7 @@ def download_video_task(job_id: str, url: str, metadata: Optional[Dict] = None):
 
             logger.info(f"UNICODE DEBUG - After Redis storage:")
             logger.info(f"  Stored title repr: {repr(stored_title)}")
-            stored_title_has_escapes = "\\u" in stored_title or "\\x" in stored_title
-            logger.info(f"  Stored title has escapes: {stored_title_has_escapes}")
+            logger.info(f"  Stored title has escapes: {'\\u' in stored_title or '\\x' in stored_title}")
 
         # Trigger the next task
         job_chain.task_completed(job_id, download_result)
