@@ -24,10 +24,26 @@ class Settings(BaseSettings):
     qdrant_port: int = int(os.getenv("QDRANT_PORT", "6333"))
     qdrant_collection: str = os.getenv("QDRANT_COLLECTION", "automotive_specs")
 
-    # GPU settings
+    # GPU settings - TESLA T4 OPTIMIZED
+    use_gpu: bool = os.getenv("USE_GPU", "true").lower() == "true"
     device: str = os.getenv("DEVICE", "cuda:0" if torch.cuda.is_available() else "cpu")
     use_fp16: bool = os.getenv("USE_FP16", "true").lower() == "true"
-    batch_size: int = int(os.getenv("BATCH_SIZE", "16"))
+
+    # Batch sizes - Tesla T4 GPU memory optimized
+    batch_size: int = int(os.getenv("BATCH_SIZE", "8"))  # For embeddings
+    llm_batch_size: int = int(os.getenv("LLM_BATCH_SIZE", "1"))
+    embedding_batch_size: int = int(os.getenv("EMBEDDING_BATCH_SIZE", "8"))
+    whisper_batch_size: int = int(os.getenv("WHISPER_BATCH_SIZE", "1"))
+
+    # Tesla T4 Memory Management (14.6GB total)
+    llm_max_memory_gb: float = float(os.getenv("LLM_MAX_MEMORY_GB", "12.0"))
+    gpu_memory_fraction_whisper: float = float(os.getenv("GPU_MEMORY_FRACTION_WHISPER", "0.15"))
+    gpu_memory_fraction_embedding: float = float(os.getenv("GPU_MEMORY_FRACTION_EMBEDDING", "0.25"))
+    gpu_memory_fraction_inference: float = float(os.getenv("GPU_MEMORY_FRACTION_INFERENCE", "0.60"))
+
+    # Worker Configuration - 8-core CPU optimization
+    max_concurrent_queries: int = int(os.getenv("MAX_CONCURRENT_QUERIES", "2"))
+    query_timeout: int = int(os.getenv("QUERY_TIMEOUT", "300"))
 
     # Base directories for models
     # When running in Docker, we use the container paths
@@ -67,6 +83,7 @@ class Settings(BaseSettings):
     default_whisper_model: str = os.getenv("DEFAULT_WHISPER_MODEL", "medium")
     default_bge_reranker_model: str = os.getenv("DEFAULT_BGE_RERANKER_MODEL", "bge-reranker-large")
 
+    # BGE reranker settings
     use_bge_reranker: bool = os.getenv("USE_BGE_RERANKER", "true").lower() == "true"
     colbert_weight: float = float(os.getenv("COLBERT_WEIGHT", "0.8"))
     bge_weight: float = float(os.getenv("BGE_WEIGHT", "0.2"))
@@ -92,11 +109,24 @@ class Settings(BaseSettings):
     def bge_reranker_model_full_path(self) -> str:
         return os.path.join(self.models_dir, self.bge_reranker_model_path, self.default_bge_reranker_model)
 
-    # LLM settings
-    llm_use_4bit: bool = os.getenv("LLM_USE_4BIT", "true").lower() == "true"
+    # LLM settings - TESLA T4 OPTIMIZED
+    llm_use_4bit: bool = os.getenv("LLM_USE_4BIT", "false").lower() == "true"  # CRITICAL: Default false for Tesla T4
     llm_use_8bit: bool = os.getenv("LLM_USE_8BIT", "false").lower() == "true"
+    llm_torch_dtype_str: str = os.getenv("LLM_TORCH_DTYPE", "float16")
     llm_temperature: float = float(os.getenv("LLM_TEMPERATURE", "0.1"))
     llm_max_tokens: int = int(os.getenv("LLM_MAX_TOKENS", "512"))
+    llm_repetition_penalty: float = float(os.getenv("LLM_REPETITION_PENALTY", "1.1"))
+
+    # Convert torch dtype string to torch.dtype
+    @property
+    def llm_torch_dtype(self) -> torch.dtype:
+        dtype_map = {
+            "float16": torch.float16,
+            "float32": torch.float32,
+            "bfloat16": torch.bfloat16,
+            "auto": torch.float16 if self.device.startswith("cuda") else torch.float32
+        }
+        return dtype_map.get(self.llm_torch_dtype_str, torch.float16)
 
     # Whisper settings
     whisper_model_size: str = os.getenv("WHISPER_MODEL_SIZE", "medium")
@@ -111,7 +141,7 @@ class Settings(BaseSettings):
     # Retrieval settings
     retriever_top_k: int = int(os.getenv("RETRIEVER_TOP_K", "20"))
     reranker_top_k: int = int(os.getenv("RERANKER_TOP_K", "5"))
-    colbert_batch_size: int = int(os.getenv("COLBERT_BATCH_SIZE", "16"))
+    colbert_batch_size: int = int(os.getenv("COLBERT_BATCH_SIZE", "8"))  # Tesla T4 optimized
 
     # Chunking settings
     chunk_size: int = int(os.getenv("CHUNK_SIZE", "1000"))
@@ -135,15 +165,79 @@ class Settings(BaseSettings):
     transformers_cache: str = os.getenv("TRANSFORMERS_CACHE", "models/cache")
     hf_home: str = os.getenv("HF_HOME", "models/hub")
 
+    # Development/Debug
+    debug_mode: bool = os.getenv("DEBUG_MODE", "false").lower() == "true"
+    log_level: str = os.getenv("LOG_LEVEL", "INFO")
+    environment: str = os.getenv("ENVIRONMENT", "production")
+
+    # Tesla T4 Memory Management Methods
+    def get_worker_memory_fraction(self) -> float:
+        """Get memory fraction for current worker type."""
+        worker_type = os.environ.get("WORKER_TYPE", "")
+
+        if worker_type == "gpu-whisper":
+            return self.gpu_memory_fraction_whisper
+        elif worker_type == "gpu-embedding":
+            return self.gpu_memory_fraction_embedding
+        elif worker_type == "gpu-inference":
+            return self.gpu_memory_fraction_inference
+        else:
+            return 1.0  # Use all available for unknown worker types
+
+    def should_use_fp16(self) -> bool:
+        """Check if FP16 should be used based on configuration."""
+        return self.use_fp16 and self.device.startswith("cuda")
+
+    def get_quantization_config(self):
+        """Get quantization configuration for LLM loading."""
+        from transformers import BitsAndBytesConfig
+
+        if self.llm_use_4bit:
+            print("Using 4-bit quantization")
+            return BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_compute_dtype=self.llm_torch_dtype,
+                bnb_4bit_quant_type="nf4",
+                bnb_4bit_use_double_quant=True
+            )
+        elif self.llm_use_8bit:
+            print("Using 8-bit quantization")
+            return BitsAndBytesConfig(
+                load_in_8bit=True,
+            )
+        else:
+            print(f"No quantization - using {self.llm_torch_dtype}")
+            return None
+
+    def get_model_kwargs(self) -> dict:
+        """Get model loading kwargs based on configuration."""
+        kwargs = {
+            "torch_dtype": self.llm_torch_dtype,
+            "device_map": "auto" if self.device.startswith("cuda") else None,
+            "trust_remote_code": True,
+            "local_files_only": True,
+            "low_cpu_mem_usage": True
+        }
+
+        # Add quantization config if enabled
+        quantization_config = self.get_quantization_config()
+        if quantization_config:
+            kwargs["quantization_config"] = quantization_config
+
+        return kwargs
+
     # Embedding function
     @property
     def embedding_function(self) -> HuggingFaceEmbeddings:
         try:
-            # Use the appropriate model path
+            # Use the appropriate model path and environment-configured batch size
             return HuggingFaceEmbeddings(
                 model_name=self.embedding_model_full_path,
                 model_kwargs={"device": self.device},
-                encode_kwargs={"batch_size": self.batch_size, "normalize_embeddings": True},
+                encode_kwargs={
+                    "batch_size": self.embedding_batch_size,
+                    "normalize_embeddings": True
+                },
                 cache_folder=os.path.join(self.models_dir, self.embedding_model_path)
             )
         except Exception as e:
@@ -194,6 +288,25 @@ class Settings(BaseSettings):
 
         return gpu_info
 
+    def log_configuration(self):
+        """Log current configuration for debugging."""
+        if self.debug_mode:
+            print("=== SETTINGS CONFIGURATION ===")
+            print(f"Environment: {self.environment}")
+            print(f"Device: {self.device}")
+            print(f"Use GPU: {self.use_gpu}")
+            print(f"LLM Use 4-bit: {self.llm_use_4bit}")
+            print(f"LLM Use 8-bit: {self.llm_use_8bit}")
+            print(f"Use FP16: {self.use_fp16}")
+            print(f"LLM Torch dtype: {self.llm_torch_dtype}")
+            print(f"LLM Max Memory: {self.llm_max_memory_gb}GB")
+            print(f"LLM Batch Size: {self.llm_batch_size}")
+            print(f"Embedding Batch Size: {self.embedding_batch_size}")
+            print(f"ColBERT Batch Size: {self.colbert_batch_size}")
+            print(f"Worker Type: {os.environ.get('WORKER_TYPE', 'Not set')}")
+            print(f"Memory Fraction: {self.get_worker_memory_fraction()}")
+            print("=" * 30)
+
     # Model config
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
@@ -201,6 +314,9 @@ class Settings(BaseSettings):
 # Create settings instance
 settings = Settings()
 settings.initialize_directories()
+
+# Log configuration if in debug mode
+settings.log_configuration()
 
 # Print environment and paths information on startup
 print(f"Running in {'container' if settings.is_container else 'host'} environment")
@@ -213,6 +329,13 @@ if settings.device.startswith("cuda"):
     print(f"Using GPU: {gpu_info['device_name']}")
     print(f"Total GPU memory: {gpu_info['max_memory']}")
     print(f"Using mixed precision (FP16): {settings.use_fp16}")
-    print(f"LLM quantization: {'4-bit' if settings.llm_use_4bit else '8-bit' if settings.llm_use_8bit else 'none'}")
+
+    # CRITICAL: Show quantization status
+    if settings.llm_use_4bit:
+        print("LLM quantization: 4-bit (⚠️ May cause issues on Tesla T4)")
+    elif settings.llm_use_8bit:
+        print("LLM quantization: 8-bit")
+    else:
+        print("LLM quantization: none (FP16 - ✅ Tesla T4 optimized)")
 else:
     print(f"Running on CPU - GPU not available")

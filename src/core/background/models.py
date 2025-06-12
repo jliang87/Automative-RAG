@@ -1,12 +1,15 @@
 """
-Updated model management for dedicated GPU workers.
-This replaces your existing src/core/background/models.py
+Model management for dedicated GPU workers.
+All configuration now driven by environment variables via settings.
+Tesla T4 optimized with proper memory management.
 """
 
 import os
 import torch
 import logging
 from typing import Optional
+
+from src.config.settings import settings
 
 logger = logging.getLogger(__name__)
 
@@ -28,29 +31,22 @@ def should_load_model(model_env_var: str) -> bool:
 
 
 def set_memory_fraction_for_worker():
-    """Set appropriate GPU memory fraction based on worker type."""
+    """Set appropriate GPU memory fraction based on environment configuration."""
     if not torch.cuda.is_available():
         return
 
-    worker_type = get_worker_type()
+    # Use environment-driven memory fraction from settings
+    memory_fraction = settings.get_worker_memory_fraction()
 
-    # Optimized for 16GB GPU (14.58GB usable)
-    memory_fractions = {
-        "gpu-whisper": 0.15,  # 2.2GB - Whisper medium model
-        "gpu-embedding": 0.25,  # 3.6GB - BGE-M3 embedding model
-        "gpu-inference": 0.70,  # 10.2GB - LLM + ColBERT + BGE reranker
-    }
-
-    if worker_type in memory_fractions:
-        fraction = memory_fractions[worker_type]
-        torch.cuda.set_per_process_memory_fraction(fraction)
-        logger.info(f"Set GPU memory fraction to {fraction} for {worker_type} (16GB GPU optimized)")
+    if memory_fraction < 1.0:
+        torch.cuda.set_per_process_memory_fraction(memory_fraction)
+        worker_type = get_worker_type()
+        logger.info(f"Set GPU memory fraction to {memory_fraction} for {worker_type} (Tesla T4 optimized)")
+        logger.info(f"Configuration source: Environment (.env)")
 
 
 def preload_embedding_model():
-    """
-    Preload the embedding model at worker startup to avoid loading it for each job.
-    """
+    """Preload the embedding model using environment configuration."""
     global _PRELOADED_EMBEDDING_MODEL
 
     # Skip if already loaded
@@ -58,18 +54,16 @@ def preload_embedding_model():
         return
 
     # Check worker type
-    worker_type = os.environ.get("WORKER_TYPE", "")
+    worker_type = get_worker_type()
     if worker_type != "gpu-embedding":
         logger.info(f"Skipping embedding model preload on {worker_type} worker")
         return
 
-    # Import settings
-    from src.config.settings import settings
-
     logger.info(f"Preloading embedding model {settings.default_embedding_model} on {settings.device}")
+    logger.info(f"Using environment batch size: {settings.embedding_batch_size}")
 
     try:
-        # Set memory fraction
+        # Set memory fraction from environment
         set_memory_fraction_for_worker()
 
         # Clear CUDA cache before loading
@@ -78,46 +72,30 @@ def preload_embedding_model():
             for i in range(torch.cuda.device_count()):
                 torch.cuda.synchronize(i)
 
-            # Log GPU memory status before loading
-            for i in range(torch.cuda.device_count()):
-                device_name = torch.cuda.get_device_name(i)
-                allocated = torch.cuda.memory_allocated(i) / (1024 ** 3)
-                reserved = torch.cuda.memory_reserved(i) / (1024 ** 3)
-                logger.info(
-                    f"GPU {i} ({device_name}) before embedding model loading: Allocated: {allocated:.2f} GB, Reserved: {reserved:.2f} GB")
+        # Load the model using environment configuration
+        _PRELOADED_EMBEDDING_MODEL = settings.embedding_function
 
-        # Import embedding model
-        from langchain_huggingface import HuggingFaceEmbeddings
-
-        # Load the model
-        _PRELOADED_EMBEDDING_MODEL = HuggingFaceEmbeddings(
-            model_name=settings.embedding_model_full_path,
-            model_kwargs={"device": settings.device},
-            encode_kwargs={"batch_size": settings.batch_size, "normalize_embeddings": True},
-            cache_folder=os.path.join(settings.models_dir, settings.embedding_model_path)
-        )
-
-        # Test the model with a simple embedding to ensure it works
+        # Test the model
         test_embedding = _PRELOADED_EMBEDDING_MODEL.embed_query("Test sentence for embedding model")
         embedding_dim = len(test_embedding)
 
-        # Log GPU memory status after loading
-        if torch.cuda.is_available():
-            for i in range(torch.cuda.device_count()):
-                allocated = torch.cuda.memory_allocated(i) / (1024 ** 3)
-                reserved = torch.cuda.memory_reserved(i) / (1024 ** 3)
-                logger.info(
-                    f"GPU {i} after embedding model loading: Allocated: {allocated:.2f} GB, Reserved: {reserved:.2f} GB")
+        logger.info(f"✅ Successfully preloaded embedding model with dimension {embedding_dim}")
 
-        logger.info(f"Successfully preloaded embedding model with dimension {embedding_dim}")
+        # Log GPU memory if available
+        if torch.cuda.is_available():
+            memory_allocated = torch.cuda.memory_allocated(0) / (1024 ** 3)
+            memory_reserved = torch.cuda.memory_reserved(0) / (1024 ** 3)
+            total_memory = torch.cuda.get_device_properties(0).total_memory / (1024 ** 3)
+            logger.info(f"GPU memory after embedding: {memory_allocated:.2f}GB / {total_memory:.2f}GB")
+
     except Exception as e:
         logger.error(f"Failed to preload embedding model: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
 
 
 def preload_llm_model():
-    """
-    Preload the LLM model at worker startup.
-    """
+    """Preload the LLM model using environment configuration."""
     global _PRELOADED_LLM_MODEL
 
     # Skip if already loaded
@@ -125,18 +103,21 @@ def preload_llm_model():
         return
 
     # Check worker type
-    worker_type = os.environ.get("WORKER_TYPE", "")
+    worker_type = get_worker_type()
     if worker_type != "gpu-inference":
         logger.info(f"Skipping LLM model preload on {worker_type} worker")
         return
 
-    # Import settings
-    from src.config.settings import settings
-
     logger.info(f"Preloading LLM model {settings.default_llm_model} on {settings.device}")
+    logger.info(f"Tesla T4 Environment configuration:")
+    logger.info(f"  Use 4-bit: {settings.llm_use_4bit}")
+    logger.info(f"  Use 8-bit: {settings.llm_use_8bit}")
+    logger.info(f"  Use FP16: {settings.use_fp16}")
+    logger.info(f"  Torch dtype: {settings.llm_torch_dtype}")
+    logger.info(f"  Memory fraction: {settings.get_worker_memory_fraction()}")
 
     try:
-        # Set memory fraction
+        # Set memory fraction from environment
         set_memory_fraction_for_worker()
 
         # Clear CUDA cache before loading
@@ -145,51 +126,45 @@ def preload_llm_model():
             for i in range(torch.cuda.device_count()):
                 torch.cuda.synchronize(i)
 
-            # Log GPU memory status before loading
-            for i in range(torch.cuda.device_count()):
-                device_name = torch.cuda.get_device_name(i)
-                allocated = torch.cuda.memory_allocated(i) / (1024 ** 3)
-                reserved = torch.cuda.memory_reserved(i) / (1024 ** 3)
-                logger.info(
-                    f"GPU {i} ({device_name}) before LLM model loading: Allocated: {allocated:.2f} GB, Reserved: {reserved:.2f} GB")
-
-        # Import the LLM
+        # Import the LLM - NO PARAMETERS, use environment config
         from src.core.llm import LocalLLM
 
-        # Load the model
-        _PRELOADED_LLM_MODEL = LocalLLM(
-            model_name=settings.default_llm_model,
-            device=settings.device,
-            temperature=settings.llm_temperature,
-            max_tokens=settings.llm_max_tokens,
-            use_4bit=settings.llm_use_4bit,
-            use_8bit=settings.llm_use_8bit,
-            torch_dtype=torch.float16 if settings.use_fp16 and settings.device.startswith("cuda") else None
-        )
+        # Load the model using ONLY environment configuration
+        _PRELOADED_LLM_MODEL = LocalLLM()  # No parameters - all from environment!
 
-        # Test the LLM with a simple prompt to ensure it works
-        test_response = _PRELOADED_LLM_MODEL.answer_query(
-            query="What is 2+2?",
-            documents=[]
-        )
+        logger.info(f"✅ Successfully preloaded LLM model using environment configuration")
 
-        # Log GPU memory status after loading
+        # Log memory usage
         if torch.cuda.is_available():
-            for i in range(torch.cuda.device_count()):
-                allocated = torch.cuda.memory_allocated(i) / (1024 ** 3)
-                reserved = torch.cuda.memory_reserved(i) / (1024 ** 3)
-                logger.info(
-                    f"GPU {i} after LLM model loading: Allocated: {allocated:.2f} GB, Reserved: {reserved:.2f} GB")
+            memory_allocated = torch.cuda.memory_allocated(0) / (1024 ** 3)
+            memory_reserved = torch.cuda.memory_reserved(0) / (1024 ** 3)
+            total_memory = torch.cuda.get_device_properties(0).total_memory / (1024 ** 3)
+            logger.info(f"GPU memory after LLM: {memory_allocated:.2f}GB / {total_memory:.2f}GB")
 
-        logger.info(f"Successfully preloaded LLM model")
+            # Check if we're using too much memory
+            memory_usage_percent = (memory_allocated / total_memory) * 100
+            if memory_usage_percent > 85:
+                logger.warning(f"⚠️ High memory usage: {memory_usage_percent:.1f}%")
+                logger.warning("Consider reducing LLM_MAX_MEMORY_GB or using quantization")
+
     except Exception as e:
-        logger.error(f"Failed to preload LLM model: {str(e)}")
+        logger.error(f"❌ Failed to preload LLM model: {str(e)}")
+
+        # Enhanced Tesla T4 error reporting
+        if "CUDA driver error: invalid argument" in str(e):
+            logger.error("🚨 Tesla T4 Compatibility Issue Detected!")
+            logger.error("This error is typically caused by 4-bit quantization on Tesla T4.")
+            logger.error("Current quantization settings:")
+            logger.error(f"  LLM_USE_4BIT: {settings.llm_use_4bit}")
+            logger.error(f"  LLM_USE_8BIT: {settings.llm_use_8bit}")
+            logger.error("Solution: Set LLM_USE_4BIT=false in your .env file")
+
+        import traceback
+        logger.error(traceback.format_exc())
 
 
 def preload_colbert_reranker():
-    """
-    Preload the ColBERT and BGE reranking models.
-    """
+    """Preload the ColBERT and BGE reranking models using environment config."""
     global _PRELOADED_COLBERT_RERANKER
 
     # Skip if already loaded
@@ -197,45 +172,33 @@ def preload_colbert_reranker():
         return
 
     # Check worker type
-    worker_type = os.environ.get("WORKER_TYPE", "")
+    worker_type = get_worker_type()
     if worker_type != "gpu-inference":
         logger.info(f"Skipping reranker preload on {worker_type} worker")
         return
 
-    # Import settings
-    from src.config.settings import settings
-
     logger.info(f"Preloading ColBERT and BGE reranking models on {settings.device}")
+    logger.info(f"Environment configuration:")
+    logger.info(f"  ColBERT batch size: {settings.colbert_batch_size}")
+    logger.info(f"  Use BGE reranker: {settings.use_bge_reranker}")
+    logger.info(f"  ColBERT weight: {settings.colbert_weight}")
+    logger.info(f"  BGE weight: {settings.bge_weight}")
 
     try:
-        # ADDED: Clear CUDA cache before loading to ensure maximum available memory
+        # Clear CUDA cache before loading
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
             for i in range(torch.cuda.device_count()):
                 torch.cuda.synchronize(i)
 
-        # Log GPU memory status before loading
-        if torch.cuda.is_available():
-            for i in range(torch.cuda.device_count()):
-                device_name = torch.cuda.get_device_name(i)
-                allocated = torch.cuda.memory_allocated(i) / (1024 ** 3)
-                reserved = torch.cuda.memory_reserved(i) / (1024 ** 3)
-                total_memory = torch.cuda.get_device_properties(i).total_memory / (1024 ** 3)
-                free_memory = total_memory - reserved
-                logger.info(
-                    f"GPU {i} ({device_name}) before reranker loading: "
-                    f"Allocated: {allocated:.2f} GB, Reserved: {reserved:.2f} GB, "
-                    f"Free: {free_memory:.2f} GB of {total_memory:.2f} GB total"
-                )
-
         # Import reranker
         from src.core.colbert_reranker import ColBERTReranker
 
-        # Load the reranking models
+        # Load the reranking models using environment configuration
         _PRELOADED_COLBERT_RERANKER = ColBERTReranker(
             model_name=settings.default_colbert_model,
             device=settings.device,
-            batch_size=settings.colbert_batch_size,
+            batch_size=settings.colbert_batch_size,  # Environment-driven batch size
             use_fp16=settings.use_fp16,
             use_bge_reranker=settings.use_bge_reranker,
             colbert_weight=settings.colbert_weight,
@@ -243,44 +206,27 @@ def preload_colbert_reranker():
             bge_model_name=settings.default_bge_reranker_model
         )
 
-        # Test the reranker with a simple query and document to ensure it works
+        # Test the reranker
         from langchain_core.documents import Document
         test_doc = Document(page_content="This is a test document.", metadata={})
         test_results = _PRELOADED_COLBERT_RERANKER.rerank("test query", [test_doc], 1)
 
-        # Log GPU memory status after loading
-        if torch.cuda.is_available():
-            for i in range(torch.cuda.device_count()):
-                allocated = torch.cuda.memory_allocated(i) / (1024 ** 3)
-                reserved = torch.cuda.memory_reserved(i) / (1024 ** 3)
-                total_memory = torch.cuda.get_device_properties(i).total_memory / (1024 ** 3)
-                free_memory = total_memory - reserved
-                logger.info(
-                    f"GPU {i} after reranker loading: "
-                    f"Allocated: {allocated:.2f} GB, Reserved: {reserved:.2f} GB, "
-                    f"Free: {free_memory:.2f} GB of {total_memory:.2f} GB total"
-                )
+        logger.info(f"✅ Successfully preloaded ColBERT and BGE reranking models")
 
-        logger.info(f"Successfully preloaded ColBERT and BGE reranking models")
+        # Log memory usage
+        if torch.cuda.is_available():
+            memory_allocated = torch.cuda.memory_allocated(0) / (1024 ** 3)
+            memory_reserved = torch.cuda.memory_reserved(0) / (1024 ** 3)
+            total_memory = torch.cuda.get_device_properties(0).total_memory / (1024 ** 3)
+            logger.info(f"GPU memory after reranker: {memory_allocated:.2f}GB / {total_memory:.2f}GB")
+
     except Exception as e:
         logger.error(f"Failed to preload reranking models: {str(e)}")
-        # ADDED: In case of failure, log more details and continue without reranker
-        if torch.cuda.is_available():
-            for i in range(torch.cuda.device_count()):
-                allocated = torch.cuda.memory_allocated(i) / (1024 ** 3)
-                reserved = torch.cuda.memory_reserved(i) / (1024 ** 3)
-                total_memory = torch.cuda.get_device_properties(i).total_memory / (1024 ** 3)
-                logger.error(
-                    f"GPU {i} memory at failure: {allocated:.2f}GB allocated, {reserved:.2f}GB reserved, {total_memory:.2f}GB total")
-
-        # Set to None so the system can continue without reranking
         _PRELOADED_COLBERT_RERANKER = None
 
 
 def preload_whisper_model():
-    """
-    Preload the Whisper model for transcription.
-    """
+    """Preload the Whisper model using environment configuration."""
     global _PRELOADED_WHISPER_MODEL
 
     # Skip if already loaded
@@ -288,18 +234,18 @@ def preload_whisper_model():
         return
 
     # Check worker type
-    worker_type = os.environ.get("WORKER_TYPE", "")
+    worker_type = get_worker_type()
     if worker_type != "gpu-whisper":
         logger.info(f"Skipping Whisper model preload on {worker_type} worker")
         return
 
-    # Import settings
-    from src.config.settings import settings
-
     logger.info(f"Preloading Whisper model {settings.whisper_model_size} on {settings.device}")
+    logger.info(f"Environment configuration:")
+    logger.info(f"  Whisper batch size: {settings.whisper_batch_size}")
+    logger.info(f"  Use FP16: {settings.use_fp16}")
 
     try:
-        # Set memory fraction
+        # Set memory fraction from environment
         set_memory_fraction_for_worker()
 
         # Clear CUDA cache before loading
@@ -308,62 +254,51 @@ def preload_whisper_model():
             for i in range(torch.cuda.device_count()):
                 torch.cuda.synchronize(i)
 
-            # Log GPU memory status before loading
-            for i in range(torch.cuda.device_count()):
-                device_name = torch.cuda.get_device_name(i)
-                allocated = torch.cuda.memory_allocated(i) / (1024 ** 3)
-                reserved = torch.cuda.memory_reserved(i) / (1024 ** 3)
-                logger.info(
-                    f"GPU {i} ({device_name}) before Whisper model loading: Allocated: {allocated:.2f} GB, Reserved: {reserved:.2f} GB")
-
         # Import the WhisperModel
         from faster_whisper import WhisperModel
 
-        # Get the model path
-        model_path = settings.whisper_model_full_path if hasattr(settings,
-                                                                 'whisper_model_full_path') else settings.whisper_model_size
+        # Use environment-configured model path
+        model_path = settings.whisper_model_full_path
 
-        # Load the Whisper model
+        # Load the Whisper model with environment configuration
+        compute_type = "float16" if settings.use_fp16 and settings.device.startswith("cuda") else "float32"
+
         _PRELOADED_WHISPER_MODEL = WhisperModel(
             model_path,
             device=settings.device,
-            compute_type="float16" if settings.use_fp16 else "float32",
-            cpu_threads=4,  # Use multiple CPU threads for pre/post-processing
-            num_workers=2  # Number of workers for parallel processing
+            compute_type=compute_type,
+            cpu_threads=4,
+            num_workers=2
         )
 
-        # Log GPU memory status after loading
-        if torch.cuda.is_available():
-            for i in range(torch.cuda.device_count()):
-                allocated = torch.cuda.memory_allocated(i) / (1024 ** 3)
-                reserved = torch.cuda.memory_reserved(i) / (1024 ** 3)
-                logger.info(
-                    f"GPU {i} after Whisper model loading: Allocated: {allocated:.2f} GB, Reserved: {reserved:.2f} GB")
+        logger.info(f"✅ Successfully preloaded Whisper model with compute_type: {compute_type}")
 
-        logger.info(f"Successfully preloaded Whisper model")
+        # Log memory usage
+        if torch.cuda.is_available():
+            memory_allocated = torch.cuda.memory_allocated(0) / (1024 ** 3)
+            memory_reserved = torch.cuda.memory_reserved(0) / (1024 ** 3)
+            total_memory = torch.cuda.get_device_properties(0).total_memory / (1024 ** 3)
+            logger.info(f"GPU memory after Whisper: {memory_allocated:.2f}GB / {total_memory:.2f}GB")
+
     except Exception as e:
         logger.error(f"Failed to preload Whisper model: {str(e)}")
 
 
 def get_vector_store():
-    """
-    Get a vector store instance for background tasks with support for preloaded models.
-    """
+    """Get a vector store instance using environment configuration."""
     global _PRELOADED_EMBEDDING_MODEL
 
     from src.core.vectorstore import QdrantStore
-    from src.config.settings import settings
-    import torch
+    from qdrant_client import QdrantClient
 
     # Initialize qdrant client
-    from qdrant_client import QdrantClient
     qdrant_client = QdrantClient(
         host=settings.qdrant_host,
         port=settings.qdrant_port,
     )
 
     # If we have a preloaded model and we're on the embedding worker, use it
-    worker_type = os.environ.get("WORKER_TYPE", "")
+    worker_type = get_worker_type()
     if _PRELOADED_EMBEDDING_MODEL is not None and worker_type == "gpu-embedding":
         logger.info("Using preloaded embedding model for vector store")
         return QdrantStore(
@@ -372,17 +307,22 @@ def get_vector_store():
             embedding_function=_PRELOADED_EMBEDDING_MODEL,
         )
 
-    # Create a new embedding model instance
+    # Create a new embedding model instance with environment config
     logger.info("Creating new embedding model instance for vector store")
-    from langchain_huggingface import HuggingFaceEmbeddings
 
-    # Determine the device (default to CPU for non-embedding workers)
+    # Use environment-configured settings for device and batch size
     device = settings.device if worker_type == "gpu-embedding" else "cpu"
+    batch_size = settings.embedding_batch_size if worker_type == "gpu-embedding" else 4
+
+    from langchain_huggingface import HuggingFaceEmbeddings
 
     embedding_function = HuggingFaceEmbeddings(
         model_name=settings.embedding_model_full_path,
         model_kwargs={"device": device},
-        encode_kwargs={"batch_size": settings.batch_size, "normalize_embeddings": True},
+        encode_kwargs={
+            "batch_size": batch_size,
+            "normalize_embeddings": True
+        },
         cache_folder=os.path.join(settings.models_dir, settings.embedding_model_path)
     )
 
@@ -394,55 +334,44 @@ def get_vector_store():
 
 
 def get_llm_model():
-    """Get the preloaded LLM model or create a new one."""
+    """Get the preloaded LLM model or create a new one using environment config."""
     global _PRELOADED_LLM_MODEL
 
     # If we have a preloaded model and we're on the inference worker, use it
-    worker_type = os.environ.get("WORKER_TYPE", "")
+    worker_type = get_worker_type()
     if _PRELOADED_LLM_MODEL is not None and worker_type == "gpu-inference":
         return _PRELOADED_LLM_MODEL
 
-    # Otherwise, create a new model instance
+    # Otherwise, create a new model instance using environment configuration
     from src.core.llm import LocalLLM
-    from src.config.settings import settings
-    import torch
 
-    # Determine the device
-    device = settings.device if worker_type == "gpu-inference" else "cpu"
-
-    # Create a new LLM instance
-    return LocalLLM(
-        model_name=settings.default_llm_model,
-        device=device,
-        temperature=settings.llm_temperature,
-        max_tokens=settings.llm_max_tokens,
-        use_4bit=settings.llm_use_4bit and device.startswith("cuda"),
-        use_8bit=settings.llm_use_8bit and device.startswith("cuda"),
-        torch_dtype=torch.float16 if settings.use_fp16 and device.startswith("cuda") else None
-    )
+    # Create LLM using ONLY environment configuration - no overrides!
+    logger.info("Creating LLM instance using environment configuration")
+    return LocalLLM()  # All settings come from environment
 
 
 def get_colbert_reranker():
-    """Get the preloaded reranker or create a new one."""
+    """Get the preloaded reranker or create a new one using environment config."""
     global _PRELOADED_COLBERT_RERANKER
 
     # If we have a preloaded model and we're on the inference worker, use it
-    worker_type = os.environ.get("WORKER_TYPE", "")
+    worker_type = get_worker_type()
     if _PRELOADED_COLBERT_RERANKER is not None and worker_type == "gpu-inference":
         return _PRELOADED_COLBERT_RERANKER
 
-    # Otherwise, create a new reranker instance
+    # Otherwise, create a new reranker instance using environment config
     from src.core.colbert_reranker import ColBERTReranker
-    from src.config.settings import settings
 
-    # Determine the device
+    # Use environment configuration
     device = settings.device if worker_type == "gpu-inference" else "cpu"
+    batch_size = settings.colbert_batch_size if worker_type == "gpu-inference" else 4
 
-    # Create a new reranker instance
+    logger.info(f"Creating ColBERT reranker with batch_size={batch_size} on {device}")
+
     return ColBERTReranker(
         model_name=settings.default_colbert_model,
         device=device,
-        batch_size=settings.colbert_batch_size,
+        batch_size=batch_size,
         use_fp16=settings.use_fp16 and device.startswith("cuda"),
         use_bge_reranker=settings.use_bge_reranker,
         colbert_weight=settings.colbert_weight,
@@ -452,40 +381,38 @@ def get_colbert_reranker():
 
 
 def get_whisper_model():
-    """Get the preloaded Whisper model or create a new one."""
+    """Get the preloaded Whisper model or create a new one using environment config."""
     global _PRELOADED_WHISPER_MODEL
 
     # If we have a preloaded model and we're on the whisper worker, use it
-    worker_type = os.environ.get("WORKER_TYPE", "")
+    worker_type = get_worker_type()
     if _PRELOADED_WHISPER_MODEL is not None and worker_type == "gpu-whisper":
         return _PRELOADED_WHISPER_MODEL
 
-    # Otherwise, create a new Whisper instance
+    # Otherwise, create a new Whisper instance using environment config
     from faster_whisper import WhisperModel
-    from src.config.settings import settings
 
-    # Determine the device
+    # Use environment configuration
     device = settings.device if worker_type == "gpu-whisper" else "cpu"
+    model_path = settings.whisper_model_full_path
+    compute_type = "float16" if settings.use_fp16 and device.startswith("cuda") else "float32"
 
-    # Get the model path
-    model_path = settings.whisper_model_full_path if hasattr(settings,
-                                                             'whisper_model_full_path') else settings.whisper_model_size
+    logger.info(f"Creating Whisper model on {device} with compute_type={compute_type}")
 
-    # Create a new Whisper instance
     return WhisperModel(
         model_path,
         device=device,
-        compute_type="float16" if settings.use_fp16 and device.startswith("cuda") else "float32",
-        cpu_threads=4,  # Use multiple CPU threads for pre/post-processing
-        num_workers=2  # Number of workers for parallel processing
+        compute_type=compute_type,
+        cpu_threads=4,
+        num_workers=2
     )
 
 
-# Add preload_models function that's called at worker startup
 def preload_models():
     """Preload only the models this worker needs based on environment variables."""
     worker_type = get_worker_type()
     logger.info(f"Preloading models for worker type: {worker_type}")
+    logger.info(f"Tesla T4 environment configuration active")
 
     # Load models based on environment flags
     if should_load_model("LOAD_WHISPER_MODEL"):
@@ -508,16 +435,19 @@ def preload_models():
     if torch.cuda.is_available():
         total_allocated = torch.cuda.memory_allocated(0) / (1024**3)
         total_available = torch.cuda.get_device_properties(0).total_memory / (1024**3)
-        logger.info(f"Total GPU memory: {total_allocated:.2f}GB / {total_available:.2f}GB")
+        usage_percent = (total_allocated / total_available) * 100
+        logger.info(f"Total GPU memory: {total_allocated:.2f}GB / {total_available:.2f}GB ({usage_percent:.1f}%)")
+
+        if usage_percent > 90:
+            logger.warning("⚠️ Very high GPU memory usage! Consider reducing batch sizes or using quantization.")
 
 
-# Backward compatibility for reload_models function
 def reload_models():
-    """Reload all models to free up memory and avoid memory leaks."""
+    """Reload all models using current environment configuration."""
     global _PRELOADED_EMBEDDING_MODEL, _PRELOADED_LLM_MODEL, _PRELOADED_COLBERT_RERANKER, _PRELOADED_WHISPER_MODEL
 
-    worker_type = os.environ.get("WORKER_TYPE", "")
-    logger.info(f"Reloading models for {worker_type} worker")
+    worker_type = get_worker_type()
+    logger.info(f"Reloading models for {worker_type} worker using environment configuration")
 
     # Clear CUDA cache first
     if torch.cuda.is_available():
@@ -535,7 +465,7 @@ def reload_models():
     _PRELOADED_COLBERT_RERANKER = None
     _PRELOADED_WHISPER_MODEL = None
 
-    # Reload models based on worker type
+    # Reload models based on worker type using environment config
     preload_models()
 
     # Log GPU memory after reload
@@ -543,5 +473,5 @@ def reload_models():
         for i in range(torch.cuda.device_count()):
             allocated = torch.cuda.memory_allocated(i) / (1024 ** 3)
             reserved = torch.cuda.memory_reserved(i) / (1024 ** 3)
-            logger.info(
-                f"GPU {i} after model reload: Allocated: {allocated:.2f} GB, Reserved: {reserved:.2f} GB")
+            total = torch.cuda.get_device_properties(i).total_memory / (1024 ** 3)
+            logger.info(f"GPU {i} after reload: {allocated:.2f}GB / {total:.2f}GB allocated")
