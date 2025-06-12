@@ -138,7 +138,7 @@ services:
       - REDIS_PORT=6379
       - LOG_LEVEL=INFO
       # UPDATED: Smaller memory chunks for Tesla T4
-      - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True,max_split_size_mb:256
+      - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True,max_split_size_mb:128
     volumes:
       - ./src:/app/src
       - ./data:/app/data
