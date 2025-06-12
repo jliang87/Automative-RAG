@@ -38,7 +38,7 @@ class ColBERTReranker:
             use_bge_reranker: bool = True,
             colbert_weight: float = 0.8,
             bge_weight: float = 0.2,
-            bge_model_name: str = "BAAI/bge-reranker-large"
+            bge_model_name: str = "BAAI/bge-reranker-base"
     ):
         """
         Initialize the hybrid reranker with GPU optimizations.

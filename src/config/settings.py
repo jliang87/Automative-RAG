@@ -81,7 +81,7 @@ class Settings(BaseSettings):
     default_colbert_model: str = os.getenv("DEFAULT_COLBERT_MODEL", "colbertv2.0")
     default_llm_model: str = os.getenv("DEFAULT_LLM_MODEL", "DeepSeek-R1-Distill-Qwen-7B")
     default_whisper_model: str = os.getenv("DEFAULT_WHISPER_MODEL", "medium")
-    default_bge_reranker_model: str = os.getenv("DEFAULT_BGE_RERANKER_MODEL", "bge-reranker-large")
+    default_bge_reranker_model: str = os.getenv("DEFAULT_BGE_RERANKER_MODEL", "bge-reranker-base")
 
     # BGE reranker settings
     use_bge_reranker: bool = os.getenv("USE_BGE_RERANKER", "true").lower() == "true"
