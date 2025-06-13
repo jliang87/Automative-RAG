@@ -88,6 +88,10 @@ class Settings(BaseSettings):
     colbert_weight: float = float(os.getenv("COLBERT_WEIGHT", "0.8"))
     bge_weight: float = float(os.getenv("BGE_WEIGHT", "0.2"))
 
+    # Document diversity settings
+    max_docs_per_source: int = int(os.getenv("MAX_DOCS_PER_SOURCE", "2"))
+    diversity_enabled: bool = os.getenv("DIVERSITY_ENABLED", "true").lower() == "true"
+
     # Full paths to models
     @property
     def embedding_model_full_path(self) -> str:
@@ -140,8 +144,8 @@ class Settings(BaseSettings):
 
     # Retrieval settings
     retriever_top_k: int = int(os.getenv("RETRIEVER_TOP_K", "20"))
-    reranker_top_k: int = int(os.getenv("RERANKER_TOP_K", "5"))
-    colbert_batch_size: int = int(os.getenv("COLBERT_BATCH_SIZE", "8"))  # Tesla T4 optimized
+    reranker_top_k: int = int(os.getenv("RERANKER_TOP_K", "8"))
+    colbert_batch_size: int = int(os.getenv("COLBERT_BATCH_SIZE", "4"))  # Tesla T4 optimized
 
     # Chunking settings
     chunk_size: int = int(os.getenv("CHUNK_SIZE", "1000"))

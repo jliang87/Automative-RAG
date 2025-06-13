@@ -18,13 +18,15 @@ class QdrantStore:
     """
     Enhanced Qdrant vector store that supports hybrid search with metadata filtering,
     verification, and repair functionality.
+
+    SIMPLIFIED: No more metadata-only mode - always requires embedding function.
     """
 
     def __init__(
             self,
             client: QdrantClient,
             collection_name: str,
-            embedding_function: Optional[Embeddings] = None,
+            embedding_function: Embeddings,  # ✅ Always required now
     ):
         """
         Initialize the Qdrant vector store.
@@ -32,34 +34,28 @@ class QdrantStore:
         Args:
             client: QdrantClient instance
             collection_name: Name of the collection to use
-            embedding_function: Function to create embeddings (optional in metadata-only mode)
+            embedding_function: Function to create embeddings (REQUIRED)
         """
+        if embedding_function is None:
+            raise ValueError("Embedding function is required. No more metadata-only mode.")
+
         self.client = client
         self.collection_name = collection_name
         self.embedding_function = embedding_function
 
         logger.info(f"Initializing QdrantStore with collection: {collection_name}")
 
-        # Check if we're in metadata-only mode (no embedding function)
-        self.metadata_only_mode = embedding_function is None
-        if self.metadata_only_mode:
-            logger.info("⚠️ QdrantStore initialized in metadata-only mode (no embedding capabilities)")
-
         # Ensure collection exists
         self._ensure_collection()
 
-        # Initialize Langchain Qdrant wrapper if embedding function is provided
-        if not self.metadata_only_mode:
-            self.langchain_qdrant = QdrantVectorStore(
-                client=client,
-                collection_name=collection_name,
-                embedding=embedding_function,
-                distance=rest.Distance.COSINE,
-            )
-            logger.info(f"QdrantStore initialized successfully with embedding function")
-        else:
-            self.langchain_qdrant = None
-            logger.info(f"QdrantStore initialized in metadata-only mode (no vector search)")
+        # Initialize Langchain Qdrant wrapper
+        self.langchain_qdrant = QdrantVectorStore(
+            client=client,
+            collection_name=collection_name,
+            embedding=embedding_function,
+            distance=rest.Distance.COSINE,
+        )
+        logger.info(f"QdrantStore initialized successfully with embedding function")
 
     def _ensure_collection(self) -> None:
         """
@@ -69,13 +65,7 @@ class QdrantStore:
         collection_names = [collection.name for collection in collections]
 
         if self.collection_name not in collection_names:
-            # Check if we're in metadata-only mode
-            if self.metadata_only_mode or self.embedding_function is None:
-                logger.info(f"Skipping collection creation in metadata-only mode for '{self.collection_name}'")
-                return
-
             # Get embedding dimension
-            # Create a sample embedding to determine dimension
             sample_embedding = self.embedding_function.embed_query("sample text")
             embedding_dimension = len(sample_embedding)
 
@@ -108,8 +98,8 @@ class QdrantStore:
             "metadata.engine_type",
             "metadata.transmission",
             "metadata.source",
-            "metadata.source_id",  # Added for better video identification
-            "metadata.ingestion_time",  # Added for recency boost
+            "metadata.source_id",
+            "metadata.ingestion_time",
         ]
 
         logger.info(f"Creating payload indexes for {len(common_fields)} fields")
@@ -154,19 +144,12 @@ class QdrantStore:
                 doc.metadata["ingestion_time"] = current_time
 
         try:
-            # Ensure document IDs exist for each document - this is critical for proper indexing
+            # Ensure document IDs exist for each document
             doc_ids = []
             for doc in documents:
                 if "id" not in doc.metadata or not doc.metadata["id"]:
                     doc.metadata["id"] = f"doc-{str(time.time())}-{len(doc_ids)}"
                 doc_ids.append(doc.metadata["id"])
-
-            # Check if we're in metadata-only mode
-            if self.metadata_only_mode:
-                raise HTTPException(
-                    status_code=501,
-                    detail="Cannot add documents in metadata-only mode. Use a worker service for document ingestion."
-                )
 
             # Add documents to vector store using the embedding function
             result_ids = self.langchain_qdrant.add_documents(documents)
@@ -189,6 +172,8 @@ class QdrantStore:
         """
         Perform a similarity search with optional metadata filtering.
 
+        SIMPLIFIED: Always uses vector similarity - no metadata-only fallback.
+
         Args:
             query: Query string
             k: Number of results to return
@@ -197,22 +182,8 @@ class QdrantStore:
         Returns:
             List of (document, score) tuples
         """
-        # Check if we're in metadata-only mode
-        if self.metadata_only_mode:
-            # In metadata-only mode, we can only search by metadata
-            if metadata_filter:
-                logger.info(f"Performing metadata-only search with filter: {metadata_filter}")
-                documents = self.search_by_metadata(metadata_filter, limit=k)
-                # Assign a placeholder score of 1.0 to each document
-                return [(doc, 1.0) for doc in documents]
-            else:
-                raise HTTPException(
-                    status_code=400,
-                    detail="In metadata-only mode, a metadata filter is required for search"
-                )
-
-        # Regular search with vector similarity
         logger.info(f"Performing similarity search for query: '{query}' with k={k}")
+
         if metadata_filter:
             logger.info(f"Using metadata filter: {metadata_filter}")
             filter_obj = self._build_filter(metadata_filter)

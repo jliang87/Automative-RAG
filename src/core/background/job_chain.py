@@ -956,9 +956,14 @@ def generate_embeddings_task(job_id: str, documents: List[Dict]):
         job_chain.task_failed(job_id, error_msg)
 
 
+# FIXED: retrieve_documents_task - Actually use diversity settings
+
 @dramatiq.actor(queue_name="embedding_tasks", store_results=True, max_retries=2)
 def retrieve_documents_task(job_id: str, query: str, metadata_filter: Optional[Dict] = None):
-    """Retrieve documents - Unicode cleaning happens automatically!"""
+    """
+    Retrieve documents with proper semantic search and diversity.
+    Uses settings for diversity configuration.
+    """
     try:
         logger.info(f"Retrieving documents for job {job_id}: {query}")
 
@@ -966,19 +971,44 @@ def retrieve_documents_task(job_id: str, query: str, metadata_filter: Optional[D
         from src.config.settings import settings
         import numpy as np
 
-        # Get vector store with preloaded embedding model (query and metadata_filter are already clean)
+        # Get vector store (always has embedding function now)
         vector_store = get_vector_store()
 
-        # Perform retrieval
+        # Perform semantic similarity search
         results = vector_store.similarity_search_with_score(
             query=query,
             k=settings.retriever_top_k,
             metadata_filter=metadata_filter
         )
 
+        logger.info(f"Semantic search returned {len(results)} results")
+
+        if not results:
+            logger.warning(f"No documents found for query: {query}")
+            job_chain.task_completed(job_id, {
+                "documents": [],
+                "document_count": 0,
+                "retrieval_completed_at": time.time(),
+                "retrieval_method": "semantic_search",
+                "query_used": query
+            })
+            return
+
+        # FIXED: Apply diversity filtering using settings
+        if settings.diversity_enabled:
+            diverse_results = apply_document_diversity(
+                results,
+                max_per_source=settings.max_docs_per_source  # ✅ Use setting
+            )
+            logger.info(f"Diversity filtering enabled: max {settings.max_docs_per_source} docs per source")
+        else:
+            # If diversity disabled, just take top results
+            diverse_results = results[:settings.reranker_top_k]
+            logger.info("Diversity filtering disabled - using top results")
+
         # Format results for transfer to inference worker
         serialized_docs = []
-        for doc, score in results:
+        for doc, score in diverse_results:
             # Convert numpy.float32 to Python float
             json_safe_score = float(score) if isinstance(score, (np.floating, np.float32, np.float64)) else score
 
@@ -1000,13 +1030,20 @@ def retrieve_documents_task(job_id: str, query: str, metadata_filter: Optional[D
                 "relevance_score": json_safe_score
             })
 
-        logger.info(f"Document retrieval completed for job {job_id}: {len(serialized_docs)} documents")
+        logger.info(f"Document retrieval completed for job {job_id}: {len(diverse_results)} documents")
 
         # Trigger LLM inference
         job_chain.task_completed(job_id, {
             "documents": serialized_docs,
             "document_count": len(serialized_docs),
-            "retrieval_completed_at": time.time()
+            "retrieval_completed_at": time.time(),
+            "retrieval_method": "semantic_search_with_diversity" if settings.diversity_enabled else "semantic_search",
+            "original_results": len(results),
+            "diverse_results": len(diverse_results),
+            "diversity_settings": {
+                "enabled": settings.diversity_enabled,
+                "max_per_source": settings.max_docs_per_source
+            }
         })
 
     except Exception as e:
@@ -1106,3 +1143,48 @@ def llm_inference_task(job_id: str, query: str, documents: List[Dict]):
     except Exception as e:
         logger.error(f"LLM inference failed for job {job_id}: {str(e)}")
         job_chain.task_failed(job_id, f"LLM inference failed: {str(e)}")
+
+
+def apply_document_diversity(results, max_per_source: int):
+    """
+    Apply diversity filtering to ensure we don't get too many documents from the same source.
+
+    Args:
+        results: List of (document, score) tuples from similarity search
+        max_per_source: Maximum documents per source_id (from settings)
+
+    Returns:
+        Filtered list of (document, score) tuples with better diversity
+    """
+    from src.config.settings import settings
+
+    source_counts = {}
+    diverse_results = []
+
+    # Sort by relevance score (highest first)
+    sorted_results = sorted(results, key=lambda x: x[1], reverse=True)
+
+    for doc, score in sorted_results:
+        source_id = doc.metadata.get("source_id", "unknown")
+        chunk_id = doc.metadata.get("chunk_id", 0)
+
+        # Create a source key that groups chunks from the same source
+        source_key = f"{source_id}_{chunk_id // 3}"  # Group every 3 chunks
+
+        # Count how many documents we have from this source group
+        current_count = source_counts.get(source_key, 0)
+
+        # FIXED: Use the max_per_source parameter (from settings)
+        if current_count < max_per_source:
+            diverse_results.append((doc, score))
+            source_counts[source_key] = current_count + 1
+
+        # Stop if we have enough diverse documents (use reranker_top_k as limit)
+        if len(diverse_results) >= settings.reranker_top_k:
+            break
+
+    logger.info(
+        f"Diversity filter (max {max_per_source} per source): {len(results)} -> {len(diverse_results)} documents")
+    logger.info(f"Source distribution: {dict(source_counts)}")
+
+    return diverse_results

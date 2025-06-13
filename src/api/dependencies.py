@@ -1,5 +1,3 @@
-# src/api/dependencies.py - Fixed initialization
-
 from typing import Dict, Optional
 import logging
 import os
@@ -25,13 +23,15 @@ job_tracker = None
 qdrant_client = None
 vector_store = None
 
-# Determine if we're in API-only mode
-IS_API_MODE = os.environ.get("WORKER_TYPE", "") == "api"
-
 
 def init_vector_store():
-    """Initialize Qdrant client and vector store."""
+    """
+    Initialize Qdrant client and vector store.
+
+    REMOVED: No more metadata-only mode - always requires embedding function.
+    """
     global qdrant_client, vector_store
+
     if qdrant_client is None:
         logger.info("🚀 Initializing Qdrant client...")
         qdrant_client = QdrantClient(
@@ -42,15 +42,23 @@ def init_vector_store():
 
     if vector_store is None:
         logger.info("🚀 Initializing Vector Store...")
-        from src.core.vectorstore import QdrantStore
 
-        # Always use metadata-only mode for API
-        vector_store = QdrantStore(
-            client=qdrant_client,
-            collection_name=settings.qdrant_collection,
-            embedding_function=None,  # No embedding function needed for API
-        )
-        logger.info("✅ Vector Store Initialized (metadata-only mode)!")
+        # ✅ Always require embedding function - no more metadata-only mode
+        try:
+            embedding_function = settings.embedding_function
+            vector_store = QdrantStore(
+                client=qdrant_client,
+                collection_name=settings.qdrant_collection,
+                embedding_function=embedding_function,  # Always required
+            )
+            logger.info("✅ Vector Store Initialized with embedding function!")
+        except Exception as e:
+            logger.error(f"❌ Failed to initialize vector store: {e}")
+            logger.error("Vector store requires embedding function. No metadata-only mode supported.")
+            raise HTTPException(
+                status_code=500,
+                detail="Vector store initialization failed. Embedding function required."
+            )
 
 
 def init_redis_client():
@@ -76,7 +84,6 @@ def init_redis_client():
             logger.info("✅ Redis Client Initialized!")
         except Exception as e:
             logger.error(f"❌ Failed to initialize Redis client: {e}")
-            # Don't raise exception, let the app start but warn about Redis issues
             redis_client = None
     return redis_client
 
@@ -86,7 +93,6 @@ def init_job_tracker():
     global job_tracker
     if job_tracker is None:
         logger.info("🚀 Initializing Job Tracker...")
-        # Use the existing Redis client
         client = init_redis_client()
         if client is not None:
             job_tracker = JobTracker(redis_client=client)
@@ -96,30 +102,8 @@ def init_job_tracker():
     return job_tracker
 
 
-# Redis client dependency
-def get_redis_client() -> redis.Redis:
-    """Get the cached Redis client instance."""
-    if redis_client is None:
-        # Try to initialize on-demand
-        client = init_redis_client()
-        if client is None:
-            raise HTTPException(status_code=500, detail="Redis client not available")
-    return redis_client
-
-
-# JobTracker dependency
-def get_job_tracker() -> JobTracker:
-    """Get the cached JobTracker instance."""
-    if job_tracker is None:
-        # Try to initialize on-demand
-        tracker = init_job_tracker()
-        if tracker is None:
-            raise HTTPException(status_code=500, detail="Job tracker not available")
-    return job_tracker
-
-
 def load_all_components():
-    """Initialize only necessary components at application startup."""
+    """Initialize all components at application startup."""
     logger.info("🔄 Initializing API service components...")
 
     try:
@@ -129,15 +113,15 @@ def load_all_components():
         # Initialize job tracker (depends on Redis)
         init_job_tracker()
 
-        # Initialize vector store last (can fail without breaking Redis)
+        # Initialize vector store (now always requires embedding function)
         init_vector_store()
 
         logger.info("✅ API service initialization complete")
 
     except Exception as e:
         logger.error(f"❌ Error during API initialization: {str(e)}")
-        # Don't re-raise - let the API start even if some components fail
-        logger.warning("⚠️ API starting with limited functionality")
+        # Re-raise the exception since vector store is now required
+        raise
 
 
 # Authentication dependency
@@ -150,25 +134,39 @@ async def get_token_header(x_token: str = Header(...)):
     return x_token
 
 
-# Qdrant client dependency - reuses the global instance
+# Redis client dependency
+def get_redis_client() -> redis.Redis:
+    """Get the cached Redis client instance."""
+    if redis_client is None:
+        client = init_redis_client()
+        if client is None:
+            raise HTTPException(status_code=500, detail="Redis client not available")
+    return redis_client
+
+
+# JobTracker dependency
+def get_job_tracker() -> JobTracker:
+    """Get the cached JobTracker instance."""
+    if job_tracker is None:
+        tracker = init_job_tracker()
+        if tracker is None:
+            raise HTTPException(status_code=500, detail="Job tracker not available")
+    return job_tracker
+
+
+# Qdrant client dependency
 def get_qdrant_client() -> QdrantClient:
+    """Get the cached Qdrant client instance."""
     if qdrant_client is None:
         raise HTTPException(status_code=500, detail="Qdrant client not initialized yet.")
     return qdrant_client
 
 
-# Vector store dependency - reuses the global instance
+# Vector store dependency - now always has embedding function
 def get_vector_store() -> QdrantStore:
+    """Get the cached vector store instance."""
     if vector_store is None:
         raise HTTPException(status_code=500, detail="Vector store not initialized yet.")
     return vector_store
 
-
-# Function to handle missing model dependencies
-def api_mode_only_handler(model_name: str):
-    """Handler for endpoints that require models in API-only mode."""
-    if IS_API_MODE:
-        raise HTTPException(
-            status_code=501,
-            detail=f"{model_name} is not available in API-only mode. Use job chain system for processing."
-        )
+# REMOVED: api_mode_only_handler - no more API-only mode support
