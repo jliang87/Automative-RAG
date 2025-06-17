@@ -74,46 +74,51 @@ def render_pagination(total_jobs, current_page, per_page, tab_name):
     if total_pages <= 1:
         return current_page
 
-    # Single concise line with page info
-    st.markdown(f"**第 {current_page} / {total_pages} 页** (共 {total_jobs} 个任务)")
+    # Create a container for better alignment
+    with st.container():
+        # Use columns for proper alignment - all elements in same row
+        col1, col2, col3, col4, col5, col6 = st.columns([2, 1, 1, 1.5, 1, 1])
 
-    col1, col2, col3, col4, col5 = st.columns(5)
+        new_page = current_page
 
-    new_page = current_page
+        with col1:
+            # Use metric instead of markdown for consistent height
+            st.metric("", f"第 {current_page} / {total_pages} 页 (共 {total_jobs} 个任务)", label_visibility="collapsed")
 
-    with col1:
-        if current_page > 1:
-            if st.button("⏮️ 首页", key=f"first_{tab_name}", use_container_width=True):
-                new_page = 1
+        with col2:
+            if current_page > 1:
+                if st.button("⏮️ 首页", key=f"first_{tab_name}", use_container_width=True):
+                    return 1  # Return directly instead of setting variable
 
-    with col2:
-        if current_page > 1:
-            if st.button("◀️ 上页", key=f"prev_{tab_name}", use_container_width=True):
-                new_page = current_page - 1
+        with col3:
+            if current_page > 1:
+                if st.button("◀️ 上页", key=f"prev_{tab_name}", use_container_width=True):
+                    return current_page - 1  # Return directly
 
-    with col3:
-        # Page selector
-        page_options = list(range(1, total_pages + 1))
-        selected_page = st.selectbox(
-            "跳转到",
-            page_options,
-            index=current_page - 1,
-            key=f"page_select_{tab_name}",
-        )
-        if selected_page != current_page:
-            new_page = selected_page
+        with col4:
+            # Page selector
+            page_options = list(range(1, total_pages + 1))
+            selected_page = st.selectbox(
+                "跳转到",
+                page_options,
+                index=current_page - 1,
+                key=f"page_select_{tab_name}",
+                label_visibility="visible"
+            )
+            if selected_page != current_page:
+                return selected_page  # Return directly
 
-    with col4:
-        if current_page < total_pages:
-            if st.button("▶️ 下页", key=f"next_{tab_name}", use_container_width=True):
-                new_page = current_page + 1
+        with col5:
+            if current_page < total_pages:
+                if st.button("▶️ 下页", key=f"next_{tab_name}", use_container_width=True):
+                    return current_page + 1  # Return directly
 
-    with col5:
-        if current_page < total_pages:
-            if st.button("⏭️ 末页", key=f"last_{tab_name}", use_container_width=True):
-                new_page = total_pages
+        with col6:
+            if current_page < total_pages:
+                if st.button("⏭️ 末页", key=f"last_{tab_name}", use_container_width=True):
+                    return total_pages  # Return directly
 
-    return new_page
+    return current_page
 
 
 # === INITIALIZE PAGINATION STATE ===
@@ -526,12 +531,16 @@ with tab1:  # Processing jobs
         # Pagination at bottom
         if len(processing_jobs) > jobs_per_page:
             st.markdown("---")
-            st.session_state.processing_page = render_pagination(
+            new_page = render_pagination(
                 len(processing_jobs),
                 st.session_state.processing_page,
                 jobs_per_page,
                 "processing"
             )
+            # Only update and rerun if page actually changed
+            if new_page != st.session_state.processing_page:
+                st.session_state.processing_page = new_page
+                st.rerun()
 
         # Auto-refresh option for processing jobs
         st.markdown("---")
@@ -555,12 +564,16 @@ with tab2:  # Completed jobs
         # Pagination at bottom
         if len(completed_jobs) > jobs_per_page:
             st.markdown("---")
-            st.session_state.completed_page = render_pagination(
+            new_page = render_pagination(
                 len(completed_jobs),
                 st.session_state.completed_page,
                 jobs_per_page,
                 "completed"
             )
+            # Only update and rerun if page actually changed
+            if new_page != st.session_state.completed_page:
+                st.session_state.completed_page = new_page
+                st.rerun()
     else:
         st.info("📭 暂无已完成的任务")
 
@@ -577,12 +590,16 @@ with tab3:  # All jobs
     # Pagination at bottom
     if len(jobs) > jobs_per_page:
         st.markdown("---")
-        st.session_state.all_jobs_page = render_pagination(
+        new_page = render_pagination(
             len(jobs),
             st.session_state.all_jobs_page,
             jobs_per_page,
             "all_jobs"
         )
+        # Only update and rerun if page actually changed
+        if new_page != st.session_state.all_jobs_page:
+            st.session_state.all_jobs_page = new_page
+            st.rerun()
 
 # === PAGE ACTIONS ===
 st.markdown("---")
