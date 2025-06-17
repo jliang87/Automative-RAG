@@ -18,18 +18,46 @@ initialize_session_state()
 st.title("📋 后台任务")
 st.markdown("查看和管理您的处理任务")
 
-# Auto-scroll to top when pagination navigation occurs
+# Auto-scroll to top when pagination navigation occurs - IMPROVED VERSION
 if st.session_state.get("should_scroll_to_top", False):
+    # Create a scroll anchor at the top of the page
+    st.markdown('<div id="top-anchor"></div>', unsafe_allow_html=True)
+
+    # More robust JavaScript scrolling with multiple fallbacks
     st.markdown("""
     <script>
-        setTimeout(function() {
-            window.scrollTo({
-                top: 0,
-                behavior: 'smooth'
-            });
-        }, 100);
+        // Multiple scroll methods for better compatibility
+        function scrollToTop() {
+            // Method 1: Scroll to anchor
+            const anchor = document.getElementById('top-anchor');
+            if (anchor) {
+                anchor.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
+
+            // Method 2: Force scroll to absolute top
+            setTimeout(() => {
+                window.scrollTo({ top: 0, left: 0, behavior: 'smooth' });
+            }, 50);
+
+            // Method 3: Immediate fallback for stubborn cases
+            setTimeout(() => {
+                document.documentElement.scrollTop = 0;
+                document.body.scrollTop = 0;
+            }, 200);
+
+            // Method 4: Final fallback
+            setTimeout(() => {
+                window.scrollTo(0, 0);
+            }, 500);
+        }
+
+        // Execute immediately and with delays
+        scrollToTop();
+        setTimeout(scrollToTop, 100);
+        setTimeout(scrollToTop, 300);
     </script>
     """, unsafe_allow_html=True)
+
     # Clear the flag
     st.session_state.should_scroll_to_top = False
 
