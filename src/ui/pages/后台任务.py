@@ -20,8 +20,21 @@ if "_trigger_scroll" in st.query_params:
     params.pop("_trigger_scroll", None)
     st.query_params.update(params)
 
-st.empty()  # Force this to be at absolute top
+st.empty()  # Force Streamlit to render a top anchor
 st.markdown('<div id="page-top" style="position: absolute; top: 0; height: 1px;"></div>', unsafe_allow_html=True)
+
+st.markdown("""
+    <script>
+        window.addEventListener("load", function() {
+            const url = new URL(window.location);
+            if (url.searchParams.get("_trigger_scroll")) {
+                window.scrollTo(0, 0);
+                url.searchParams.delete("_trigger_scroll");
+                window.history.replaceState(null, "", url);
+            }
+        });
+    </script>
+""", unsafe_allow_html=True)
 
 st.title("📋 后台任务")
 st.markdown("查看和管理您的处理任务")
