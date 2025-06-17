@@ -229,7 +229,7 @@ with st.expander("💡 上传建议"):
     - 可以包含技术参数表格
     """)
 
-# Navigation
+# Navigation - Updated to use only 智能查询.py
 st.markdown("---")
 nav_cols = st.columns(3)
 
@@ -238,8 +238,8 @@ with nav_cols[0]:
         st.switch_page("pages/后台任务.py")
 
 with nav_cols[1]:
-    if st.button("🔍 开始查询", use_container_width=True):
-        st.switch_page("pages/查询.py")
+    if st.button("🧠 智能查询", use_container_width=True):
+        st.switch_page("pages/智能查询.py")
 
 with nav_cols[2]:
     if st.button("🏠 返回主页", use_container_width=True):

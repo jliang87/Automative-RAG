@@ -1,8 +1,3 @@
-"""
-Clean system info page - src/ui/pages/系统信息.py
-Focus: System health, worker status, GPU usage, service availability
-"""
-
 import streamlit as st
 from src.ui.api_client import (
     api_request,
@@ -162,8 +157,8 @@ st.subheader("🚀 快速操作")
 action_cols = st.columns(3)
 
 with action_cols[0]:
-    if st.button("🔍 开始查询", use_container_width=True, type="primary"):
-        st.switch_page("pages/查询.py")
+    if st.button("🧠 智能查询", use_container_width=True, type="primary"):
+        st.switch_page("pages/智能查询.py")
 
 with action_cols[1]:
     if st.button("📤 上传资料", use_container_width=True):

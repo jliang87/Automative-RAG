@@ -294,8 +294,8 @@ with nav_cols[0]:
         st.switch_page("pages/数据摄取.py")
 
 with nav_cols[1]:
-    if st.button("🔍 开始查询", use_container_width=True):
-        st.switch_page("pages/查询.py")
+    if st.button("🧠 智能查询", use_container_width=True):
+        st.switch_page("pages/智能查询.py")
 
 with nav_cols[2]:
     if st.button("📋 查看任务", use_container_width=True):
