@@ -15,35 +15,46 @@ logger = logging.getLogger(__name__)
 
 initialize_session_state()
 
+st.markdown('''
+    <style>
+        html { scroll-behavior: smooth; }
+    </style>
+''', unsafe_allow_html=True)
+
+st.markdown('''
+    <div id="page-top" style="height: 1px; position: fixed; top: 0;"></div>
+''', unsafe_allow_html=True)
+
+st.markdown("""
+<script>
+    // Wait until all DOM is loaded, then scroll if needed
+    window.addEventListener("load", function () {
+        const params = new URLSearchParams(window.location.search);
+        if (params.get("_scroll") === "top") {
+            setTimeout(() => {
+                const anchor = document.getElementById("page-top");
+                if (anchor) {
+                    anchor.scrollIntoView({ behavior: "auto", block: "start" });
+                } else {
+                    window.scrollTo({ top: 0, behavior: "auto" });
+                }
+
+                // Clean the URL to avoid persistent scrolling on refresh
+                params.delete("_scroll");
+                const newUrl = window.location.pathname + (params.toString() ? '?' + params.toString() : '');
+                window.history.replaceState({}, '', newUrl);
+            }, 700);  // Ensure all rendering finishes
+        }
+    });
+</script>
+""", unsafe_allow_html=True)
+
 st.empty()  # Force this to be at absolute top
 st.markdown('<div id="page-top" style="position: absolute; top: 0; height: 1px;"></div>', unsafe_allow_html=True)
 
 st.title("📋 后台任务")
 st.markdown("查看和管理您的处理任务")
 
-# Auto-scroll logic - IMPROVED with longer delay and window.load event
-st.markdown("""
-<script>
-window.addEventListener("load", () => {
-    const params = new URLSearchParams(window.location.search);
-    if (params.get("_scroll") === "top") {
-        setTimeout(() => {
-            const anchor = document.getElementById("page-top");
-            if (anchor) {
-                anchor.scrollIntoView({ behavior: "auto", block: "start" });
-            } else {
-                window.scrollTo({ top: 0, behavior: "auto" });
-            }
-
-            // Clean up URL
-            params.delete("_scroll");
-            const newUrl = window.location.pathname + (params.toString() ? '?' + params.toString() : '');
-            history.replaceState(null, '', newUrl);
-        }, 500); // Increased delay to ensure all content is rendered
-    }
-});
-</script>
-""", unsafe_allow_html=True)
 
 # === JOB STATISTICS OVERVIEW ===
 job_stats = get_job_statistics()
