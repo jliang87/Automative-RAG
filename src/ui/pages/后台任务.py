@@ -584,8 +584,10 @@ if st.session_state.current_tab == 0:  # Processing jobs
             if new_page != st.session_state.processing_page:
                 st.session_state.processing_page = new_page
                 # Set scroll parameter before rerun
-                st.query_params.update({"_trigger_scroll": str(time.time())})
-                st.rerun()
+                st.query_params.update({
+                    "completed_page": str(new_page),
+                    "_trigger_scroll": str(time.time())
+                })
 
         # Auto-refresh option for processing jobs
         st.markdown("---")
@@ -623,8 +625,10 @@ elif st.session_state.current_tab == 1:  # Completed jobs
             if new_page != st.session_state.completed_page:
                 st.session_state.completed_page = new_page
                 # Set scroll parameter before rerun
-                st.query_params.update({"_trigger_scroll": str(time.time())})
-                st.rerun()
+                st.query_params.update({
+                    "completed_page": str(new_page),
+                    "_trigger_scroll": str(time.time())
+                })
     else:
         st.info("📭 暂无已完成的任务")
 
@@ -655,8 +659,10 @@ elif st.session_state.current_tab == 2:  # All jobs
         if new_page != st.session_state.all_jobs_page:
             st.session_state.all_jobs_page = new_page
             # Set scroll parameter before rerun
-            st.query_params.update({"_trigger_scroll": str(time.time())})
-            st.rerun()
+            st.query_params.update({
+                "completed_page": str(new_page),
+                "_trigger_scroll": str(time.time())
+            })
 
 # === PAGE ACTIONS ===
 st.markdown("---")
