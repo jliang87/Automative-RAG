@@ -15,11 +15,10 @@ logger = logging.getLogger(__name__)
 
 initialize_session_state()
 
-if "_trigger_scroll" in st.experimental_get_query_params():
-    params = st.experimental_get_query_params()
-    if "_trigger_scroll" in params:
-        del params["_trigger_scroll"]
-        st.query_params(**params)
+if "_trigger_scroll" in st.query_params:
+    params = dict(st.query_params)
+    params.pop("_trigger_scroll", None)
+    st.query_params.update(params)
 
 st.empty()  # Force this to be at absolute top
 st.markdown('<div id="page-top" style="position: absolute; top: 0; height: 1px;"></div>', unsafe_allow_html=True)
@@ -585,7 +584,7 @@ if st.session_state.current_tab == 0:  # Processing jobs
             if new_page != st.session_state.processing_page:
                 st.session_state.processing_page = new_page
                 # Set scroll parameter before rerun
-                st.query_params(_trigger_scroll=str(time.time()))
+                st.query_params.update({"_trigger_scroll": str(time.time())})
                 st.rerun()
 
         # Auto-refresh option for processing jobs
@@ -624,7 +623,7 @@ elif st.session_state.current_tab == 1:  # Completed jobs
             if new_page != st.session_state.completed_page:
                 st.session_state.completed_page = new_page
                 # Set scroll parameter before rerun
-                st.query_params(_trigger_scroll=str(time.time()))
+                st.query_params.update({"_trigger_scroll": str(time.time())})
                 st.rerun()
     else:
         st.info("📭 暂无已完成的任务")
@@ -656,7 +655,7 @@ elif st.session_state.current_tab == 2:  # All jobs
         if new_page != st.session_state.all_jobs_page:
             st.session_state.all_jobs_page = new_page
             # Set scroll parameter before rerun
-            st.query_params(_trigger_scroll=str(time.time()))
+            st.query_params.update({"_trigger_scroll": str(time.time())})
             st.rerun()
 
 # === PAGE ACTIONS ===
