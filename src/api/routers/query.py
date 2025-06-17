@@ -4,14 +4,12 @@ from typing import Dict, List, Optional, Any, Union
 from fastapi import APIRouter, Depends, HTTPException, Query as FastAPIQuery
 import logging
 import numpy as np
-from src.ui.api_client import api_request
 
 from src.core.background.job_chain import job_chain, JobType
 from src.core.background.job_tracker import job_tracker
 from src.models.schema import (
-    QueryRequest,
-    QueryResponse,
-    BackgroundJobResponse,
+    # REMOVED: QueryRequest, QueryResponse, BackgroundJobResponse (legacy)
+    # UNIFIED: Only enhanced query models
     EnhancedQueryRequest,
     EnhancedQueryResponse,
     EnhancedBackgroundJobResponse,
@@ -25,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# Query mode configurations
+# Query mode configurations (unchanged)
 QUERY_MODE_CONFIGS = {
     QueryMode.FACTS: QueryModeConfig(
         mode=QueryMode.FACTS,
@@ -33,7 +31,7 @@ QUERY_MODE_CONFIGS = {
         name="车辆规格查询",
         description="验证具体的车辆规格参数",
         use_case="查询确切的技术规格、配置信息",
-        two_layer=True,
+        two_layer=False,  # UPDATED: Facts mode is now direct
         examples=[
             "2023年宝马X5的后备箱容积是多少？",
             "特斯拉Model 3的充电速度参数",
@@ -108,48 +106,11 @@ QUERY_MODE_CONFIGS = {
 }
 
 
-async def handle_query_logic(request: QueryRequest) -> BackgroundJobResponse:
-    """Standard query handling function (backward compatibility)"""
-    try:
-        job_id = str(uuid.uuid4())
-
-        job_tracker.create_job(
-            job_id=job_id,
-            job_type="llm_inference",
-            metadata={
-                "query": request.query,
-                "metadata_filter": request.metadata_filter,
-                "top_k": getattr(request, "top_k", 5),
-                "query_mode": "facts"  # Default mode for legacy queries
-            }
-        )
-
-        job_chain.start_job_chain(
-            job_id=job_id,
-            job_type=JobType.LLM_INFERENCE,
-            initial_data={
-                "query": request.query,
-                "metadata_filter": request.metadata_filter,
-                "query_mode": "facts"
-            }
-        )
-
-        return BackgroundJobResponse(
-            message="Query is processing in the background",
-            job_id=job_id,
-            job_type="llm_inference",
-            status="processing",
-        )
-    except Exception as e:
-        logger.error(f"Error starting query processing: {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error processing query: {str(e)}",
-        )
-
-
-async def handle_enhanced_query_logic(request: EnhancedQueryRequest) -> EnhancedBackgroundJobResponse:
-    """Enhanced query handling with mode support"""
+async def handle_unified_query_logic(request: EnhancedQueryRequest) -> EnhancedBackgroundJobResponse:
+    """
+    UNIFIED: Single query handling function for all query modes.
+    Facts mode serves as the default, replacing old normal queries.
+    """
     try:
         job_id = str(uuid.uuid4())
 
@@ -164,27 +125,27 @@ async def handle_enhanced_query_logic(request: EnhancedQueryRequest) -> Enhanced
 
         # Determine complexity level
         complexity_map = {
-            QueryMode.FACTS: "simple",
+            QueryMode.FACTS: "simple",      # UNIFIED: Facts is the new "normal"
             QueryMode.FEATURES: "moderate",
             QueryMode.TRADEOFFS: "complex",
             QueryMode.SCENARIOS: "complex",
             QueryMode.DEBATE: "complex",
             QueryMode.QUOTES: "simple"
         }
-        complexity = complexity_map.get(request.query_mode, "moderate")
+        complexity = complexity_map.get(request.query_mode, "simple")
 
         # Estimate processing time based on mode
         time_estimates = {
-            QueryMode.FACTS: 15,
+            QueryMode.FACTS: 10,        # OPTIMIZED: Faster for facts (was 15)
             QueryMode.FEATURES: 30,
             QueryMode.TRADEOFFS: 45,
             QueryMode.SCENARIOS: 40,
             QueryMode.DEBATE: 50,
             QueryMode.QUOTES: 20
         }
-        estimated_time = time_estimates.get(request.query_mode, 30)
+        estimated_time = time_estimates.get(request.query_mode, 20)
 
-        # Create enhanced job record
+        # Create unified job record
         job_tracker.create_job(
             job_id=job_id,
             job_type="llm_inference",
@@ -196,7 +157,8 @@ async def handle_enhanced_query_logic(request: EnhancedQueryRequest) -> Enhanced
                 "has_custom_template": request.prompt_template is not None,
                 "complexity_level": complexity,
                 "estimated_time": estimated_time,
-                "mode_name": mode_config.name
+                "mode_name": mode_config.name,
+                "unified_system": True  # Flag to indicate unified system
             }
         )
 
@@ -213,7 +175,7 @@ async def handle_enhanced_query_logic(request: EnhancedQueryRequest) -> Enhanced
         )
 
         return EnhancedBackgroundJobResponse(
-            message=f"Query is processing in '{mode_config.name}' mode",
+            message=f"Query processing in '{mode_config.name}' mode",
             job_id=job_id,
             job_type="llm_inference",
             query_mode=request.query_mode,
@@ -224,29 +186,29 @@ async def handle_enhanced_query_logic(request: EnhancedQueryRequest) -> Enhanced
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error starting enhanced query processing: {str(e)}")
+        logger.error(f"Error starting unified query processing: {str(e)}")
         raise HTTPException(
             status_code=500,
-            detail=f"Error processing enhanced query: {str(e)}",
+            detail=f"Error processing query: {str(e)}",
         )
 
 
-@router.post("/", response_model=BackgroundJobResponse)
-async def query_with_slash(request: QueryRequest) -> BackgroundJobResponse:
-    """Standard query endpoint with trailing slash (backward compatibility)"""
-    return await handle_query_logic(request)
+# UNIFIED ENDPOINTS - Remove old normal query endpoints
+
+@router.post("/", response_model=EnhancedBackgroundJobResponse)
+async def unified_query_with_slash(request: EnhancedQueryRequest) -> EnhancedBackgroundJobResponse:
+    """UNIFIED: Single query endpoint with trailing slash"""
+    return await handle_unified_query_logic(request)
 
 
-@router.post("", response_model=BackgroundJobResponse)
-async def query_without_slash(request: QueryRequest) -> BackgroundJobResponse:
-    """Standard query endpoint without trailing slash (backward compatibility)"""
-    return await handle_query_logic(request)
+@router.post("", response_model=EnhancedBackgroundJobResponse)
+async def unified_query_without_slash(request: EnhancedQueryRequest) -> EnhancedBackgroundJobResponse:
+    """UNIFIED: Single query endpoint without trailing slash"""
+    return await handle_unified_query_logic(request)
 
 
-@router.post("/enhanced", response_model=EnhancedBackgroundJobResponse)
-async def enhanced_query(request: EnhancedQueryRequest) -> EnhancedBackgroundJobResponse:
-    """Enhanced query endpoint with mode support"""
-    return await handle_enhanced_query_logic(request)
+# REMOVED: Old enhanced query endpoint - now this IS the main endpoint
+# @router.post("/enhanced", ...)  # No longer needed
 
 
 @router.get("/modes", response_model=List[QueryModeConfig])
@@ -266,6 +228,12 @@ async def get_query_mode(mode: QueryMode) -> QueryModeConfig:
     return QUERY_MODE_CONFIGS[mode]
 
 
+@router.get("/modes/default", response_model=QueryModeConfig)
+async def get_default_query_mode() -> QueryModeConfig:
+    """Get the default query mode (Facts - replaces normal queries)"""
+    return QUERY_MODE_CONFIGS[QueryMode.FACTS]
+
+
 @router.post("/validate", response_model=QueryValidationResult)
 async def validate_query(request: EnhancedQueryRequest) -> QueryValidationResult:
     """Validate a query for mode compatibility"""
@@ -275,10 +243,10 @@ async def validate_query(request: EnhancedQueryRequest) -> QueryValidationResult
         # Mode compatibility scoring
         compatibility_scores = {}
 
-        # Facts mode: looks for specific questions
+        # Facts mode: looks for specific questions (DEFAULT/FALLBACK)
         facts_keywords = ["什么", "多少", "哪个", "规格", "参数", "尺寸", "重量"]
         facts_score = sum(1 for kw in facts_keywords if kw in query_text) / len(facts_keywords)
-        compatibility_scores[QueryMode.FACTS] = facts_score > 0.3
+        compatibility_scores[QueryMode.FACTS] = facts_score > 0.2  # Lower threshold (more inclusive)
 
         # Features mode: looks for evaluation language
         features_keywords = ["应该", "值得", "建议", "增加", "功能", "是否"]
@@ -307,7 +275,7 @@ async def validate_query(request: EnhancedQueryRequest) -> QueryValidationResult
 
         # Calculate overall scores
         mode_scores = {
-            QueryMode.FACTS: facts_score,
+            QueryMode.FACTS: max(facts_score, 0.4),  # BOOST: Facts always has decent score
             QueryMode.FEATURES: features_score,
             QueryMode.TRADEOFFS: tradeoffs_score,
             QueryMode.SCENARIOS: scenarios_score,
@@ -315,20 +283,20 @@ async def validate_query(request: EnhancedQueryRequest) -> QueryValidationResult
             QueryMode.QUOTES: quotes_score
         }
 
-        # Suggest best mode
+        # Suggest best mode (Facts is good fallback)
         suggested_mode = max(mode_scores.items(), key=lambda x: x[1])[0]
         confidence = max(mode_scores.values())
 
         # Generate recommendations
         recommendations = []
-        if confidence < 0.3:
-            recommendations.append("查询较为通用，建议使用基础查询模式")
+        if confidence < 0.4:
+            recommendations.append("建议使用车辆规格查询模式（默认模式）")
 
-        if facts_score > 0.4:
-            recommendations.append("查询包含具体规格问题，适合使用事实查询模式")
+        if facts_score > 0.3:
+            recommendations.append("查询包含具体规格问题，车辆规格查询模式最适合")
 
         if any(score > 0.3 for score in [features_score, tradeoffs_score, scenarios_score, debate_score]):
-            recommendations.append("查询适合深度分析，建议使用智能分析模式")
+            recommendations.append("查询适合深度分析，可考虑使用智能分析模式")
 
         return QueryValidationResult(
             is_valid=True,
@@ -343,14 +311,15 @@ async def validate_query(request: EnhancedQueryRequest) -> QueryValidationResult
         return QueryValidationResult(
             is_valid=False,
             mode_compatibility={},
-            recommendations=["查询验证失败，请检查输入"],
+            recommendations=["查询验证失败，将使用默认的车辆规格查询模式"],
+            suggested_mode=QueryMode.FACTS,  # DEFAULT FALLBACK
             confidence_score=0.0
         )
 
 
-@router.get("/results/{job_id}", response_model=Optional[Union[QueryResponse, EnhancedQueryResponse]])
-async def get_query_result(job_id: str) -> Optional[Union[QueryResponse, EnhancedQueryResponse]]:
-    """Get query results with enhanced mode support"""
+@router.get("/results/{job_id}", response_model=Optional[EnhancedQueryResponse])
+async def get_query_result(job_id: str) -> Optional[EnhancedQueryResponse]:
+    """UNIFIED: Get query results (always enhanced format)"""
     job_data = job_tracker.get_job(job_id)
 
     if not job_data:
@@ -370,9 +339,12 @@ async def get_query_result(job_id: str) -> Optional[Union[QueryResponse, Enhance
         except:
             result = {"answer": result}
 
-    # Determine if this is an enhanced query
+    # Get query mode (default to FACTS if missing)
     query_mode = metadata.get("query_mode", "facts")
-    is_enhanced = query_mode != "facts" or metadata.get("has_custom_template", False)
+    try:
+        query_mode_enum = QueryMode(query_mode)
+    except ValueError:
+        query_mode_enum = QueryMode.FACTS  # Fallback to facts
 
     if status == "completed":
         # Get documents and clean them
@@ -409,78 +381,48 @@ async def get_query_result(job_id: str) -> Optional[Union[QueryResponse, Enhance
         if answer.startswith("<think>") and "</think>" in answer:
             answer = answer.split("</think>")[-1].strip()
 
-        # Return enhanced response if applicable
-        if is_enhanced:
-            # Parse structured sections for two-layer modes
-            analysis_structure = None
-            mode_metadata = {
-                "processing_mode": query_mode,
-                "complexity_level": metadata.get("complexity_level", "moderate"),
-                "mode_name": metadata.get("mode_name", "")
-            }
+        # Parse structured sections for two-layer modes
+        analysis_structure = None
+        mode_metadata = {
+            "processing_mode": query_mode,
+            "complexity_level": metadata.get("complexity_level", "simple"),
+            "mode_name": metadata.get("mode_name", ""),
+            "unified_system": True
+        }
 
-            try:
-                query_mode_enum = QueryMode(query_mode)
-                mode_config = QUERY_MODE_CONFIGS.get(query_mode_enum)
+        mode_config = QUERY_MODE_CONFIGS.get(query_mode_enum)
+        if mode_config and mode_config.two_layer:
+            # Parse structured sections
+            analysis_structure = parse_structured_answer(answer, query_mode)
+            mode_metadata["structured_sections"] = list(analysis_structure.keys()) if analysis_structure else []
 
-                if mode_config and mode_config.two_layer:
-                    # Parse structured sections
-                    analysis_structure = parse_structured_answer(answer, query_mode)
-                    mode_metadata["structured_sections"] = list(analysis_structure.keys()) if analysis_structure else []
-
-            except (ValueError, KeyError):
-                # Invalid mode, treat as standard response
-                pass
-
-            return EnhancedQueryResponse(
-                query=result.get("query", metadata.get("query", "")),
-                answer=answer,
-                documents=cleaned_documents,
-                query_mode=QueryMode(query_mode),
-                analysis_structure=analysis_structure,
-                metadata_filters_used=metadata.get("metadata_filter"),
-                execution_time=result.get("execution_time", 0),
-                status=status,
-                job_id=job_id,
-                mode_metadata=mode_metadata
-            )
-        else:
-            # Return standard response
-            return QueryResponse(
-                query=result.get("query", metadata.get("query", "")),
-                answer=answer,
-                documents=cleaned_documents,
-                metadata_filters_used=metadata.get("metadata_filter"),
-                execution_time=result.get("execution_time", 0),
-                status=status,
-                job_id=job_id
-            )
+        return EnhancedQueryResponse(
+            query=result.get("query", metadata.get("query", "")),
+            answer=answer,
+            documents=cleaned_documents,
+            query_mode=query_mode_enum,
+            analysis_structure=analysis_structure,
+            metadata_filters_used=metadata.get("metadata_filter"),
+            execution_time=result.get("execution_time", 0),
+            status=status,
+            job_id=job_id,
+            mode_metadata=mode_metadata
+        )
 
     elif status == "failed":
-        # Create appropriate error response
+        # Create error response
         error_msg = job_data.get('error', 'Unknown error')
 
-        if is_enhanced:
-            return EnhancedQueryResponse(
-                query=metadata.get("query", ""),
-                answer=f"Error: {error_msg}",
-                documents=[],
-                query_mode=QueryMode(query_mode),
-                metadata_filters_used=metadata.get("metadata_filter"),
-                execution_time=0,
-                status=status,
-                job_id=job_id
-            )
-        else:
-            return QueryResponse(
-                query=metadata.get("query", ""),
-                answer=f"Error: {error_msg}",
-                documents=[],
-                metadata_filters_used=metadata.get("metadata_filter"),
-                execution_time=0,
-                status=status,
-                job_id=job_id
-            )
+        return EnhancedQueryResponse(
+            query=metadata.get("query", ""),
+            answer=f"Error: {error_msg}",
+            documents=[],
+            query_mode=query_mode_enum,
+            metadata_filters_used=metadata.get("metadata_filter"),
+            execution_time=0,
+            status=status,
+            job_id=job_id
+        )
     else:
         # Still processing
         chain_status = job_chain.get_job_chain_status(job_id)
@@ -488,39 +430,24 @@ async def get_query_result(job_id: str) -> Optional[Union[QueryResponse, Enhance
 
         if chain_status:
             current_task = chain_status.get("current_task", "unknown")
-            if is_enhanced:
-                mode_name = metadata.get("mode_name", query_mode)
-                progress_msg = f"Processing {mode_name}... (Current: {current_task})"
-            else:
-                progress_msg = f"Processing query... (Current: {current_task})"
+            mode_name = metadata.get("mode_name", query_mode)
+            progress_msg = f"Processing {mode_name}... (Current: {current_task})"
 
-        if is_enhanced:
-            return EnhancedQueryResponse(
-                query=metadata.get("query", ""),
-                answer=progress_msg,
-                documents=[],
-                query_mode=QueryMode(query_mode),
-                metadata_filters_used=metadata.get("metadata_filter"),
-                execution_time=0,
-                status=status,
-                job_id=job_id
-            )
-        else:
-            return QueryResponse(
-                query=metadata.get("query", ""),
-                answer=progress_msg,
-                documents=[],
-                metadata_filters_used=metadata.get("metadata_filter"),
-                execution_time=0,
-                status=status,
-                job_id=job_id
-            )
+        return EnhancedQueryResponse(
+            query=metadata.get("query", ""),
+            answer=progress_msg,
+            documents=[],
+            query_mode=query_mode_enum,
+            metadata_filters_used=metadata.get("metadata_filter"),
+            execution_time=0,
+            status=status,
+            job_id=job_id
+        )
 
 
 def parse_structured_answer(answer: str, query_mode: str) -> Optional[Dict[str, str]]:
     """Parse structured answer into sections based on query mode"""
     section_patterns = {
-        "facts": ["【实证答案】", "【推理补充】"],
         "features": ["【实证分析】", "【策略推理】"],
         "tradeoffs": ["【文档支撑】", "【利弊分析】"],
         "scenarios": ["【文档场景】", "【场景推理】"]
@@ -581,7 +508,7 @@ async def get_system_capabilities() -> SystemCapabilities:
 
         # Calculate estimated response times based on load
         base_times = {
-            QueryMode.FACTS: 15,
+            QueryMode.FACTS: 10,        # OPTIMIZED: Faster facts mode
             QueryMode.FEATURES: 30,
             QueryMode.TRADEOFFS: 45,
             QueryMode.SCENARIOS: 40,
@@ -590,11 +517,12 @@ async def get_system_capabilities() -> SystemCapabilities:
         }
 
         # Add delay based on queue load
-        queue_delay = current_load.get("inference_tasks", 0) * 10
+        queue_delay = current_load.get("inference_tasks", 0) * 8  # Reduced delay
         estimated_times = {mode: base_time + queue_delay for mode, base_time in base_times.items()}
 
         # System status check
         try:
+            from src.ui.api_client import api_request
             health_response = api_request("/health", silent=True)
             if health_response and health_response.get("status") == "healthy":
                 system_status = "healthy"
@@ -608,11 +536,13 @@ async def get_system_capabilities() -> SystemCapabilities:
             current_load=current_load,
             estimated_response_times=estimated_times,
             feature_flags={
+                "unified_query_system": True,      # NEW FLAG
                 "enhanced_queries": True,
                 "structured_analysis": True,
                 "multi_perspective": True,
                 "user_quotes": True,
-                "query_validation": True
+                "query_validation": True,
+                "facts_as_default": True           # NEW FLAG
             },
             system_status=system_status
         )
@@ -625,7 +555,8 @@ async def get_system_capabilities() -> SystemCapabilities:
         )
 
 
-# Legacy endpoints for backward compatibility
+# LEGACY SUPPORT ENDPOINTS (can be removed later)
+
 @router.get("/manufacturers", response_model=List[str])
 async def get_manufacturers() -> List[str]:
     """Get a list of available manufacturers."""
@@ -648,31 +579,6 @@ async def get_models(manufacturer: Optional[str] = None) -> List[str]:
         return ["3 Series", "5 Series", "X3", "X5", "i4"]
     else:
         return ["Model S", "Model 3", "Model X", "Model Y", "Cybertruck"]
-
-
-@router.get("/categories", response_model=List[str])
-async def get_categories() -> List[str]:
-    """Get a list of available vehicle categories."""
-    return [
-        "sedan", "suv", "truck", "sports", "minivan",
-        "coupe", "convertible", "hatchback", "wagon"
-    ]
-
-
-@router.get("/engine-types", response_model=List[str])
-async def get_engine_types() -> List[str]:
-    """Get a list of available engine types."""
-    return [
-        "gasoline", "diesel", "electric", "hybrid", "hydrogen"
-    ]
-
-
-@router.get("/transmission-types", response_model=List[str])
-async def get_transmission_types() -> List[str]:
-    """Get a list of available transmission types."""
-    return [
-        "automatic", "manual", "cvt", "dct"
-    ]
 
 
 @router.get("/queue-status", response_model=Dict[str, Any])

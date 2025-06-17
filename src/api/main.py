@@ -1,5 +1,3 @@
-# src/api/main.py - No authentication version
-
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.docs import get_swagger_ui_html
@@ -14,9 +12,35 @@ from src.config.settings import settings
 from src.api.dependencies import load_all_components
 
 # Define API metadata
-API_TITLE = "Automotive Specs RAG API"
-API_DESCRIPTION = "API for automotive specifications retrieval with job chain processing"
-API_VERSION = "0.2.0"
+API_TITLE = "Automotive Specs RAG API - Unified Query System"
+API_DESCRIPTION = """
+API for automotive specifications retrieval with unified query processing.
+
+## Unified Query System
+
+This API now uses a **unified query system** where all queries go through the enhanced query endpoint:
+
+### Query Modes:
+- **Facts (Default)**: Direct verification of vehicle specifications - *replaces normal queries*
+- **Features**: Evaluate whether to add new features  
+- **Tradeoffs**: Analyze pros/cons of design choices
+- **Scenarios**: Assess performance in user scenarios
+- **Debate**: Multi-perspective discussions
+- **Quotes**: Extract user reviews and feedback
+
+### Migration Notes:
+- Normal query endpoints have been retired
+- Facts mode serves as the default for direct specification queries
+- All queries now return enhanced response format with mode metadata
+- Better consistency and user experience
+
+### Key Features:
+- Job chain processing with dedicated GPU workers
+- Automatic hallucination detection
+- Mode-aware document retrieval
+- Tesla T4 optimized inference
+"""
+API_VERSION = "2.0.0"  # UPDATED: Major version bump for unified system
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -25,12 +49,13 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Load only necessary components when the FastAPI server starts."""
-    logger.info("🚀 Starting API service with job chain system...")
+    logger.info("🚀 Starting API service with unified query system...")
 
     try:
         # Initialize only the necessary components
         load_all_components()
         logger.info("✅ API components loaded successfully!")
+        logger.info("🔄 Unified query system active - Facts mode is default")
     except Exception as e:
         logger.error(f"❌ Error during API initialization: {str(e)}")
 
@@ -74,7 +99,7 @@ app.include_router(
 app.include_router(
     query.router,
     prefix="/query",
-    tags=["Query"],
+    tags=["Unified Query System"],  # UPDATED: Reflects unified system
     # NO authentication required
 )
 
@@ -91,11 +116,19 @@ app.include_router(
 @app.get("/", tags=["Root"])
 async def root():
     return {
-        "message": "Automotive Specs RAG API with Job Chain Processing",
-        "version": "0.2.0",
+        "message": "Automotive Specs RAG API - Unified Query System",
+        "version": "2.0.0",
         "docs": "/docs",
         "architecture": "dedicated_gpu_workers",
-        "authentication": "disabled"
+        "authentication": "disabled",
+        "query_system": "unified_enhanced",
+        "default_mode": "facts",
+        "migration_info": {
+            "normal_queries": "retired",
+            "enhanced_queries": "now_main_system",
+            "facts_mode": "default_for_direct_queries",
+            "breaking_changes": "normal_query_endpoints_removed"
+        }
     }
 
 
@@ -156,6 +189,9 @@ async def health_check():
         "mode": "dedicated_gpu_workers",
         "architecture": "event_driven",
         "authentication": "disabled",
+        "query_system": "unified_enhanced",  # NEW
+        "default_query_mode": "facts",       # NEW
+        "version": "2.0.0",                  # NEW
         "components": {
             "redis": "connected" if redis_ok else "error",
             "qdrant": "connected" if qdrant_ok else "error",
@@ -198,6 +234,12 @@ async def get_job_chains_overview():
                 formatted_job["progress"] = progress_info.get("progress")
                 formatted_job["progress_message"] = progress_info.get("message", "")
 
+            # Add unified system metadata
+            metadata = job.get("metadata", {})
+            if isinstance(metadata, dict):
+                formatted_job["query_mode"] = metadata.get("query_mode", "facts")
+                formatted_job["unified_system"] = metadata.get("unified_system", True)
+
             formatted_recent_jobs.append(formatted_job)
 
         return {
@@ -208,7 +250,9 @@ async def get_job_chains_overview():
                 "architecture": "dedicated_gpu_workers",
                 "self_triggering": True,
                 "auto_queue_management": True,
-                "total_jobs": job_stats.get("total", 0)
+                "total_jobs": job_stats.get("total", 0),
+                "query_system": "unified_enhanced",  # NEW
+                "default_mode": "facts"              # NEW
             }
         }
     except Exception as e:
@@ -246,6 +290,13 @@ async def get_job_chain_details(job_id: str):
             "result": job_data.get("result", {}),
             "error": job_data.get("error"),
         }
+
+        # Add unified system information
+        metadata = combined_data.get("metadata", {})
+        if isinstance(metadata, dict):
+            combined_data["query_mode"] = metadata.get("query_mode", "facts")
+            combined_data["unified_system"] = metadata.get("unified_system", True)
+            combined_data["mode_name"] = metadata.get("mode_name", "车辆规格查询")
 
         # Add progress information
         progress_info = job_data.get("progress_info", {})
@@ -288,3 +339,58 @@ async def get_worker_status():
             status_code=500,
             detail=f"Error getting worker status: {e}"
         )
+
+
+# NEW: System migration info endpoint
+@app.get("/migration", tags=["Migration"])
+async def get_migration_info():
+    """Get information about the unified system migration."""
+    return {
+        "migration_status": "completed",
+        "version": "2.0.0",
+        "changes": {
+            "removed": [
+                "Normal query endpoints (/query with QueryRequest)",
+                "Separate enhanced query endpoint (/query/enhanced)"
+            ],
+            "unified": [
+                "Single query endpoint (/query with UnifiedQueryRequest)",
+                "Facts mode as default (replaces normal queries)",
+                "All responses in unified format"
+            ],
+            "benefits": [
+                "Simplified API surface",
+                "Consistent response format",
+                "Intuitive default behavior",
+                "Better user experience"
+            ]
+        },
+        "compatibility": {
+            "breaking_changes": True,
+            "legacy_models": "deprecated_but_aliased",
+            "migration_path": "update_to_unified_models"
+        },
+        "query_modes": {
+            "facts": {
+                "role": "default_mode",
+                "replaces": "normal_queries",
+                "description": "Direct verification of specifications"
+            },
+            "others": "enhanced_analysis_modes"
+        }
+    }
+
+
+# NEW: Default query mode endpoint
+@app.get("/query/default-mode", tags=["Unified Query System"])
+async def get_default_query_mode():
+    """Get the default query mode for the unified system."""
+    return {
+        "default_mode": "facts",
+        "mode_name": "车辆规格查询",
+        "description": "Direct verification of vehicle specifications",
+        "replaces": "normal_queries",
+        "icon": "📌",
+        "complexity": "simple",
+        "estimated_time": 10
+    }
