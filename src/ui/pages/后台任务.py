@@ -24,16 +24,29 @@ st.empty()  # Force Streamlit to render a top anchor
 st.markdown('<div id="page-top" style="position: absolute; top: 0; height: 1px;"></div>', unsafe_allow_html=True)
 
 st.markdown("""
-    <script>
-        window.addEventListener("load", function() {
-            const url = new URL(window.location);
-            if (url.searchParams.get("_trigger_scroll")) {
-                window.scrollTo(0, 0);
-                url.searchParams.delete("_trigger_scroll");
-                window.history.replaceState(null, "", url);
-            }
-        });
-    </script>
+<script>
+(function() {
+    const url = new URL(window.location);
+    if (!url.searchParams.get("_trigger_scroll")) return;
+
+    let attempts = 0;
+    function tryScrollTop() {
+        window.scrollTo(0, 0);
+        attempts++;
+        if (window.scrollY > 0 && attempts < 10) {
+            requestAnimationFrame(tryScrollTop);
+        } else {
+            // Once done, clean up param
+            url.searchParams.delete("_trigger_scroll");
+            window.history.replaceState({}, "", url);
+        }
+    }
+
+    window.addEventListener("load", () => {
+        requestAnimationFrame(tryScrollTop);
+    });
+})();
+</script>
 """, unsafe_allow_html=True)
 
 st.title("📋 后台任务")
