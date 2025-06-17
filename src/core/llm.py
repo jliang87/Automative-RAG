@@ -69,7 +69,7 @@ class LocalLLM:
     Local DeepSeek LLM integration for RAG with GPU acceleration.
 
     UNIFIED SYSTEM: Only supports enhanced queries with mode-specific templates.
-    Facts mode serves as the default, replacing old normal queries.
+    Facts mode serves as the default and replaces old normal queries.
     Tesla T4 optimized with proper quantization handling.
     """
 
@@ -118,8 +118,8 @@ class LocalLLM:
         # Initialize tokenizer and model
         self._load_model()
 
-        # REMOVED: self.qa_prompt_template (normal query template)
-        # UNIFIED: Only mode-specific templates via get_prompt_template_for_mode()
+        # RESTORED: Original QA prompt template for Facts mode
+        self.qa_prompt_template = self._create_original_qa_prompt_template()
 
     def _load_model(self):
         """Load the local LLM model using environment-driven Tesla T4 configuration."""
@@ -200,6 +200,28 @@ class LocalLLM:
             else:
                 raise e
 
+    def _create_original_qa_prompt_template(self) -> str:
+        """
+        RESTORED: Create the original QA prompt template that was working.
+        This is used for Facts mode to ensure it works exactly like the old system.
+        """
+        template = """You are an automotive specifications expert assistant.
+
+Your task is to help users find information about automotive specifications, features, and technical details.
+
+Use ONLY the following context to answer the question. If the context doesn't contain the answer, say you don't know and suggest what additional information might be needed.
+
+Be concise, clear, and factual. Focus on providing accurate technical information. Highlight key specifications like horsepower, torque, dimensions, fuel efficiency, etc. when relevant.
+
+Context:
+{context}
+
+Question:
+{question}
+
+When providing your answer, cite the specific sources (document titles or URLs) where you found the information."""
+        return template
+
     def get_prompt_template_for_mode(self, mode: str) -> str:
         """
         Get specialized prompt template for different query modes.
@@ -208,25 +230,21 @@ class LocalLLM:
         """
 
         templates = {
-            "facts": """你是专业的汽车技术规格验证专家。
+            "facts": """You are an automotive specifications expert assistant.
 
-【任务】: 直接验证和回答用户询问的具体规格参数
+Your task is to help users find information about automotive specifications, features, and technical details.
 
-【指令】:
-1. 在文档中查找用户询问的具体数据和信息
-2. 如果找到确切信息，直接引用并说明来源
-3. 如果没找到，明确说"根据提供的文档，未提及该规格信息"
-4. 回答要简洁、准确、直接
-5. 不要推测、不要使用常识、不要分析利弊
-6. 只报告文档中的事实
+Use ONLY the following context to answer the question. If the context doesn't contain the answer, say you don't know and suggest what additional information might be needed.
 
-提供的文档内容：
+Be concise, clear, and factual. Focus on providing accurate technical information. Highlight key specifications like horsepower, torque, dimensions, fuel efficiency, etc. when relevant.
+
+Context:
 {context}
 
-用户问题：
+Question:
 {question}
 
-请直接回答：""",
+When providing your answer, cite the specific sources (document titles or URLs) where you found the information.""",
 
             "features": """你是汽车产品策略专家。请按照以下格式分析是否应该添加某项功能：
 
@@ -339,10 +357,6 @@ class LocalLLM:
 
         return templates.get(mode, templates["facts"])
 
-    # REMOVED: answer_query() method - no longer needed
-    # REMOVED: answer_query_with_sources() method - no longer needed
-    # UNIFIED: Only answer_query_with_mode() is used
-
     def answer_query_with_mode(
             self,
             query: str,
@@ -369,7 +383,11 @@ class LocalLLM:
             logger.warning(f"Invalid query mode '{query_mode}', using facts mode")
             query_mode = "facts"
 
-        # Get the appropriate prompt template
+        # CRITICAL FIX: For Facts mode, use the ORIGINAL working logic
+        if query_mode == "facts":
+            return self._answer_facts_mode_original(query, documents, metadata_filter)
+
+        # For other modes, use the enhanced templates
         template = self.get_prompt_template_for_mode(query_mode)
 
         # Format documents into context
@@ -416,6 +434,47 @@ class LocalLLM:
                 print(f"  GPU_MEMORY_FRACTION_INFERENCE: {settings.gpu_memory_fraction_inference}")
             raise e
 
+    def _answer_facts_mode_original(
+            self,
+            query: str,
+            documents: List[Tuple[Document, float]],
+            metadata_filter: Optional[Dict[str, Union[str, List[str], int, List[int]]]] = None,
+    ) -> str:
+        """
+        RESTORED: Use the original working logic for Facts mode.
+        This ensures Facts mode works exactly like the old basic query system.
+        """
+        # Use the original QA template
+        context = _format_documents_for_context(documents)
+
+        prompt = self.qa_prompt_template.format(
+            context=context,
+            question=query
+        )
+
+        # Generate answer using the same approach as the old system
+        start_time = time.time()
+
+        try:
+            results = self.pipe(
+                prompt,
+                num_return_sequences=1,
+                do_sample=True,
+                temperature=self.temperature,
+                pad_token_id=self.tokenizer.eos_token_id,
+                max_new_tokens=self.max_tokens
+            )
+
+            generation_time = time.time() - start_time
+            print(f"Facts mode (original) answer generated in {generation_time:.2f} seconds")
+
+            answer = results[0]["generated_text"]
+            return answer
+
+        except Exception as e:
+            print(f"❌ Facts mode generation failed: {e}")
+            raise e
+
     def validate_mode(self, mode: str) -> bool:
         """
         Validate if the query mode is supported.
@@ -445,7 +504,7 @@ class LocalLLM:
                 "description": "直接验证具体的车辆规格参数",
                 "two_layer": False,  # UNIFIED: Facts mode is direct
                 "complexity": "simple",
-                "template_type": "direct_verification",
+                "template_type": "original_qa",  # FIXED: Uses original template
                 "is_default": True  # NEW: Indicates this is the default mode
             },
             "features": {
@@ -525,7 +584,7 @@ class LocalLLM:
             "tesla_t4_optimized": not self.use_4bit,  # True if 4-bit is disabled
             "query_system": "unified_enhanced",  # UNIFIED: Only enhanced queries
             "default_mode": "facts",  # NEW: Default query mode
-            "template_system": "mode_specific_only",  # UNIFIED: No normal template
+            "template_system": "hybrid_original_enhanced",  # FIXED: Indicates Facts uses original
             "supported_modes": ["facts", "features", "tradeoffs", "scenarios", "debate", "quotes"]
         }
 
