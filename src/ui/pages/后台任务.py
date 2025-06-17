@@ -36,8 +36,21 @@ if any(job_stats.values()):
 
     st.markdown("---")
 
-# === JOB LIST WITH FILTERS ===
-jobs = get_jobs_list()
+# === PAGINATION CONTROLS ===
+col1, col2, col3 = st.columns(3)
+
+with col1:
+    jobs_limit = st.selectbox("获取任务数量", [50, 100, 200], index=1, help="限制获取的任务数量")
+
+with col2:
+    jobs_per_page = st.selectbox("每页显示", [10, 20, 30, 50], index=1, help="每页显示的任务数量")
+
+with col3:
+    if st.button("🔄 刷新任务列表", use_container_width=True):
+        st.rerun()
+
+# === FETCH JOBS ===
+jobs = get_jobs_list(limit=jobs_limit)
 
 if not jobs:
     st.info("📭 暂无处理任务")
@@ -45,8 +58,72 @@ if not jobs:
         st.rerun()
     st.stop()
 
-# Filter tabs
-tab1, tab2, tab3 = st.tabs(["⏳ 处理中", "✅ 已完成", "📋 全部任务"])
+
+# === PAGINATION HELPER FUNCTIONS ===
+def paginate_jobs(jobs_list, page_num, per_page):
+    """Paginate jobs list"""
+    start_idx = (page_num - 1) * per_page
+    end_idx = start_idx + per_page
+    return jobs_list[start_idx:end_idx]
+
+
+def render_pagination(total_jobs, current_page, per_page, tab_name):
+    """Render pagination controls"""
+    total_pages = (total_jobs + per_page - 1) // per_page
+
+    if total_pages <= 1:
+        return current_page
+
+    st.markdown(f"**页面 {current_page} / {total_pages}** (共 {total_jobs} 个任务)")
+
+    col1, col2, col3, col4, col5 = st.columns(5)
+
+    new_page = current_page
+
+    with col1:
+        if current_page > 1:
+            if st.button("⏮️ 首页", key=f"first_{tab_name}"):
+                new_page = 1
+
+    with col2:
+        if current_page > 1:
+            if st.button("◀️ 上页", key=f"prev_{tab_name}"):
+                new_page = current_page - 1
+
+    with col3:
+        # Page selector
+        page_options = list(range(1, total_pages + 1))
+        selected_page = st.selectbox(
+            "跳转",
+            page_options,
+            index=current_page - 1,
+            key=f"page_select_{tab_name}",
+            label_visibility="collapsed"
+        )
+        if selected_page != current_page:
+            new_page = selected_page
+
+    with col4:
+        if current_page < total_pages:
+            if st.button("▶️ 下页", key=f"next_{tab_name}"):
+                new_page = current_page + 1
+
+    with col5:
+        if current_page < total_pages:
+            if st.button("⏭️ 末页", key=f"last_{tab_name}"):
+                new_page = total_pages
+
+    return new_page
+
+
+# === INITIALIZE PAGINATION STATE ===
+if "processing_page" not in st.session_state:
+    st.session_state.processing_page = 1
+if "completed_page" not in st.session_state:
+    st.session_state.completed_page = 1
+if "all_jobs_page" not in st.session_state:
+    st.session_state.all_jobs_page = 1
+
 
 def format_job_type(job_type: str) -> str:
     """Format job type for display"""
@@ -59,6 +136,7 @@ def format_job_type(job_type: str) -> str:
     }
     return type_names.get(job_type, job_type)
 
+
 def format_time(timestamp: float) -> str:
     """Format timestamp for display"""
     if not timestamp:
@@ -68,12 +146,9 @@ def format_time(timestamp: float) -> str:
     except:
         return "时间格式错误"
 
-def display_job_card(job: Dict[str, Any], context: str, index: int):
-    """
-    Display a job card with progress and actions.
 
-    SIMPLIFIED: No manual Unicode decoding needed - data is already clean.
-    """
+def display_job_card(job: Dict[str, Any], context: str, index: int):
+    """Display a job card with progress and actions."""
     job_id = job.get("job_id", "")
     job_type = job.get("job_type", "")
     status = job.get("status", "")
@@ -97,10 +172,74 @@ def display_job_card(job: Dict[str, Any], context: str, index: int):
     job_short_id = job_id[:8]
     expand_key = f"expand_{context}_{index}_{job_short_id}"
 
+    # Extract key metadata to display directly
+    def get_display_metadata(job_data):
+        """Extract key metadata for direct display"""
+        metadata = job_data.get("metadata", {})
+        result = job_data.get("result", {})
+
+        # Parse result if it's a string
+        if isinstance(result, str):
+            try:
+                result = json.loads(result)
+            except:
+                result = {}
+
+        if job_type == "llm_inference":
+            # For queries, show the user's query
+            query = metadata.get("query") or result.get("query", "")
+            if query:
+                return f"🔍 查询: {query[:80]}{'...' if len(query) > 80 else ''}"
+            return "🔍 查询处理"
+
+        elif job_type in ["video_processing", "batch_video_processing"]:
+            # For videos, show title from video_metadata or URL
+            video_metadata = result.get("video_metadata", {})
+            title = video_metadata.get("title") or metadata.get("title", "")
+
+            if title:
+                return f"🎬 {title[:60]}{'...' if len(title) > 60 else ''}"
+
+            # Fallback to URL
+            url = metadata.get("url", "")
+            if url:
+                return f"🔗 {url[:50]}{'...' if len(url) > 50 else ''}"
+            return "🎬 视频处理"
+
+        elif job_type == "pdf_processing":
+            # For PDFs, show filename or title
+            filename = metadata.get("filename") or metadata.get("title", "")
+            if filename:
+                return f"📄 {filename[:50]}{'...' if len(filename) > 50 else ''}"
+
+            filepath = metadata.get("filepath", "")
+            if filepath:
+                import os
+                filename = os.path.basename(filepath)
+                return f"📄 {filename[:50]}{'...' if len(filename) > 50 else ''}"
+            return "📄 PDF处理"
+
+        elif job_type == "text_processing":
+            # For text, show title or content preview
+            title = metadata.get("title") or result.get("title", "")
+            if title and title != "Manual Text Input":
+                return f"✍️ {title[:50]}{'...' if len(title) > 50 else ''}"
+
+            # Fallback to content preview
+            content = result.get("original_text", "")
+            if content:
+                preview = content.replace('\n', ' ')[:40]
+                return f"✍️ {preview}{'...' if len(content) > 40 else ''}"
+            return "✍️ 文字处理"
+
+        return ""
+
+    display_info = get_display_metadata(job)
+
     # Job card container
     with st.container():
         # Header row
-        col1, col2, col3, col4 = st.columns([1, 3, 2, 1])
+        col1, col2, col3, col4 = st.columns([1, 4, 2, 1])
 
         with col1:
             st.markdown(f"<span style='font-size: 2em'>{config['icon']}</span>",
@@ -108,7 +247,10 @@ def display_job_card(job: Dict[str, Any], context: str, index: int):
 
         with col2:
             st.markdown(f"**{format_job_type(job_type)}**")
-            st.caption(f"ID: {job_id[:12]}...")
+            if display_info:
+                st.markdown(f"💬 {display_info}")
+            else:
+                st.caption(f"ID: {job_id[:12]}...")
 
         with col3:
             st.markdown(f"**状态: {status}**")
@@ -180,7 +322,6 @@ def display_job_card(job: Dict[str, Any], context: str, index: int):
                 result = job_detail.get('result', {})
 
                 if metadata and isinstance(metadata, dict):
-                    # Basic job metadata - no decoding needed, data is already clean
                     if metadata.get('url'):
                         st.write(f"**🔗 URL:** {metadata['url']}")
                     if metadata.get('query'):
@@ -200,7 +341,7 @@ def display_job_card(job: Dict[str, Any], context: str, index: int):
                 if job_detail.get('status') == 'completed':
                     if result and isinstance(result, dict):
 
-                        # Show video metadata - NO MANUAL UNICODE DECODING NEEDED
+                        # Show video metadata
                         video_metadata = result.get('video_metadata', {})
 
                         if video_metadata and isinstance(video_metadata, dict):
@@ -208,21 +349,18 @@ def display_job_card(job: Dict[str, Any], context: str, index: int):
 
                             video_col1, video_col2 = st.columns(2)
                             with video_col1:
-                                # Data is already clean thanks to global patch
                                 if video_metadata.get('title'):
                                     st.write(f"**标题:** {video_metadata['title']}")
                                 if video_metadata.get('author'):
                                     st.write(f"**作者:** {video_metadata['author']}")
                                 if video_metadata.get('published_date'):
                                     pub_date = video_metadata['published_date']
-                                    # Format date if it's in YYYYMMDD format
                                     if isinstance(pub_date, str) and len(pub_date) == 8:
                                         formatted_date = f"{pub_date[:4]}-{pub_date[4:6]}-{pub_date[6:8]}"
                                         st.write(f"**发布日期:** {formatted_date}")
                                     else:
                                         st.write(f"**发布日期:** {pub_date}")
 
-                                # Show URL as clickable link
                                 if video_metadata.get('url'):
                                     st.write(f"**链接:** [观看视频]({video_metadata['url']})")
 
@@ -237,45 +375,16 @@ def display_job_card(job: Dict[str, Any], context: str, index: int):
                                 if video_metadata.get('video_id'):
                                     st.write(f"**视频ID:** {video_metadata['video_id']}")
 
-                                # Show language from transcription result
                                 language = result.get('language') or video_metadata.get('language')
                                 if language:
                                     lang_display = {"zh": "中文", "en": "英文"}.get(language, language)
                                     st.write(f"**语言:** {lang_display}")
 
-                            # Show description if available - no decoding needed
-                            if video_metadata.get('description') and video_metadata['description'] != '-':
-                                description = video_metadata['description']
-                                st.write("**📝 视频描述:**")
-
-                                if len(description) > 300:
-                                    desc_key = f"show_desc_{context}_{index}_{job_short_id}"
-                                    if desc_key not in st.session_state:
-                                        st.session_state[desc_key] = False
-
-                                    if st.session_state[desc_key]:
-                                        st.text_area("完整描述", description, height=150, disabled=True,
-                                                     key=f"full_desc_{context}_{index}_{job_short_id}")
-                                        if st.button("收起描述", key=f"hide_desc_{context}_{index}_{job_short_id}"):
-                                            st.session_state[desc_key] = False
-                                            st.rerun()
-                                    else:
-                                        st.text_area("描述预览", description[:300] + "...", height=80,
-                                                     disabled=True, key=f"short_desc_{context}_{index}_{job_short_id}")
-                                        if st.button("显示完整描述",
-                                                     key=f"show_desc_btn_{context}_{index}_{job_short_id}"):
-                                            st.session_state[desc_key] = True
-                                            st.rerun()
-                                else:
-                                    st.text_area("视频描述", description, height=80, disabled=True,
-                                                 key=f"desc_{context}_{index}_{job_short_id}")
-
-                        # Show transcription with better formatting - no decoding needed
+                        # Show transcription with better formatting
                         transcript = result.get('transcript', '')
                         if transcript:
                             st.markdown("**🎤 转录内容:**")
 
-                            # Data is already clean from global patch
                             transcript_key = f"show_transcript_{context}_{index}_{job_short_id}"
                             if transcript_key not in st.session_state:
                                 st.session_state[transcript_key] = False
@@ -313,105 +422,16 @@ def display_job_card(job: Dict[str, Any], context: str, index: int):
                                     key=f"transcript_{context}_{index}_{job_short_id}"
                                 )
 
-                        # Document processing results - no decoding needed
+                        # Document processing results
                         if 'document_count' in result:
                             st.success(f"✅ 成功生成 {result['document_count']} 个文档片段")
 
-                            documents = result.get('documents', [])
-                            if documents:
-                                show_docs_key = f"show_docs_{context}_{index}_{job_short_id}"
-
-                                if show_docs_key not in st.session_state:
-                                    st.session_state[show_docs_key] = False
-
-                                # Toggle button with more details
-                                if st.button(
-                                        f"📄 {'隐藏' if st.session_state[show_docs_key] else '显示'} {len(documents)} 个文档片段 (向量化后)",
-                                        key=f"toggle_docs_{context}_{index}_{job_short_id}"):
-                                    st.session_state[show_docs_key] = not st.session_state[show_docs_key]
-                                    st.rerun()
-
-                                if st.session_state[show_docs_key]:
-                                    st.markdown("**📄 向量化文档片段:**")
-                                    st.caption("这些是被切分并存储到向量数据库中的文档片段")
-
-                                    for i, doc in enumerate(documents):
-                                        with st.container():
-                                            st.markdown(f"**片段 {i + 1}/{len(documents)}:**")
-
-                                            # Enhanced metadata display - no decoding needed
-                                            doc_metadata = doc.get('metadata', {})
-                                            if doc_metadata:
-                                                meta_cols = st.columns(4)
-                                                with meta_cols[0]:
-                                                    if doc_metadata.get('source'):
-                                                        st.caption(f"📍 来源: {doc_metadata['source']}")
-                                                with meta_cols[1]:
-                                                    if doc_metadata.get('chunk_id') is not None:
-                                                        st.caption(f"🔢 片段: {doc_metadata['chunk_id'] + 1}")
-                                                with meta_cols[2]:
-                                                    if doc_metadata.get('language'):
-                                                        lang_display = {"zh": "中文", "en": "英文"}.get(
-                                                            doc_metadata['language'], doc_metadata['language'])
-                                                        st.caption(f"🌐 语言: {lang_display}")
-                                                with meta_cols[3]:
-                                                    if doc_metadata.get('total_chunks'):
-                                                        st.caption(f"📊 总片段: {doc_metadata['total_chunks']}")
-
-                                                # Video-specific metadata - data is already clean
-                                                if doc_metadata.get('title'):
-                                                    st.caption(f"📺 标题: {doc_metadata['title']}")
-                                                if doc_metadata.get('author'):
-                                                    st.caption(f"👤 作者: {doc_metadata['author']}")
-                                                if doc_metadata.get('url'):
-                                                    st.caption(f"🔗 [视频链接]({doc_metadata['url']})")
-
-                                            # Show content - no decoding needed
-                                            content = doc.get('content', '')
-                                            if content:
-                                                if len(content) > 500:
-                                                    st.text_area(
-                                                        f"内容片段 {i + 1}",
-                                                        content[:500] + "...(已截断)",
-                                                        height=100,
-                                                        key=f"doc_content_{context}_{index}_{job_short_id}_{i}",
-                                                        disabled=True
-                                                    )
-
-                                                    full_key = f"show_full_{context}_{index}_{job_short_id}_{i}"
-                                                    if full_key not in st.session_state:
-                                                        st.session_state[full_key] = False
-
-                                                    if st.button(f"显示完整内容",
-                                                                 key=f"btn_full_{context}_{index}_{job_short_id}_{i}"):
-                                                        st.session_state[full_key] = not st.session_state[full_key]
-                                                        st.rerun()
-
-                                                    if st.session_state[full_key]:
-                                                        st.text_area(
-                                                            f"完整内容",
-                                                            content,
-                                                            height=200,
-                                                            key=f"full_content_{context}_{index}_{job_short_id}_{i}",
-                                                            disabled=True
-                                                        )
-                                                else:
-                                                    st.text_area(
-                                                        f"内容片段 {i + 1}",
-                                                        content,
-                                                        height=100,
-                                                        key=f"doc_short_{context}_{index}_{job_short_id}_{i}",
-                                                        disabled=True
-                                                    )
-
-                                            st.markdown("---")
-
-                        # Query results - clean up LLM artifacts only
+                        # Query results
                         if 'answer' in result:
                             st.write("**❓ 查询答案:**")
                             answer = result['answer']
 
-                            # Clean up LLM thinking artifacts (not Unicode issues)
+                            # Clean up LLM thinking artifacts
                             if "</think>" in answer:
                                 answer = answer.split("</think>")[-1].strip()
                             if answer.startswith("<think>"):
@@ -460,15 +480,37 @@ def display_job_card(job: Dict[str, Any], context: str, index: int):
 
         st.divider()
 
-# Display jobs in tabs
+
+# === FILTER JOBS BY STATUS ===
+processing_jobs = [j for j in jobs if j.get("status") in ["pending", "processing"]]
+completed_jobs = [j for j in jobs if j.get("status") == "completed"]
+
+# === TABBED INTERFACE WITH PAGINATION ===
+tab1, tab2, tab3 = st.tabs([
+    f"⏳ 处理中 ({len(processing_jobs)})",
+    f"✅ 已完成 ({len(completed_jobs)})",
+    f"📋 全部任务 ({len(jobs)})"
+])
+
 with tab1:  # Processing jobs
-    processing_jobs = [j for j in jobs if j.get("status") in ["pending", "processing"]]
-
     if processing_jobs:
-        st.write(f"**当前有 {len(processing_jobs)} 个任务正在处理**")
+        # Pagination for processing jobs
+        st.session_state.processing_page = render_pagination(
+            len(processing_jobs),
+            st.session_state.processing_page,
+            jobs_per_page,
+            "processing"
+        )
 
-        for i, job in enumerate(processing_jobs):
-            display_job_card(job, f"processing", i)
+        # Get jobs for current page
+        page_jobs = paginate_jobs(processing_jobs, st.session_state.processing_page, jobs_per_page)
+
+        st.write(f"**显示第 {st.session_state.processing_page} 页，共 {len(processing_jobs)} 个处理中任务**")
+
+        for i, job in enumerate(page_jobs):
+            # Calculate global index for unique keys
+            global_index = (st.session_state.processing_page - 1) * jobs_per_page + i
+            display_job_card(job, f"processing", global_index)
 
         # Auto-refresh option for processing jobs
         if st.checkbox("⚡ 自动刷新 (5秒)", key="auto_refresh_processing"):
@@ -478,22 +520,45 @@ with tab1:  # Processing jobs
         st.info("✨ 当前没有正在处理的任务")
 
 with tab2:  # Completed jobs
-    completed_jobs = [j for j in jobs if j.get("status") == "completed"]
-
     if completed_jobs:
-        st.write(f"**已完成 {len(completed_jobs)} 个任务**")
+        # Pagination for completed jobs
+        st.session_state.completed_page = render_pagination(
+            len(completed_jobs),
+            st.session_state.completed_page,
+            jobs_per_page,
+            "completed"
+        )
 
-        for i, job in enumerate(completed_jobs):
-            display_job_card(job, f"completed", i)
+        # Get jobs for current page
+        page_jobs = paginate_jobs(completed_jobs, st.session_state.completed_page, jobs_per_page)
+
+        st.write(f"**显示第 {st.session_state.completed_page} 页，共 {len(completed_jobs)} 个已完成任务**")
+
+        for i, job in enumerate(page_jobs):
+            # Calculate global index for unique keys
+            global_index = (st.session_state.completed_page - 1) * jobs_per_page + i
+            display_job_card(job, f"completed", global_index)
     else:
         st.info("📭 暂无已完成的任务")
 
 with tab3:  # All jobs
-    st.write(f"**显示最近 {len(jobs)} 个任务**")
+    # Pagination for all jobs
+    st.session_state.all_jobs_page = render_pagination(
+        len(jobs),
+        st.session_state.all_jobs_page,
+        jobs_per_page,
+        "all_jobs"
+    )
 
-    for i, job in enumerate(jobs):
-        display_job_card(job, f"all", i)
+    # Get jobs for current page
+    page_jobs = paginate_jobs(jobs, st.session_state.all_jobs_page, jobs_per_page)
 
+    st.write(f"**显示第 {st.session_state.all_jobs_page} 页，共 {len(jobs)} 个任务**")
+
+    for i, job in enumerate(page_jobs):
+        # Calculate global index for unique keys
+        global_index = (st.session_state.all_jobs_page - 1) * jobs_per_page + i
+        display_job_card(job, f"all", global_index)
 
 # === PAGE ACTIONS ===
 st.markdown("---")

@@ -686,3 +686,60 @@ async def get_queue_status() -> Dict[str, Any]:
             status_code=500,
             detail=f"Error getting queue status: {str(e)}"
         )
+
+@router.post("/debug-retrieval", response_model=Dict[str, Any])
+async def debug_document_retrieval(request: Dict[str, str]) -> Dict[str, Any]:
+    """
+    Debug endpoint to retrieve documents from vector store for browsing.
+    Used by the document browser page.
+    """
+    try:
+        from src.core.background.models import get_vector_store
+
+        query = request.get("query", "document")
+        limit = min(int(request.get("limit", 100)), 500)  # Cap at 500
+
+        vector_store = get_vector_store()
+
+        # Get documents using similarity search with a generic query
+        results = vector_store.similarity_search_with_score(
+            query=query,
+            k=limit,
+            metadata_filter=None
+        )
+
+        # Format results for UI consumption
+        documents = []
+        for doc, score in results:
+            # Clean metadata to ensure JSON serialization
+            cleaned_metadata = {}
+            for key, value in doc.metadata.items():
+                if isinstance(value, (np.floating, np.float32, np.float64)):
+                    cleaned_metadata[key] = float(value)
+                elif isinstance(value, (np.integer, np.int32, np.int64)):
+                    cleaned_metadata[key] = int(value)
+                elif isinstance(value, np.ndarray):
+                    cleaned_metadata[key] = value.tolist()
+                else:
+                    cleaned_metadata[key] = value
+
+            documents.append({
+                "content": doc.page_content,
+                "metadata": cleaned_metadata,
+                "relevance_score": float(score) if isinstance(score, (np.floating, np.float32, np.float64)) else score
+            })
+
+        logger.info(f"Debug retrieval returned {len(documents)} documents")
+
+        return {
+            "documents": documents,
+            "total_found": len(documents),
+            "query_used": query
+        }
+
+    except Exception as e:
+        logger.error(f"Debug retrieval failed: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Document retrieval failed: {str(e)}"
+        )
