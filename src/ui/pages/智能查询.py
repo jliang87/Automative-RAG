@@ -201,7 +201,7 @@ def submit_enhanced_query(query_text: str, mode: str, filters: Optional[Dict] = 
         }
 
         result = api_request(
-            endpoint="/query/",
+            endpoint="/query/enhanced",
             method="POST",
             data=enhanced_data
         )
