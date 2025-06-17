@@ -15,37 +15,26 @@ logger = logging.getLogger(__name__)
 
 initialize_session_state()
 
-st.markdown('''
-    <style>
-        html { scroll-behavior: smooth; }
-    </style>
-''', unsafe_allow_html=True)
-
-st.markdown('''
-    <div id="page-top" style="height: 1px; position: fixed; top: 0;"></div>
-''', unsafe_allow_html=True)
-
 st.markdown("""
 <script>
-    // Wait until all DOM is loaded, then scroll if needed
-    window.addEventListener("load", function () {
-        const params = new URLSearchParams(window.location.search);
-        if (params.get("_scroll") === "top") {
-            setTimeout(() => {
-                const anchor = document.getElementById("page-top");
-                if (anchor) {
-                    anchor.scrollIntoView({ behavior: "auto", block: "start" });
-                } else {
-                    window.scrollTo({ top: 0, behavior: "auto" });
-                }
+(function() {
+    const url = new URL(window.location.href);
+    const scrollFlag = url.searchParams.get("_scroll");
 
-                // Clean the URL to avoid persistent scrolling on refresh
-                params.delete("_scroll");
-                const newUrl = window.location.pathname + (params.toString() ? '?' + params.toString() : '');
-                window.history.replaceState({}, '', newUrl);
-            }, 700);  // Ensure all rendering finishes
-        }
-    });
+    if (scrollFlag === "top") {
+        // Wait until Streamlit has rendered everything
+        window.addEventListener("load", () => {
+            // Do this after all layout/rendering is done
+            setTimeout(() => {
+                window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+
+                // Remove scroll param to avoid repeated scrolls
+                url.searchParams.delete("_scroll");
+                window.history.replaceState({}, '', url.pathname + url.search);
+            }, 800);  // Needs to be longer than render time
+        });
+    }
+})();
 </script>
 """, unsafe_allow_html=True)
 
