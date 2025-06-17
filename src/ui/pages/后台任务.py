@@ -68,55 +68,52 @@ def paginate_jobs(jobs_list, page_num, per_page):
 
 
 def render_pagination(total_jobs, current_page, per_page, tab_name):
-    """Render simplified pagination controls at bottom of page"""
+    """Render elegant pagination controls"""
     total_pages = (total_jobs + per_page - 1) // per_page
 
     if total_pages <= 1:
         return current_page
 
-    # Create a container for better alignment
-    with st.container():
-        # Use columns for proper alignment - all elements in same row
-        col1, col2, col3, col4, col5, col6 = st.columns([2, 1, 1, 1.5, 1, 1])
+    # Elegant inline pagination - everything on one clean line
+    col1, col2, col3, col4, col5, col6 = st.columns([2, 0.7, 0.7, 1.5, 0.7, 0.7])
 
-        new_page = current_page
+    new_page = current_page
 
-        with col1:
-            # Use metric instead of markdown for consistent height
-            st.metric("", f"第 {current_page} / {total_pages} 页 (共 {total_jobs} 个任务)", label_visibility="collapsed")
+    with col1:
+        # Clean, normal-sized text
+        st.write(f"第 {current_page} / {total_pages} 页 (共 {total_jobs} 个任务)")
 
-        with col2:
-            if current_page > 1:
-                if st.button("⏮️ 首页", key=f"first_{tab_name}", use_container_width=True):
-                    return 1  # Return directly instead of setting variable
+    with col2:
+        if current_page > 1:
+            if st.button("⏮️", key=f"first_{tab_name}", help="首页", use_container_width=True):
+                return 1
 
-        with col3:
-            if current_page > 1:
-                if st.button("◀️ 上页", key=f"prev_{tab_name}", use_container_width=True):
-                    return current_page - 1  # Return directly
+    with col3:
+        if current_page > 1:
+            if st.button("◀️", key=f"prev_{tab_name}", help="上一页", use_container_width=True):
+                return current_page - 1
 
-        with col4:
-            # Page selector
-            page_options = list(range(1, total_pages + 1))
-            selected_page = st.selectbox(
-                "跳转到",
-                page_options,
-                index=current_page - 1,
-                key=f"page_select_{tab_name}",
-                label_visibility="visible"
-            )
-            if selected_page != current_page:
-                return selected_page  # Return directly
+    with col4:
+        # Inline jump selector
+        page_options = list(range(1, total_pages + 1))
+        selected_page = st.selectbox(
+            "跳转到",
+            page_options,
+            index=current_page - 1,
+            key=f"page_select_{tab_name}"
+        )
+        if selected_page != current_page:
+            return selected_page
 
-        with col5:
-            if current_page < total_pages:
-                if st.button("▶️ 下页", key=f"next_{tab_name}", use_container_width=True):
-                    return current_page + 1  # Return directly
+    with col5:
+        if current_page < total_pages:
+            if st.button("▶️", key=f"next_{tab_name}", help="下一页", use_container_width=True):
+                return current_page + 1
 
-        with col6:
-            if current_page < total_pages:
-                if st.button("⏭️ 末页", key=f"last_{tab_name}", use_container_width=True):
-                    return total_pages  # Return directly
+    with col6:
+        if current_page < total_pages:
+            if st.button("⏭️", key=f"last_{tab_name}", help="末页", use_container_width=True):
+                return total_pages
 
     return current_page
 
