@@ -68,13 +68,14 @@ def paginate_jobs(jobs_list, page_num, per_page):
 
 
 def render_pagination(total_jobs, current_page, per_page, tab_name):
-    """Render pagination controls"""
+    """Render simplified pagination controls at bottom of page"""
     total_pages = (total_jobs + per_page - 1) // per_page
 
     if total_pages <= 1:
         return current_page
 
-    st.markdown(f"**页面 {current_page} / {total_pages}** (共 {total_jobs} 个任务)")
+    # Single concise line with page info
+    st.markdown(f"**第 {current_page} / {total_pages} 页** (共 {total_jobs} 个任务)")
 
     col1, col2, col3, col4, col5 = st.columns(5)
 
@@ -82,35 +83,34 @@ def render_pagination(total_jobs, current_page, per_page, tab_name):
 
     with col1:
         if current_page > 1:
-            if st.button("⏮️ 首页", key=f"first_{tab_name}"):
+            if st.button("⏮️ 首页", key=f"first_{tab_name}", use_container_width=True):
                 new_page = 1
 
     with col2:
         if current_page > 1:
-            if st.button("◀️ 上页", key=f"prev_{tab_name}"):
+            if st.button("◀️ 上页", key=f"prev_{tab_name}", use_container_width=True):
                 new_page = current_page - 1
 
     with col3:
         # Page selector
         page_options = list(range(1, total_pages + 1))
         selected_page = st.selectbox(
-            "跳转",
+            "跳转到",
             page_options,
             index=current_page - 1,
             key=f"page_select_{tab_name}",
-            label_visibility="collapsed"
         )
         if selected_page != current_page:
             new_page = selected_page
 
     with col4:
         if current_page < total_pages:
-            if st.button("▶️ 下页", key=f"next_{tab_name}"):
+            if st.button("▶️ 下页", key=f"next_{tab_name}", use_container_width=True):
                 new_page = current_page + 1
 
     with col5:
         if current_page < total_pages:
-            if st.button("⏭️ 末页", key=f"last_{tab_name}"):
+            if st.button("⏭️ 末页", key=f"last_{tab_name}", use_container_width=True):
                 new_page = total_pages
 
     return new_page
@@ -126,13 +126,13 @@ if "all_jobs_page" not in st.session_state:
 
 
 def format_job_type(job_type: str) -> str:
-    """Format job type for display"""
+    """Format job type for display - CLEANED UP VERSION"""
     type_names = {
-        "video_processing": "🎬 视频处理",
-        "pdf_processing": "📄 PDF处理",
-        "text_processing": "✍️ 文字处理",
-        "llm_inference": "🔍 查询处理",
-        "batch_video_processing": "🎬 批量视频"
+        "video_processing": "视频处理",
+        "pdf_processing": "PDF处理",
+        "text_processing": "文字处理",
+        "llm_inference": "查询处理",
+        "batch_video_processing": "批量视频"
     }
     return type_names.get(job_type, job_type)
 
@@ -174,7 +174,7 @@ def display_job_card(job: Dict[str, Any], context: str, index: int):
 
     # Extract key metadata to display directly
     def get_display_metadata(job_data):
-        """Extract key metadata for direct display"""
+        """Extract key metadata for direct display - CLEANED UP VERSION"""
         metadata = job_data.get("metadata", {})
         result = job_data.get("result", {})
 
@@ -189,8 +189,8 @@ def display_job_card(job: Dict[str, Any], context: str, index: int):
             # For queries, show the user's query
             query = metadata.get("query") or result.get("query", "")
             if query:
-                return f"🔍 查询: {query[:80]}{'...' if len(query) > 80 else ''}"
-            return "🔍 查询处理"
+                return f"查询: {query[:80]}{'...' if len(query) > 80 else ''}"
+            return "查询处理"
 
         elif job_type in ["video_processing", "batch_video_processing"]:
             # For videos, show title from video_metadata or URL
@@ -198,39 +198,39 @@ def display_job_card(job: Dict[str, Any], context: str, index: int):
             title = video_metadata.get("title") or metadata.get("title", "")
 
             if title:
-                return f"🎬 {title[:60]}{'...' if len(title) > 60 else ''}"
+                return f"视频: {title[:60]}{'...' if len(title) > 60 else ''}"
 
             # Fallback to URL
             url = metadata.get("url", "")
             if url:
-                return f"🔗 {url[:50]}{'...' if len(url) > 50 else ''}"
-            return "🎬 视频处理"
+                return f"链接: {url[:50]}{'...' if len(url) > 50 else ''}"
+            return "视频处理"
 
         elif job_type == "pdf_processing":
             # For PDFs, show filename or title
             filename = metadata.get("filename") or metadata.get("title", "")
             if filename:
-                return f"📄 {filename[:50]}{'...' if len(filename) > 50 else ''}"
+                return f"文件: {filename[:50]}{'...' if len(filename) > 50 else ''}"
 
             filepath = metadata.get("filepath", "")
             if filepath:
                 import os
                 filename = os.path.basename(filepath)
-                return f"📄 {filename[:50]}{'...' if len(filename) > 50 else ''}"
-            return "📄 PDF处理"
+                return f"文件: {filename[:50]}{'...' if len(filename) > 50 else ''}"
+            return "PDF处理"
 
         elif job_type == "text_processing":
             # For text, show title or content preview
             title = metadata.get("title") or result.get("title", "")
             if title and title != "Manual Text Input":
-                return f"✍️ {title[:50]}{'...' if len(title) > 50 else ''}"
+                return f"标题: {title[:50]}{'...' if len(title) > 50 else ''}"
 
             # Fallback to content preview
             content = result.get("original_text", "")
             if content:
                 preview = content.replace('\n', ' ')[:40]
-                return f"✍️ {preview}{'...' if len(content) > 40 else ''}"
-            return "✍️ 文字处理"
+                return f"内容: {preview}{'...' if len(content) > 40 else ''}"
+            return "文字处理"
 
         return ""
 
@@ -251,7 +251,7 @@ def display_job_card(job: Dict[str, Any], context: str, index: int):
         </style>
         """, unsafe_allow_html=True)
 
-        # Header row - FIXED: Adjust column ratios for better button display
+        # Header row - CLEANED UP
         col1, col2, col3, col4 = st.columns([1, 4, 2, 1.3])
 
         with col1:
@@ -261,9 +261,10 @@ def display_job_card(job: Dict[str, Any], context: str, index: int):
         with col2:
             st.markdown(f"**{format_job_type(job_type)}**")
             if display_info:
-                st.markdown(f"💬 {display_info}")
+                # CLEANED UP: No more emoji spam, just clear text
+                st.caption(display_info)
             else:
-                st.caption(f"ID: {job_id[:12]}...")
+                st.caption(f"任务ID: {job_id[:12]}...")
 
         with col3:
             st.markdown(f"**状态: {status}**")
@@ -342,11 +343,11 @@ def display_job_card(job: Dict[str, Any], context: str, index: int):
 
                 if metadata and isinstance(metadata, dict):
                     if metadata.get('url'):
-                        st.write(f"**🔗 URL:** {metadata['url']}")
+                        st.write(f"**URL:** {metadata['url']}")
                     if metadata.get('query'):
-                        st.write(f"**❓ 查询:** {metadata['query']}")
+                        st.write(f"**查询:** {metadata['query']}")
                     if metadata.get('platform'):
-                        st.write(f"**📺 平台:** {metadata['platform']}")
+                        st.write(f"**平台:** {metadata['platform']}")
 
                 # Parse result properly
                 if isinstance(result, str):
@@ -504,7 +505,7 @@ def display_job_card(job: Dict[str, Any], context: str, index: int):
 processing_jobs = [j for j in jobs if j.get("status") in ["pending", "processing"]]
 completed_jobs = [j for j in jobs if j.get("status") == "completed"]
 
-# === TABBED INTERFACE WITH PAGINATION ===
+# === TABBED INTERFACE WITH IMPROVED PAGINATION ===
 tab1, tab2, tab3 = st.tabs([
     f"⏳ 处理中 ({len(processing_jobs)})",
     f"✅ 已完成 ({len(completed_jobs)})",
@@ -513,25 +514,27 @@ tab1, tab2, tab3 = st.tabs([
 
 with tab1:  # Processing jobs
     if processing_jobs:
-        # Pagination for processing jobs
-        st.session_state.processing_page = render_pagination(
-            len(processing_jobs),
-            st.session_state.processing_page,
-            jobs_per_page,
-            "processing"
-        )
-
         # Get jobs for current page
         page_jobs = paginate_jobs(processing_jobs, st.session_state.processing_page, jobs_per_page)
 
-        st.write(f"**显示第 {st.session_state.processing_page} 页，共 {len(processing_jobs)} 个处理中任务**")
-
+        # Display all jobs first
         for i, job in enumerate(page_jobs):
             # Calculate global index for unique keys
             global_index = (st.session_state.processing_page - 1) * jobs_per_page + i
             display_job_card(job, f"processing", global_index)
 
+        # Pagination at bottom
+        if len(processing_jobs) > jobs_per_page:
+            st.markdown("---")
+            st.session_state.processing_page = render_pagination(
+                len(processing_jobs),
+                st.session_state.processing_page,
+                jobs_per_page,
+                "processing"
+            )
+
         # Auto-refresh option for processing jobs
+        st.markdown("---")
         if st.checkbox("⚡ 自动刷新 (5秒)", key="auto_refresh_processing"):
             time.sleep(5)
             st.rerun()
@@ -540,44 +543,46 @@ with tab1:  # Processing jobs
 
 with tab2:  # Completed jobs
     if completed_jobs:
-        # Pagination for completed jobs
-        st.session_state.completed_page = render_pagination(
-            len(completed_jobs),
-            st.session_state.completed_page,
-            jobs_per_page,
-            "completed"
-        )
-
         # Get jobs for current page
         page_jobs = paginate_jobs(completed_jobs, st.session_state.completed_page, jobs_per_page)
 
-        st.write(f"**显示第 {st.session_state.completed_page} 页，共 {len(completed_jobs)} 个已完成任务**")
-
+        # Display all jobs first
         for i, job in enumerate(page_jobs):
             # Calculate global index for unique keys
             global_index = (st.session_state.completed_page - 1) * jobs_per_page + i
             display_job_card(job, f"completed", global_index)
+
+        # Pagination at bottom
+        if len(completed_jobs) > jobs_per_page:
+            st.markdown("---")
+            st.session_state.completed_page = render_pagination(
+                len(completed_jobs),
+                st.session_state.completed_page,
+                jobs_per_page,
+                "completed"
+            )
     else:
         st.info("📭 暂无已完成的任务")
 
 with tab3:  # All jobs
-    # Pagination for all jobs
-    st.session_state.all_jobs_page = render_pagination(
-        len(jobs),
-        st.session_state.all_jobs_page,
-        jobs_per_page,
-        "all_jobs"
-    )
-
     # Get jobs for current page
     page_jobs = paginate_jobs(jobs, st.session_state.all_jobs_page, jobs_per_page)
 
-    st.write(f"**显示第 {st.session_state.all_jobs_page} 页，共 {len(jobs)} 个任务**")
-
+    # Display all jobs first
     for i, job in enumerate(page_jobs):
         # Calculate global index for unique keys
         global_index = (st.session_state.all_jobs_page - 1) * jobs_per_page + i
         display_job_card(job, f"all", global_index)
+
+    # Pagination at bottom
+    if len(jobs) > jobs_per_page:
+        st.markdown("---")
+        st.session_state.all_jobs_page = render_pagination(
+            len(jobs),
+            st.session_state.all_jobs_page,
+            jobs_per_page,
+            "all_jobs"
+        )
 
 # === PAGE ACTIONS ===
 st.markdown("---")
