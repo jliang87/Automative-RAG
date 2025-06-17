@@ -590,8 +590,7 @@ else:
         comparison_data.append({
             "模式": f"{mode_info['icon']} {mode_info['name']}",
             "描述": mode_info['description'],
-            "适用场景": mode_info['use_case'],
-            "输出结构": "双层结构" if mode_info['two_layer'] else "单层输出"
+            "适用场景": mode_info['use_case']
         })
 
     # Display as table

@@ -1,7 +1,8 @@
 import json
 import time
 import os
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Dict, List, Optional, Tuple, Union, Any
+import logging
 
 import torch
 from langchain_core.documents import Document
@@ -11,6 +12,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline, BitsAndB
 
 from src.config.settings import settings
 
+logger = logging.getLogger(__name__)
 
 def _format_documents_for_context(
         documents: List[Tuple[Document, float]]
@@ -477,11 +479,16 @@ class LocalLLM:
         Returns:
             Generated answer using the mode-specific template
         """
-        # Format documents into context
-        context = _format_documents_for_context(documents)
+        # Validate mode
+        if not self.validate_mode(query_mode):
+            logger.warning(f"Invalid query mode '{query_mode}', using facts mode")
+            query_mode = "facts"
 
         # Get the appropriate prompt template
         template = self.get_prompt_template_for_mode(query_mode)
+
+        # Format documents into context
+        context = _format_documents_for_context(documents)
 
         # Create prompt using the mode-specific template
         prompt = template.format(
@@ -493,14 +500,18 @@ class LocalLLM:
         start_time = time.time()
 
         try:
+            # Adjust max tokens based on mode complexity
+            max_tokens = self.max_tokens
+            if query_mode in ["debate", "scenarios", "tradeoffs"]:
+                max_tokens = self.max_tokens * 2  # More tokens for complex modes
+
             results = self.pipe(
                 prompt,
                 num_return_sequences=1,
                 do_sample=True,
                 temperature=self.temperature,
                 pad_token_id=self.tokenizer.eos_token_id,
-                max_new_tokens=self.max_tokens * 2 if query_mode in ["debate", "scenarios",
-                                                                     "tradeoffs"] else self.max_tokens
+                max_new_tokens=max_tokens
             )
 
             generation_time = time.time() - start_time
@@ -517,3 +528,68 @@ class LocalLLM:
                 print(f"  LLM_USE_4BIT: {settings.llm_use_4bit}")
                 print(f"  GPU_MEMORY_FRACTION_INFERENCE: {settings.gpu_memory_fraction_inference}")
             raise e
+
+    def validate_mode(self, mode: str) -> bool:
+        """
+        Validate if the query mode is supported.
+
+        Args:
+            mode: Query mode to validate
+
+        Returns:
+            True if mode is valid, False otherwise
+        """
+        valid_modes = ["facts", "features", "tradeoffs", "scenarios", "debate", "quotes"]
+        return mode in valid_modes
+
+
+    def get_mode_info(self, mode: str) -> Dict[str, Any]:
+        """
+        Get information about a specific query mode.
+
+        Args:
+            mode: Query mode
+
+        Returns:
+            Dictionary with mode information
+        """
+        mode_info = {
+            "facts": {
+                "name": "车辆规格查询",
+                "description": "验证具体的车辆规格参数",
+                "two_layer": True,
+                "complexity": "simple"
+            },
+            "features": {
+                "name": "新功能建议",
+                "description": "评估是否应该添加某项功能",
+                "two_layer": True,
+                "complexity": "moderate"
+            },
+            "tradeoffs": {
+                "name": "权衡利弊分析",
+                "description": "分析设计选择的优缺点",
+                "two_layer": True,
+                "complexity": "complex"
+            },
+            "scenarios": {
+                "name": "用户场景分析",
+                "description": "评估功能在实际使用场景中的表现",
+                "two_layer": True,
+                "complexity": "complex"
+            },
+            "debate": {
+                "name": "多角色讨论",
+                "description": "模拟不同角色的观点和讨论",
+                "two_layer": False,
+                "complexity": "complex"
+            },
+            "quotes": {
+                "name": "原始用户评论",
+                "description": "提取相关的用户评论和反馈",
+                "two_layer": False,
+                "complexity": "simple"
+            }
+        }
+
+        return mode_info.get(mode, mode_info["facts"])
