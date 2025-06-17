@@ -15,17 +15,8 @@ logger = logging.getLogger(__name__)
 
 initialize_session_state()
 
-if "_trigger_scroll" in st.query_params:
-    params = dict(st.query_params)
-    params.pop("_trigger_scroll", None)
-    st.query_params.update(params)
-
-st.empty()  # Force Streamlit to render a top anchor
-st.markdown('<div id="page-top" style="position: absolute; top: 0; height: 1px;"></div>', unsafe_allow_html=True)
-
 st.title("📋 后台任务")
 st.markdown("查看和管理您的处理任务")
-
 
 # === JOB STATISTICS OVERVIEW ===
 job_stats = get_job_statistics()
@@ -77,14 +68,11 @@ def paginate_jobs(jobs_list, page_num, per_page):
 
 
 def render_pagination(total_jobs, current_page, per_page, tab_name):
-    """Render elegant pagination controls with auto-scroll"""
+    """Render elegant pagination controls"""
     total_pages = (total_jobs + per_page - 1) // per_page
 
     if total_pages <= 1:
         return current_page
-
-    # Add scroll target at the beginning of pagination
-    st.markdown('<div id="pagination-top"></div>', unsafe_allow_html=True)
 
     # Elegant inline pagination - everything on one clean line
     col1, col2, col3, col4, col5, col6 = st.columns([2, 0.7, 0.7, 1.5, 0.7, 0.7])
@@ -106,7 +94,7 @@ def render_pagination(total_jobs, current_page, per_page, tab_name):
                 return current_page - 1
 
     with col4:
-        # FIXED: Put "跳转到" and selectbox on the same line
+        # Put "跳转到" and selectbox on the same line
         page_options = list(range(1, total_pages + 1))
         selected_page = st.selectbox(
             "跳转到:",
@@ -583,11 +571,7 @@ if st.session_state.current_tab == 0:  # Processing jobs
             # Only update and rerun if page actually changed
             if new_page != st.session_state.processing_page:
                 st.session_state.processing_page = new_page
-                # Set scroll parameter before rerun
-                st.query_params.update({
-                    "completed_page": str(new_page),
-                    "_trigger_scroll": str(time.time())
-                })
+                st.rerun()
 
         # Auto-refresh option for processing jobs
         st.markdown("---")
@@ -624,11 +608,7 @@ elif st.session_state.current_tab == 1:  # Completed jobs
             # Only update and rerun if page actually changed
             if new_page != st.session_state.completed_page:
                 st.session_state.completed_page = new_page
-                # Set scroll parameter before rerun
-                st.query_params.update({
-                    "completed_page": str(new_page),
-                    "_trigger_scroll": str(time.time())
-                })
+                st.rerun()
     else:
         st.info("📭 暂无已完成的任务")
 
@@ -658,11 +638,7 @@ elif st.session_state.current_tab == 2:  # All jobs
         # Only update and rerun if page actually changed
         if new_page != st.session_state.all_jobs_page:
             st.session_state.all_jobs_page = new_page
-            # Set scroll parameter before rerun
-            st.query_params.update({
-                "completed_page": str(new_page),
-                "_trigger_scroll": str(time.time())
-            })
+            st.rerun()
 
 # === PAGE ACTIONS ===
 st.markdown("---")
@@ -691,27 +667,3 @@ if processing_count > 0:
     st.info(f"ℹ️ 当前有 {processing_count} 个任务正在处理中")
 
 st.caption("后台任务 - 跟踪您的处理任务进度")
-
-# === ABSOLUTE END ===
-st.markdown("""
-    <script>
-    window.addEventListener("load", () => {
-        const url = new URL(window.location);
-        if (url.searchParams.get("_trigger_scroll")) {
-            // Re-scroll after a delay and repeat
-            let attempts = 0;
-            const scrollUp = () => {
-                window.scrollTo({ top: 0, left: 0 });
-                attempts++;
-                if (attempts < 20 && window.scrollY > 5) {
-                    setTimeout(scrollUp, 50);
-                } else {
-                    url.searchParams.delete("_trigger_scroll");
-                    window.history.replaceState(null, "", url);
-                }
-            };
-            setTimeout(scrollUp, 200);
-        }
-    });
-    </script>
-""", unsafe_allow_html=True)
