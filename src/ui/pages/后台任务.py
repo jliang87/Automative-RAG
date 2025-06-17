@@ -18,6 +18,21 @@ initialize_session_state()
 st.title("📋 后台任务")
 st.markdown("查看和管理您的处理任务")
 
+# Auto-scroll to top when pagination navigation occurs
+if st.session_state.get("should_scroll_to_top", False):
+    st.markdown("""
+    <script>
+        setTimeout(function() {
+            window.scrollTo({
+                top: 0,
+                behavior: 'smooth'
+            });
+        }, 100);
+    </script>
+    """, unsafe_allow_html=True)
+    # Clear the flag
+    st.session_state.should_scroll_to_top = False
+
 # === JOB STATISTICS OVERVIEW ===
 job_stats = get_job_statistics()
 
@@ -68,7 +83,7 @@ def paginate_jobs(jobs_list, page_num, per_page):
 
 
 def render_pagination(total_jobs, current_page, per_page, tab_name):
-    """Render elegant pagination controls"""
+    """Render elegant pagination controls with auto-scroll"""
     total_pages = (total_jobs + per_page - 1) // per_page
 
     if total_pages <= 1:
@@ -86,33 +101,44 @@ def render_pagination(total_jobs, current_page, per_page, tab_name):
     with col2:
         if current_page > 1:
             if st.button("⏮️", key=f"first_{tab_name}", help="首页", use_container_width=True):
+                # Set flag to trigger auto-scroll
+                st.session_state.should_scroll_to_top = True
                 return 1
 
     with col3:
         if current_page > 1:
             if st.button("◀️", key=f"prev_{tab_name}", help="上一页", use_container_width=True):
+                # Set flag to trigger auto-scroll
+                st.session_state.should_scroll_to_top = True
                 return current_page - 1
 
     with col4:
-        # Inline jump selector
+        # FIXED: Put "跳转到" and selectbox on the same line
         page_options = list(range(1, total_pages + 1))
         selected_page = st.selectbox(
-            "跳转到",
+            "跳转到:",
             page_options,
             index=current_page - 1,
-            key=f"page_select_{tab_name}"
+            key=f"page_select_{tab_name}",
+            label_visibility="collapsed"  # Hide the label to save space
         )
         if selected_page != current_page:
+            # Set flag to trigger auto-scroll
+            st.session_state.should_scroll_to_top = True
             return selected_page
 
     with col5:
         if current_page < total_pages:
             if st.button("▶️", key=f"next_{tab_name}", help="下一页", use_container_width=True):
+                # Set flag to trigger auto-scroll
+                st.session_state.should_scroll_to_top = True
                 return current_page + 1
 
     with col6:
         if current_page < total_pages:
             if st.button("⏭️", key=f"last_{tab_name}", help="末页", use_container_width=True):
+                # Set flag to trigger auto-scroll
+                st.session_state.should_scroll_to_top = True
                 return total_pages
 
     return current_page
@@ -279,7 +305,7 @@ def display_job_card(job: Dict[str, Any], context: str, index: int):
             button_type = "secondary" if is_expanded else "primary"
 
             if st.button(button_text, key=f"detail_{context}_{index}_{job_short_id}",
-                        type=button_type, use_container_width=True):
+                         type=button_type, use_container_width=True):
                 # Toggle the expansion state for this specific job
                 if expand_key not in st.session_state:
                     st.session_state[expand_key] = False
@@ -500,7 +526,8 @@ def display_job_card(job: Dict[str, Any], context: str, index: int):
             else:
                 st.error("无法获取任务详情")
 
-        st.divider()
+        # FIXED: Only add divider if this is NOT the last job in the list
+        # This prevents the extra empty row before navigation
 
 
 # === FILTER JOBS BY STATUS ===
@@ -524,6 +551,10 @@ with tab1:  # Processing jobs
             # Calculate global index for unique keys
             global_index = (st.session_state.processing_page - 1) * jobs_per_page + i
             display_job_card(job, f"processing", global_index)
+
+            # FIXED: Only add divider if this is NOT the last job
+            if i < len(page_jobs) - 1:
+                st.divider()
 
         # Pagination at bottom
         if len(processing_jobs) > jobs_per_page:
@@ -558,6 +589,10 @@ with tab2:  # Completed jobs
             global_index = (st.session_state.completed_page - 1) * jobs_per_page + i
             display_job_card(job, f"completed", global_index)
 
+            # FIXED: Only add divider if this is NOT the last job
+            if i < len(page_jobs) - 1:
+                st.divider()
+
         # Pagination at bottom
         if len(completed_jobs) > jobs_per_page:
             st.markdown("---")
@@ -583,6 +618,10 @@ with tab3:  # All jobs
         # Calculate global index for unique keys
         global_index = (st.session_state.all_jobs_page - 1) * jobs_per_page + i
         display_job_card(job, f"all", global_index)
+
+        # FIXED: Only add divider if this is NOT the last job
+        if i < len(page_jobs) - 1:
+            st.divider()
 
     # Pagination at bottom
     if len(jobs) > jobs_per_page:
