@@ -152,6 +152,10 @@ if "completed_page" not in st.session_state:
 if "all_jobs_page" not in st.session_state:
     st.session_state.all_jobs_page = 1
 
+# === INITIALIZE TAB STATE ===
+if "active_tab" not in st.session_state:
+    st.session_state.active_tab = "processing"  # Default tab
+
 
 def format_job_type(job_type: str) -> str:
     """Format job type for display - CLEANED UP VERSION"""
@@ -535,13 +539,29 @@ processing_jobs = [j for j in jobs if j.get("status") in ["pending", "processing
 completed_jobs = [j for j in jobs if j.get("status") == "completed"]
 
 # === TABBED INTERFACE WITH IMPROVED PAGINATION ===
+# Determine active tab index based on session state
+tab_names = ["processing", "completed", "all_jobs"]
+try:
+    active_tab_index = tab_names.index(st.session_state.active_tab)
+except ValueError:
+    active_tab_index = 0
+    st.session_state.active_tab = "processing"
+
+# Create tabs with the calculated index
 tab1, tab2, tab3 = st.tabs([
     f"⏳ 处理中 ({len(processing_jobs)})",
     f"✅ 已完成 ({len(completed_jobs)})",
     f"📋 全部任务 ({len(jobs)})"
 ])
 
+# Track which tab is actually selected by user interaction
+# We'll detect tab changes by monitoring session state changes
+
 with tab1:  # Processing jobs
+    # Update active tab when this tab is accessed
+    if st.session_state.active_tab != "processing":
+        st.session_state.active_tab = "processing"
+
     if processing_jobs:
         # Get jobs for current page
         page_jobs = paginate_jobs(processing_jobs, st.session_state.processing_page, jobs_per_page)
@@ -568,6 +588,7 @@ with tab1:  # Processing jobs
             # Only update and rerun if page actually changed
             if new_page != st.session_state.processing_page:
                 st.session_state.processing_page = new_page
+                st.session_state.active_tab = "processing"  # Ensure we stay in this tab
                 st.rerun()
 
         # Auto-refresh option for processing jobs
@@ -579,6 +600,10 @@ with tab1:  # Processing jobs
         st.info("✨ 当前没有正在处理的任务")
 
 with tab2:  # Completed jobs
+    # Update active tab when this tab is accessed
+    if st.session_state.active_tab != "completed":
+        st.session_state.active_tab = "completed"
+
     if completed_jobs:
         # Get jobs for current page
         page_jobs = paginate_jobs(completed_jobs, st.session_state.completed_page, jobs_per_page)
@@ -605,11 +630,16 @@ with tab2:  # Completed jobs
             # Only update and rerun if page actually changed
             if new_page != st.session_state.completed_page:
                 st.session_state.completed_page = new_page
+                st.session_state.active_tab = "completed"  # Ensure we stay in this tab
                 st.rerun()
     else:
         st.info("📭 暂无已完成的任务")
 
 with tab3:  # All jobs
+    # Update active tab when this tab is accessed
+    if st.session_state.active_tab != "all_jobs":
+        st.session_state.active_tab = "all_jobs"
+
     # Get jobs for current page
     page_jobs = paginate_jobs(jobs, st.session_state.all_jobs_page, jobs_per_page)
 
@@ -635,6 +665,7 @@ with tab3:  # All jobs
         # Only update and rerun if page actually changed
         if new_page != st.session_state.all_jobs_page:
             st.session_state.all_jobs_page = new_page
+            st.session_state.active_tab = "all_jobs"  # Ensure we stay in this tab
             st.rerun()
 
 # === PAGE ACTIONS ===
