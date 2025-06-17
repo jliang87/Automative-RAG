@@ -23,32 +23,6 @@ if "_trigger_scroll" in st.query_params:
 st.empty()  # Force Streamlit to render a top anchor
 st.markdown('<div id="page-top" style="position: absolute; top: 0; height: 1px;"></div>', unsafe_allow_html=True)
 
-st.markdown("""
-<script>
-(function() {
-    const url = new URL(window.location);
-    if (!url.searchParams.get("_trigger_scroll")) return;
-
-    let attempts = 0;
-    function tryScrollTop() {
-        window.scrollTo(0, 0);
-        attempts++;
-        if (window.scrollY > 0 && attempts < 10) {
-            requestAnimationFrame(tryScrollTop);
-        } else {
-            // Once done, clean up param
-            url.searchParams.delete("_trigger_scroll");
-            window.history.replaceState({}, "", url);
-        }
-    }
-
-    window.addEventListener("load", () => {
-        requestAnimationFrame(tryScrollTop);
-    });
-})();
-</script>
-""", unsafe_allow_html=True)
-
 st.title("📋 后台任务")
 st.markdown("查看和管理您的处理任务")
 
@@ -711,3 +685,27 @@ if processing_count > 0:
     st.info(f"ℹ️ 当前有 {processing_count} 个任务正在处理中")
 
 st.caption("后台任务 - 跟踪您的处理任务进度")
+
+# === ABSOLUTE END ===
+st.markdown("""
+    <script>
+    window.addEventListener("load", () => {
+        const url = new URL(window.location);
+        if (url.searchParams.get("_trigger_scroll")) {
+            // Re-scroll after a delay and repeat
+            let attempts = 0;
+            const scrollUp = () => {
+                window.scrollTo({ top: 0, left: 0 });
+                attempts++;
+                if (attempts < 20 && window.scrollY > 5) {
+                    setTimeout(scrollUp, 50);
+                } else {
+                    url.searchParams.delete("_trigger_scroll");
+                    window.history.replaceState(null, "", url);
+                }
+            };
+            setTimeout(scrollUp, 200);
+        }
+    });
+    </script>
+""", unsafe_allow_html=True)
