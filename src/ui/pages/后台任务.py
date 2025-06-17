@@ -238,8 +238,21 @@ def display_job_card(job: Dict[str, Any], context: str, index: int):
 
     # Job card container
     with st.container():
-        # Header row
-        col1, col2, col3, col4 = st.columns([1, 4, 2, 1])
+        # Add CSS to prevent button text wrapping
+        st.markdown("""
+        <style>
+        div[data-testid="column"] .stButton > button {
+            white-space: nowrap !important;
+            overflow: hidden !important;
+            text-overflow: ellipsis !important;
+            min-width: 80px !important;
+            font-size: 0.875rem !important;
+        }
+        </style>
+        """, unsafe_allow_html=True)
+
+        # Header row - FIXED: Adjust column ratios for better button display
+        col1, col2, col3, col4 = st.columns([1, 4, 2, 1.3])
 
         with col1:
             st.markdown(f"<span style='font-size: 2em'>{config['icon']}</span>",
@@ -259,10 +272,11 @@ def display_job_card(job: Dict[str, Any], context: str, index: int):
         with col4:
             # Check current expansion state
             is_expanded = st.session_state.get(expand_key, False)
-            button_text = "🔼 收起" if is_expanded else "📄 详情"
+            button_text = "🔼收起" if is_expanded else "📄详情"
             button_type = "secondary" if is_expanded else "primary"
 
-            if st.button(button_text, key=f"detail_{context}_{index}_{job_short_id}", type=button_type):
+            if st.button(button_text, key=f"detail_{context}_{index}_{job_short_id}",
+                        type=button_type, use_container_width=True):
                 # Toggle the expansion state for this specific job
                 if expand_key not in st.session_state:
                     st.session_state[expand_key] = False
