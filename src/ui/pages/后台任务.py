@@ -18,48 +18,31 @@ initialize_session_state()
 st.title("📋 后台任务")
 st.markdown("查看和管理您的处理任务")
 
-# Auto-scroll to top when pagination navigation occurs - IMPROVED VERSION
-if st.session_state.get("should_scroll_to_top", False):
-    # Create a scroll anchor at the top of the page
-    st.markdown('<div id="top-anchor"></div>', unsafe_allow_html=True)
+# Create a top anchor for reliable scrolling
+st.markdown('<div id="page-top" style="height: 1px;"></div>', unsafe_allow_html=True)
 
-    # More robust JavaScript scrolling with multiple fallbacks
-    st.markdown("""
-    <script>
-        // Multiple scroll methods for better compatibility
-        function scrollToTop() {
-            // Method 1: Scroll to anchor
-            const anchor = document.getElementById('top-anchor');
-            if (anchor) {
-                anchor.scrollIntoView({ behavior: 'smooth', block: 'start' });
-            }
-
-            // Method 2: Force scroll to absolute top
-            setTimeout(() => {
-                window.scrollTo({ top: 0, left: 0, behavior: 'smooth' });
-            }, 50);
-
-            // Method 3: Immediate fallback for stubborn cases
-            setTimeout(() => {
-                document.documentElement.scrollTop = 0;
-                document.body.scrollTop = 0;
-            }, 200);
-
-            // Method 4: Final fallback
-            setTimeout(() => {
-                window.scrollTo(0, 0);
-            }, 500);
+# Auto-scroll logic - executes AFTER rerun
+st.markdown("""
+<script>
+const params = new URLSearchParams(window.location.search);
+if (params.get("_scroll") === "top") {
+    setTimeout(() => {
+        const anchor = document.getElementById("page-top");
+        if (anchor) {
+            anchor.scrollIntoView({ behavior: "smooth", block: "start" });
+        } else {
+            // Fallback to top of page
+            window.scrollTo({ top: 0, behavior: "smooth" });
         }
 
-        // Execute immediately and with delays
-        scrollToTop();
-        setTimeout(scrollToTop, 100);
-        setTimeout(scrollToTop, 300);
-    </script>
-    """, unsafe_allow_html=True)
-
-    # Clear the flag
-    st.session_state.should_scroll_to_top = False
+        // Clean up URL
+        params.delete("_scroll");
+        const newUrl = window.location.pathname + (params.toString() ? '?' + params.toString() : '');
+        history.replaceState(null, '', newUrl);
+    }, 100);
+}
+</script>
+""", unsafe_allow_html=True)
 
 # === JOB STATISTICS OVERVIEW ===
 job_stats = get_job_statistics()
@@ -117,6 +100,9 @@ def render_pagination(total_jobs, current_page, per_page, tab_name):
     if total_pages <= 1:
         return current_page
 
+    # Add scroll target at the beginning of pagination
+    st.markdown('<div id="pagination-top"></div>', unsafe_allow_html=True)
+
     # Elegant inline pagination - everything on one clean line
     col1, col2, col3, col4, col5, col6 = st.columns([2, 0.7, 0.7, 1.5, 0.7, 0.7])
 
@@ -129,15 +115,11 @@ def render_pagination(total_jobs, current_page, per_page, tab_name):
     with col2:
         if current_page > 1:
             if st.button("⏮️", key=f"first_{tab_name}", help="首页", use_container_width=True):
-                # Set flag to trigger auto-scroll
-                st.session_state.should_scroll_to_top = True
                 return 1
 
     with col3:
         if current_page > 1:
             if st.button("◀️", key=f"prev_{tab_name}", help="上一页", use_container_width=True):
-                # Set flag to trigger auto-scroll
-                st.session_state.should_scroll_to_top = True
                 return current_page - 1
 
     with col4:
@@ -151,22 +133,16 @@ def render_pagination(total_jobs, current_page, per_page, tab_name):
             label_visibility="collapsed"  # Hide the label to save space
         )
         if selected_page != current_page:
-            # Set flag to trigger auto-scroll
-            st.session_state.should_scroll_to_top = True
             return selected_page
 
     with col5:
         if current_page < total_pages:
             if st.button("▶️", key=f"next_{tab_name}", help="下一页", use_container_width=True):
-                # Set flag to trigger auto-scroll
-                st.session_state.should_scroll_to_top = True
                 return current_page + 1
 
     with col6:
         if current_page < total_pages:
             if st.button("⏭️", key=f"last_{tab_name}", help="末页", use_container_width=True):
-                # Set flag to trigger auto-scroll
-                st.session_state.should_scroll_to_top = True
                 return total_pages
 
     return current_page
@@ -624,7 +600,8 @@ if st.session_state.current_tab == 0:  # Processing jobs
             # Only update and rerun if page actually changed
             if new_page != st.session_state.processing_page:
                 st.session_state.processing_page = new_page
-                # Keep current tab state - no need to change it
+                # Set scroll parameter before rerun
+                st.experimental_set_query_params(_scroll="top")
                 st.rerun()
 
         # Auto-refresh option for processing jobs
@@ -662,7 +639,8 @@ elif st.session_state.current_tab == 1:  # Completed jobs
             # Only update and rerun if page actually changed
             if new_page != st.session_state.completed_page:
                 st.session_state.completed_page = new_page
-                # Keep current tab state - no need to change it
+                # Set scroll parameter before rerun
+                st.experimental_set_query_params(_scroll="top")
                 st.rerun()
     else:
         st.info("📭 暂无已完成的任务")
@@ -693,7 +671,16 @@ elif st.session_state.current_tab == 2:  # All jobs
         # Only update and rerun if page actually changed
         if new_page != st.session_state.all_jobs_page:
             st.session_state.all_jobs_page = new_page
-            # Keep current tab state - no need to change it
+            # Force scroll to top by adding JavaScript
+            st.markdown("""
+            <script>
+                setTimeout(() => {
+                    window.scrollTo(0, 0);
+                    document.documentElement.scrollTop = 0;
+                    document.body.scrollTop = 0;
+                }, 50);
+            </script>
+            """, unsafe_allow_html=True)
             st.rerun()
 
 # === PAGE ACTIONS ===
