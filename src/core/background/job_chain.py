@@ -49,12 +49,15 @@ class JobChain:
         }
 
     def start_job_chain(self, job_id: str, job_type: JobType, initial_data: Dict[str, Any]) -> None:
-        """Start a job chain with Unicode handling for initial data."""
+        """Start a job chain with mode support."""
         workflow = self.workflows.get(job_type)
         if not workflow:
             raise ValueError(f"Unknown job type: {job_type}")
 
-        # Store the job chain state
+        # Extract query mode from initial data
+        query_mode = initial_data.get("query_mode", "facts")
+
+        # Store the job chain state with mode information
         chain_state = {
             "job_id": job_id,
             "job_type": job_type.value,
@@ -62,6 +65,7 @@ class JobChain:
             "current_step": 0,
             "total_steps": len(workflow),
             "data": initial_data,
+            "query_mode": query_mode,
             "started_at": time.time(),
             "status": TaskStatus.RUNNING.value,
             "step_timings": {}
@@ -69,15 +73,20 @@ class JobChain:
 
         self._save_chain_state(job_id, chain_state)
 
-        # Update job tracker
+        # Update job tracker with mode information
         job_tracker.update_job_status(
             job_id,
             JobStatus.PROCESSING,
-            result={"message": f"Starting {job_type.value} workflow", "step": 1, "total_steps": len(workflow)},
+            result={
+                "message": f"Starting {job_type.value} workflow in '{query_mode}' mode",
+                "step": 1,
+                "total_steps": len(workflow),
+                "query_mode": query_mode
+            },
             stage="chain_started"
         )
 
-        # Immediately execute the first task
+        # Execute the first task
         self._execute_next_task(job_id)
 
     def _execute_next_task(self, job_id: str) -> None:
@@ -147,11 +156,14 @@ class JobChain:
             self._execute_task_immediately(job_id, task_name, queue_name, complete_data)
 
     def _execute_task_immediately(self, job_id: str, task_name: str, queue_name: str, data: Dict[str, Any]) -> None:
-        """Execute a task immediately and mark the queue as busy."""
+        """Execute a task immediately with mode support."""
         # Mark queue as busy
         self._mark_queue_busy(queue_name, job_id, task_name)
 
-        # Execute the appropriate task based on task_name
+        # Extract query mode for mode-aware tasks
+        query_mode = data.get("query_mode", "facts")
+
+        # Execute the appropriate task based on task_name with mode support
         try:
             if task_name == "download_video":
                 download_video_task.send(job_id, data.get("url"), data.get("metadata"))
@@ -164,9 +176,21 @@ class JobChain:
             elif task_name == "generate_embeddings":
                 generate_embeddings_task.send(job_id, data.get("documents"))
             elif task_name == "retrieve_documents":
-                retrieve_documents_task.send(job_id, data.get("query"), data.get("metadata_filter"))
+                # Pass query mode to retrieval task
+                retrieve_documents_task.send(
+                    job_id,
+                    data.get("query"),
+                    data.get("metadata_filter"),
+                    query_mode  # Pass mode information
+                )
             elif task_name == "llm_inference":
-                llm_inference_task.send(job_id, data.get("query"), data.get("documents"))
+                # Pass query mode to inference task
+                llm_inference_task.send(
+                    job_id,
+                    data.get("query"),
+                    data.get("documents"),
+                    query_mode  # Pass mode information
+                )
             else:
                 logger.error(f"Unknown task: {task_name}")
                 self.task_failed(job_id, f"Unknown task: {task_name}")
@@ -956,32 +980,50 @@ def generate_embeddings_task(job_id: str, documents: List[Dict]):
         job_chain.task_failed(job_id, error_msg)
 
 
-# FIXED: retrieve_documents_task - Actually use diversity settings
-
 @dramatiq.actor(queue_name="embedding_tasks", store_results=True, max_retries=2)
-def retrieve_documents_task(job_id: str, query: str, metadata_filter: Optional[Dict] = None):
-    """
-    Retrieve documents with proper semantic search and diversity.
-    Uses settings for diversity configuration.
-    """
+def retrieve_documents_task(job_id: str, query: str, metadata_filter: Optional[Dict] = None, query_mode: str = "facts"):
+    """Retrieve documents with mode awareness."""
     try:
-        logger.info(f"Retrieving documents for job {job_id}: {query}")
+        logger.info(f"Retrieving documents for job {job_id} in '{query_mode}' mode: {query}")
 
         from .models import get_vector_store
         from src.config.settings import settings
         import numpy as np
 
-        # Get vector store (always has embedding function now)
         vector_store = get_vector_store()
+
+        # Adjust retrieval parameters based on mode complexity
+        mode_complexity = {
+            "facts": "simple",
+            "features": "moderate",
+            "tradeoffs": "complex",
+            "scenarios": "complex",
+            "debate": "complex",
+            "quotes": "simple"
+        }
+
+        complexity = mode_complexity.get(query_mode, "moderate")
+
+        if complexity == "complex":
+            # Get more documents for complex analysis modes
+            retrieval_k = min(settings.retriever_top_k * 2, 40)
+            reranker_k = min(settings.reranker_top_k * 2, 15)
+        elif complexity == "moderate":
+            retrieval_k = int(settings.retriever_top_k * 1.5)
+            reranker_k = int(settings.reranker_top_k * 1.2)
+        else:
+            retrieval_k = settings.retriever_top_k
+            reranker_k = settings.reranker_top_k
 
         # Perform semantic similarity search
         results = vector_store.similarity_search_with_score(
             query=query,
-            k=settings.retriever_top_k,
+            k=retrieval_k,
             metadata_filter=metadata_filter
         )
 
-        logger.info(f"Semantic search returned {len(results)} results")
+        logger.info(
+            f"Semantic search returned {len(results)} results for mode '{query_mode}' (complexity: {complexity})")
 
         if not results:
             logger.warning(f"No documents found for query: {query}")
@@ -989,30 +1031,28 @@ def retrieve_documents_task(job_id: str, query: str, metadata_filter: Optional[D
                 "documents": [],
                 "document_count": 0,
                 "retrieval_completed_at": time.time(),
-                "retrieval_method": "semantic_search",
-                "query_used": query
+                "retrieval_method": f"semantic_search_{query_mode}",
+                "query_used": query,
+                "query_mode": query_mode,
+                "complexity_level": complexity
             })
             return
 
-        # FIXED: Apply diversity filtering using settings
+        # Apply diversity filtering
         if settings.diversity_enabled:
             diverse_results = apply_document_diversity(
                 results,
-                max_per_source=settings.max_docs_per_source  # ✅ Use setting
+                max_per_source=settings.max_docs_per_source
             )
-            logger.info(f"Diversity filtering enabled: max {settings.max_docs_per_source} docs per source")
+            logger.info(f"Diversity filtering for mode '{query_mode}': {len(results)} -> {len(diverse_results)}")
         else:
-            # If diversity disabled, just take top results
-            diverse_results = results[:settings.reranker_top_k]
-            logger.info("Diversity filtering disabled - using top results")
+            diverse_results = results[:reranker_k]
 
         # Format results for transfer to inference worker
         serialized_docs = []
         for doc, score in diverse_results:
-            # Convert numpy.float32 to Python float
             json_safe_score = float(score) if isinstance(score, (np.floating, np.float32, np.float64)) else score
 
-            # Clean metadata to ensure JSON serialization compatibility
             cleaned_metadata = {}
             for key, value in doc.metadata.items():
                 if isinstance(value, (np.floating, np.float32, np.float64)):
@@ -1030,19 +1070,22 @@ def retrieve_documents_task(job_id: str, query: str, metadata_filter: Optional[D
                 "relevance_score": json_safe_score
             })
 
-        logger.info(f"Document retrieval completed for job {job_id}: {len(diverse_results)} documents")
+        logger.info(
+            f"Document retrieval completed for job {job_id} in mode '{query_mode}': {len(diverse_results)} documents")
 
-        # Trigger LLM inference
+        # Trigger LLM inference with mode information
         job_chain.task_completed(job_id, {
             "documents": serialized_docs,
             "document_count": len(serialized_docs),
             "retrieval_completed_at": time.time(),
-            "retrieval_method": "semantic_search_with_diversity" if settings.diversity_enabled else "semantic_search",
+            "retrieval_method": f"semantic_search_with_diversity_{query_mode}",
             "original_results": len(results),
             "diverse_results": len(diverse_results),
-            "diversity_settings": {
-                "enabled": settings.diversity_enabled,
-                "max_per_source": settings.max_docs_per_source
+            "query_mode": query_mode,
+            "complexity_level": complexity,
+            "mode_adjusted_params": {
+                "retrieval_k": retrieval_k,
+                "reranker_k": reranker_k
             }
         })
 
@@ -1052,24 +1095,23 @@ def retrieve_documents_task(job_id: str, query: str, metadata_filter: Optional[D
 
 
 @dramatiq.actor(queue_name="inference_tasks", store_results=True, max_retries=2)
-def llm_inference_task(job_id: str, query: str, documents: List[Dict]):
-    """Perform LLM inference - Unicode cleaning happens automatically!"""
+def llm_inference_task(job_id: str, query: str, documents: List[Dict], query_mode: str = "facts"):
+    """Perform LLM inference with mode support - Unicode cleaning happens automatically!"""
     try:
-        logger.info(f"Performing LLM inference for job {job_id}: {query}")
+        logger.info(f"Performing LLM inference for job {job_id} with mode '{query_mode}': {query}")
 
         from .models import get_llm_model, get_colbert_reranker
         from langchain_core.documents import Document
         from src.config.settings import settings
         import numpy as np
 
-        # Convert documents back to Document objects with scores (data is already clean)
+        # Convert documents back to Document objects with scores
         doc_objects = []
         for doc_dict in documents:
             doc = Document(
                 page_content=doc_dict["content"],
                 metadata=doc_dict.get("metadata", {})
             )
-            # Convert numpy.float32 to Python float
             score = doc_dict.get("relevance_score", 0)
             if isinstance(score, (np.floating, np.float32, np.float64)):
                 score = float(score)
@@ -1084,11 +1126,19 @@ def llm_inference_task(job_id: str, query: str, documents: List[Dict]):
             logger.warning("Reranker not available, using original document order")
             reranked_docs = doc_objects[:settings.reranker_top_k]
 
-        # Get preloaded LLM model and perform inference
+        # Get preloaded LLM model and perform mode-aware inference
         llm = get_llm_model()
-        answer = llm.answer_query(
+
+        # Validate query mode
+        if not llm.validate_mode(query_mode):
+            logger.warning(f"Invalid query mode '{query_mode}', falling back to 'facts'")
+            query_mode = "facts"
+
+        # Use the new mode-aware method
+        answer = llm.answer_query_with_mode(
             query=query,
             documents=reranked_docs,
+            query_mode=query_mode,
             metadata_filter=None
         )
 
@@ -1118,14 +1168,16 @@ def llm_inference_task(job_id: str, query: str, documents: List[Dict]):
             }
             formatted_documents.append(formatted_doc)
 
-        logger.info(f"LLM inference completed for job {job_id}")
+        logger.info(f"LLM inference completed for job {job_id} with mode '{query_mode}'")
 
-        # Create the complete inference result with JSON-safe data
+        # Create the complete inference result with mode information
         inference_result = {
             "query": query,
             "answer": answer,
             "documents": formatted_documents,
             "document_count": len(formatted_documents),
+            "query_mode": query_mode,
+            "mode_info": llm.get_mode_info(query_mode),
             "inference_completed_at": time.time()
         }
 
