@@ -257,7 +257,12 @@ def display_job_card(job: Dict[str, Any], context: str, index: int):
             st.caption(f"创建: {format_time(created_at)}")
 
         with col4:
-            if st.button("📄 详情", key=f"detail_{context}_{index}_{job_short_id}"):
+            # Check current expansion state
+            is_expanded = st.session_state.get(expand_key, False)
+            button_text = "🔼 收起" if is_expanded else "📄 详情"
+            button_type = "secondary" if is_expanded else "primary"
+
+            if st.button(button_text, key=f"detail_{context}_{index}_{job_short_id}", type=button_type):
                 # Toggle the expansion state for this specific job
                 if expand_key not in st.session_state:
                     st.session_state[expand_key] = False

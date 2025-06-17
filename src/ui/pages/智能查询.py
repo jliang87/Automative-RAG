@@ -405,34 +405,50 @@ st.markdown("多角度分析模式，适合不同的查询需求")
 # Mode selection
 st.subheader("📋 选择查询模式")
 
-# Display modes in a grid
+# Initialize selected mode in session state
+if 'selected_mode' not in st.session_state:
+    st.session_state.selected_mode = None
+
+# Display modes in a grid with visual feedback
 mode_cols = st.columns(3)
-selected_mode = None
 
 for i, (mode_key, mode_info) in enumerate(QUERY_MODES.items()):
     col = mode_cols[i % 3]
 
     with col:
+        # Check if this mode is selected
+        is_selected = st.session_state.get('selected_mode') == mode_key
+
+        # Set button style based on selection
+        button_type = "primary" if is_selected else "secondary"
+
+        # Add visual indicator to button text
+        button_text = f"{mode_info['icon']} {mode_info['name']}"
+        if is_selected:
+            button_text = f"✅ {button_text}"
+
         if st.button(
-                f"{mode_info['icon']} {mode_info['name']}",
+                button_text,
                 key=f"mode_{mode_key}",
                 use_container_width=True,
-                help=mode_info['description']
+                help=mode_info['description'],
+                type=button_type
         ):
-            selected_mode = mode_key
+            st.session_state.selected_mode = mode_key
+            st.rerun()
 
-# Show selected mode info
-if selected_mode:
-    st.session_state.selected_mode = selected_mode
-
-if 'selected_mode' in st.session_state:
+# Show selected mode info only if one is selected
+if st.session_state.get('selected_mode'):
     mode = st.session_state.selected_mode
     mode_info = QUERY_MODES[mode]
 
-    st.success(f"已选择：{mode_info['icon']} {mode_info['name']}")
-    st.markdown(f"**适用场景：** {mode_info['use_case']}")
+    # Subtle info display instead of banner
+    with st.container():
+        st.markdown(f"**当前模式:** {mode_info['icon']} {mode_info['name']} | **适用:** {mode_info['use_case']}")
 
-    # Query input
+    st.markdown("---")
+
+    # Query input section
     st.subheader("💭 输入您的问题")
 
     # Show examples for the selected mode
@@ -497,6 +513,28 @@ if 'selected_mode' in st.session_state:
                     st.session_state.query_submitted_at = time.time()
                     st.success(f"✅ {mode_info['name']}已提交，任务ID: {job_id[:8]}...")
                     st.rerun()
+
+else:
+    # Initial instructions when no mode is selected
+    st.info("👆 请选择一个查询模式开始分析")
+
+    # Mode comparison table
+    st.subheader("📊 模式对比")
+
+    comparison_data = []
+    for mode_key, mode_info in QUERY_MODES.items():
+        comparison_data.append({
+            "模式": f"{mode_info['icon']} {mode_info['name']}",
+            "描述": mode_info['description'],
+            "适用场景": mode_info['use_case'],
+            "输出结构": "双层结构" if mode_info['two_layer'] else "单层输出"
+        })
+
+    # Display as table
+    import pandas as pd
+
+    df = pd.DataFrame(comparison_data)
+    st.dataframe(df, use_container_width=True, hide_index=True)
 
 # Results section
 if hasattr(st.session_state, 'current_job_id') and st.session_state.current_job_id:
@@ -577,27 +615,6 @@ if hasattr(st.session_state, 'current_job_id') and st.session_state.current_job_
                 st.rerun()
     else:
         st.error("❌ 无法获取分析状态")
-
-else:
-    # Initial instructions
-    st.info("👆 请选择一个查询模式开始分析")
-
-    # Mode comparison table
-    st.subheader("📊 模式对比")
-
-    comparison_data = []
-    for mode_key, mode_info in QUERY_MODES.items():
-        comparison_data.append({
-            "模式": f"{mode_info['icon']} {mode_info['name']}",
-            "描述": mode_info['description'],
-            "适用场景": mode_info['use_case']
-        })
-
-    # Display as table
-    import pandas as pd
-
-    df = pd.DataFrame(comparison_data)
-    st.dataframe(df, use_container_width=True, hide_index=True)
 
 # Navigation
 st.markdown("---")
