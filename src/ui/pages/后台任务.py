@@ -15,32 +15,33 @@ logger = logging.getLogger(__name__)
 
 initialize_session_state()
 
+st.empty()  # Force this to be at absolute top
+st.markdown('<div id="page-top" style="position: absolute; top: 0; height: 1px;"></div>', unsafe_allow_html=True)
+
 st.title("📋 后台任务")
 st.markdown("查看和管理您的处理任务")
 
-# Create a top anchor for reliable scrolling
-st.markdown('<div id="page-top" style="height: 1px;"></div>', unsafe_allow_html=True)
-
-# Auto-scroll logic - executes AFTER rerun
+# Auto-scroll logic - IMPROVED with longer delay and window.load event
 st.markdown("""
 <script>
-const params = new URLSearchParams(window.location.search);
-if (params.get("_scroll") === "top") {
-    setTimeout(() => {
-        const anchor = document.getElementById("page-top");
-        if (anchor) {
-            anchor.scrollIntoView({ behavior: "smooth", block: "start" });
-        } else {
-            // Fallback to top of page
-            window.scrollTo({ top: 0, behavior: "smooth" });
-        }
+window.addEventListener("load", () => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("_scroll") === "top") {
+        setTimeout(() => {
+            const anchor = document.getElementById("page-top");
+            if (anchor) {
+                anchor.scrollIntoView({ behavior: "auto", block: "start" });
+            } else {
+                window.scrollTo({ top: 0, behavior: "auto" });
+            }
 
-        // Clean up URL
-        params.delete("_scroll");
-        const newUrl = window.location.pathname + (params.toString() ? '?' + params.toString() : '');
-        history.replaceState(null, '', newUrl);
-    }, 100);
-}
+            // Clean up URL
+            params.delete("_scroll");
+            const newUrl = window.location.pathname + (params.toString() ? '?' + params.toString() : '');
+            history.replaceState(null, '', newUrl);
+        }, 500); // Increased delay to ensure all content is rendered
+    }
+});
 </script>
 """, unsafe_allow_html=True)
 
@@ -671,16 +672,8 @@ elif st.session_state.current_tab == 2:  # All jobs
         # Only update and rerun if page actually changed
         if new_page != st.session_state.all_jobs_page:
             st.session_state.all_jobs_page = new_page
-            # Force scroll to top by adding JavaScript
-            st.markdown("""
-            <script>
-                setTimeout(() => {
-                    window.scrollTo(0, 0);
-                    document.documentElement.scrollTop = 0;
-                    document.body.scrollTop = 0;
-                }, 50);
-            </script>
-            """, unsafe_allow_html=True)
+            # Set scroll parameter before rerun
+            st.experimental_set_query_params(_scroll="top")
             st.rerun()
 
 # === PAGE ACTIONS ===
