@@ -7,7 +7,7 @@ from src.ui.session_init import initialize_session_state
 
 initialize_session_state()
 
-# Query mode configurations
+# Query mode configurations (updated for unified system)
 QUERY_MODES = {
     "facts": {
         "icon": "📌",
@@ -15,6 +15,9 @@ QUERY_MODES = {
         "description": "验证具体的车辆规格参数",
         "use_case": "查询确切的技术规格、配置信息",
         "two_layer": True,
+        "is_default": True,
+        "complexity": "简单",
+        "time_estimate": "~10秒",
         "examples": [
             "2023年宝马X5的后备箱容积是多少？",
             "特斯拉Model 3的充电速度参数",
@@ -27,6 +30,8 @@ QUERY_MODES = {
         "description": "评估是否应该添加某项功能",
         "use_case": "产品决策，功能规划",
         "two_layer": True,
+        "complexity": "中等",
+        "time_estimate": "~30秒",
         "examples": [
             "是否应该为电动车增加氛围灯功能？",
             "增加模拟引擎声音对用户体验的影响",
@@ -39,6 +44,8 @@ QUERY_MODES = {
         "description": "分析设计选择的优缺点",
         "use_case": "设计决策，技术选型",
         "two_layer": True,
+        "complexity": "复杂",
+        "time_estimate": "~45秒",
         "examples": [
             "使用模拟声音 vs 自然静音的利弊",
             "移除物理按键的优缺点分析",
@@ -51,6 +58,8 @@ QUERY_MODES = {
         "description": "评估功能在实际使用场景中的表现",
         "use_case": "用户体验设计，产品规划",
         "two_layer": True,
+        "complexity": "复杂",
+        "time_estimate": "~40秒",
         "examples": [
             "长途旅行时这个功能如何表现？",
             "家庭用户在日常通勤中的体验如何？",
@@ -63,6 +72,8 @@ QUERY_MODES = {
         "description": "模拟不同角色的观点和讨论",
         "use_case": "决策支持，全面评估",
         "two_layer": False,
+        "complexity": "复杂",
+        "time_estimate": "~50秒",
         "examples": [
             "产品经理、工程师和用户代表如何看待自动驾驶功能？",
             "不同团队对电池技术路线的观点",
@@ -75,6 +86,8 @@ QUERY_MODES = {
         "description": "提取相关的用户评论和反馈",
         "use_case": "市场研究，用户洞察",
         "two_layer": False,
+        "complexity": "简单",
+        "time_estimate": "~20秒",
         "examples": [
             "用户对续航里程的真实评价",
             "关于内饰质量的用户反馈",
@@ -83,127 +96,23 @@ QUERY_MODES = {
     }
 }
 
-# Prompt templates for each mode
-PROMPT_TEMPLATES = {
-    "facts": """你是专业的汽车技术规格验证专家。请严格按照以下格式回答：
 
-【实证答案】
-基于提供的文档内容，回答用户的具体问题。如果文档中没有相关信息，必须明确说明"根据提供的文档，未提及相关信息"。
-
-【推理补充】
-如果有需要，可以基于汽车行业常识进行合理推测，但必须清楚标注这是推理而非文档事实。
-
-用户查询：{query}
-文档内容：{context}
-
-请确保回答精确、可验证，并明确区分事实和推理。""",
-
-    "features": """你是汽车产品策略专家。请按照以下格式分析是否应该添加某项功能：
-
-【实证分析】
-基于提供的文档中关于类似功能或相关技术的信息进行分析。
-
-【策略推理】
-基于产品思维和用户需求，分析这个功能的潜在价值：
-- 用户受益分析
-- 技术可行性
-- 市场竞争优势
-- 成本效益评估
-
-用户询问功能：{query}
-参考文档：{context}
-
-请提供平衡的评估意见。""",
-
-    "tradeoffs": """你是汽车设计决策分析师。请按照以下格式分析设计选择的利弊：
-
-【文档支撑】
-基于提供文档中的相关信息和数据。
-
-【利弊分析】
-**优点：**
-- [基于文档的优点]
-- [推理得出的优点]
-
-**缺点：**
-- [基于文档的缺点] 
-- [推理得出的缺点]
-
-**总结建议：**
-综合评估和建议
-
-设计决策：{query}
-参考资料：{context}
-
-请确保分析客观全面。""",
-
-    "scenarios": """你是用户体验分析专家。请按照以下格式分析功能在不同场景下的表现：
-
-【文档场景】
-提取文档中提到的使用场景和用户反馈。
-
-【场景推理】
-基于产品思维和用户同理心，分析在以下场景中的表现：
-- 谁会受益（目标用户群）
-- 什么时候有用（使用时机）
-- 什么条件下效果最好（最佳使用条件）
-- 可能的问题和限制
-
-分析主题：{query}
-参考信息：{context}
-
-请提供具体、实用的场景分析。""",
-
-    "debate": """你是汽车行业圆桌讨论主持人。请模拟以下角色的讨论：
-
-**产品经理观点：**
-从商业价值和用户需求角度分析
-
-**工程师观点：** 
-从技术实现和成本角度分析
-
-**用户代表观点：**
-从实际使用体验和需求角度分析
-
-讨论话题：{query}
-参考信息：{context}
-
-请让每个角色提出不同的观点，最后总结共识和分歧点。""",
-
-    "quotes": """你是汽车市场研究分析师。请从提供的文档中提取用户的原始评论和反馈：
-
-请按以下格式提供用户评论：
-
-【来源1】："用户原始评论内容..."
-【来源2】："用户原始评论内容..."
-【来源3】："用户原始评论内容..."
-
-查询主题：{query}
-文档来源：{context}
-
-只提取真实的用户评论，不要编造内容。如果没有找到相关的用户评论，请明确说明。"""
-}
-
-
-def submit_enhanced_query(query_text: str, mode: str, filters: Optional[Dict] = None) -> Optional[str]:
-    """Submit enhanced query with specific prompt template"""
+def submit_unified_query(query_text: str, mode: str, filters: Optional[Dict] = None) -> Optional[str]:
+    """Submit unified query (all queries now use the same endpoint)"""
     try:
-        # Get the prompt template for the selected mode
-        template = PROMPT_TEMPLATES.get(mode, PROMPT_TEMPLATES["facts"])
-
-        # Enhanced query data
-        enhanced_data = {
+        # UNIFIED: All queries use the same endpoint with mode specification
+        unified_data = {
             "query": query_text,
             "metadata_filter": filters,
             "top_k": 8,  # Get more documents for better analysis
-            "query_mode": mode,
-            "prompt_template": template
+            "query_mode": mode,  # Specify the analysis mode
+            "prompt_template": None  # Use default mode template
         }
 
         result = api_request(
-            endpoint="/query/enhanced",
+            endpoint="/query",  # UNIFIED: Single endpoint for all queries
             method="POST",
-            data=enhanced_data
+            data=unified_data
         )
 
         if result and "job_id" in result:
@@ -218,7 +127,7 @@ def submit_enhanced_query(query_text: str, mode: str, filters: Optional[Dict] = 
 
 
 def get_query_result(job_id: str) -> Optional[Dict]:
-    """Get query results"""
+    """Get unified query results"""
     try:
         return api_request(f"/query/results/{job_id}", method="GET")
     except Exception as e:
@@ -227,99 +136,59 @@ def get_query_result(job_id: str) -> Optional[Dict]:
 
 
 def display_two_layer_result(result: Dict[str, Any], mode: str):
-    """Display results with two-layer structure"""
+    """Display results with two-layer structure for enhanced modes"""
     answer = result.get("answer", "")
+    analysis_structure = result.get("analysis_structure")
 
     if not answer:
         st.warning("未获得查询结果")
         return
 
-    # Parse two-layer structure based on mode
-    if mode == "facts":
-        # Look for 【实证答案】 and 【推理补充】
-        sections = parse_structured_answer(answer, ["【实证答案】", "【推理补充】"])
+    # Check if we have structured analysis
+    if analysis_structure and isinstance(analysis_structure, dict):
+        # Display structured sections
+        if mode == "facts":
+            if "【实证分析】" in analysis_structure:
+                st.subheader("📋 基于文档的实证分析")
+                st.info(analysis_structure["【实证分析】"])
 
-        if sections.get("【实证答案】"):
-            st.subheader("📋 实证答案")
-            st.info(sections["【实证答案】"])
+            if "【策略推理】" in analysis_structure:
+                st.subheader("🧠 专业推理补充")
+                st.warning(analysis_structure["【策略推理】"])
 
-        if sections.get("【推理补充】"):
-            st.subheader("🧠 推理补充")
-            st.warning(sections["【推理补充】"])
+        elif mode == "features":
+            if "【实证分析】" in analysis_structure:
+                st.subheader("📊 文档实证分析")
+                st.info(analysis_structure["【实证分析】"])
 
-    elif mode == "features":
-        sections = parse_structured_answer(answer, ["【实证分析】", "【策略推理】"])
+            if "【策略推理】" in analysis_structure:
+                st.subheader("💡 功能策略推理")
+                st.success(analysis_structure["【策略推理】"])
 
-        if sections.get("【实证分析】"):
-            st.subheader("📊 实证分析")
-            st.info(sections["【实证分析】"])
+        elif mode == "tradeoffs":
+            if "【文档支撑】" in analysis_structure:
+                st.subheader("📋 文档支撑信息")
+                st.info(analysis_structure["【文档支撑】"])
 
-        if sections.get("【策略推理】"):
-            st.subheader("💡 策略推理")
-            st.success(sections["【策略推理】"])
+            if "【利弊分析】" in analysis_structure:
+                st.subheader("⚖️ 权衡利弊分析")
+                st.warning(analysis_structure["【利弊分析】"])
 
-    elif mode == "tradeoffs":
-        sections = parse_structured_answer(answer, ["【文档支撑】", "【利弊分析】"])
+        elif mode == "scenarios":
+            if "【文档场景】" in analysis_structure:
+                st.subheader("📖 文档场景信息")
+                st.info(analysis_structure["【文档场景】"])
 
-        if sections.get("【文档支撑】"):
-            st.subheader("📋 文档支撑")
-            st.info(sections["【文档支撑】"])
-
-        if sections.get("【利弊分析】"):
-            st.subheader("⚖️ 利弊分析")
-            st.warning(sections["【利弊分析】"])
-
-    elif mode == "scenarios":
-        sections = parse_structured_answer(answer, ["【文档场景】", "【场景推理】"])
-
-        if sections.get("【文档场景】"):
-            st.subheader("📖 文档场景")
-            st.info(sections["【文档场景】"])
-
-        if sections.get("【场景推理】"):
-            st.subheader("🎯 场景推理")
-            st.success(sections["【场景推理】"])
+            if "【场景推理】" in analysis_structure:
+                st.subheader("🎯 场景应用推理")
+                st.success(analysis_structure["【场景推理】"])
+        else:
+            # Fallback: show full answer
+            st.markdown(answer)
     else:
-        # Fallback: show full answer
-        st.markdown(answer)
-
-
-def parse_structured_answer(answer: str, section_headers: list) -> Dict[str, str]:
-    """Parse structured answer into sections"""
-    sections = {}
-    current_section = None
-    current_content = []
-
-    lines = answer.split('\n')
-
-    for line in lines:
-        line = line.strip()
-
-        # Check if this line is a section header
-        found_header = None
-        for header in section_headers:
-            if header in line:
-                found_header = header
-                break
-
-        if found_header:
-            # Save previous section if exists
-            if current_section and current_content:
-                sections[current_section] = '\n'.join(current_content).strip()
-
-            # Start new section
-            current_section = found_header
-            current_content = []
-        elif current_section:
-            # Add content to current section
-            if line:  # Only add non-empty lines
-                current_content.append(line)
-
-    # Save the last section
-    if current_section and current_content:
-        sections[current_section] = '\n'.join(current_content).strip()
-
-    return sections
+        # No structured analysis, show full answer
+        st.markdown("**📋 分析结果:**")
+        st.info(answer)
 
 
 def display_debate_result(answer: str):
@@ -399,17 +268,25 @@ def display_quotes_result(answer: str):
 
 
 # Main interface
-st.title("🔍 智能汽车查询")
-st.markdown("多角度分析模式，适合不同的查询需求")
+st.title("🧠 汽车智能查询系统")
+st.markdown("统一查询平台 - 从快速Facts验证到深度专业分析")
+
+# System info banner
+st.info("🔄 **统一查询系统** - 一个平台包含所有查询功能，Facts模式为默认推荐")
 
 # Mode selection
 st.subheader("📋 选择查询模式")
 
 # Initialize selected mode in session state
 if 'selected_mode' not in st.session_state:
-    st.session_state.selected_mode = None
+    st.session_state.selected_mode = "facts"  # Default to facts mode
 
-# Display modes in a grid with visual feedback
+# Handle pre-selected mode from homepage
+if hasattr(st.session_state, 'smart_mode'):
+    st.session_state.selected_mode = st.session_state.smart_mode
+    del st.session_state.smart_mode
+
+# Display modes in a grid with enhanced information
 mode_cols = st.columns(3)
 
 for i, (mode_key, mode_info) in enumerate(QUERY_MODES.items()):
@@ -427,24 +304,28 @@ for i, (mode_key, mode_info) in enumerate(QUERY_MODES.items()):
         if is_selected:
             button_text = f"✅ {button_text}"
 
+        # Add default indicator for facts mode
+        if mode_info.get('is_default'):
+            button_text += " (推荐)"
+
         if st.button(
                 button_text,
                 key=f"mode_{mode_key}",
                 use_container_width=True,
-                help=mode_info['description'],
+                help=f"{mode_info['description']} | 复杂度: {mode_info['complexity']} | 时间: {mode_info['time_estimate']}",
                 type=button_type
         ):
             st.session_state.selected_mode = mode_key
             st.rerun()
 
-# Show selected mode info only if one is selected
+        # Show mode info below button for selected mode
+        if is_selected:
+            st.caption(f"⏱️ {mode_info['time_estimate']} | 🎯 {mode_info['use_case']}")
+
+# Show selected mode info
 if st.session_state.get('selected_mode'):
     mode = st.session_state.selected_mode
     mode_info = QUERY_MODES[mode]
-
-    # Subtle info display instead of banner
-    with st.container():
-        st.markdown(f"**当前模式:** {mode_info['icon']} {mode_info['name']} | **适用:** {mode_info['use_case']}")
 
     st.markdown("---")
 
@@ -453,13 +334,18 @@ if st.session_state.get('selected_mode'):
 
     # Show examples for the selected mode
     with st.expander(f"💡 {mode_info['name']} 示例"):
+        st.markdown(f"**适合{mode_info['name']}的问题类型：**")
         for example in mode_info['examples']:
             if st.button(example, key=f"example_{example[:20]}", use_container_width=True):
                 st.session_state.example_query = example
 
-    # Use example query if selected
-    default_query = st.session_state.get('example_query', '')
-    if default_query:
+    # Handle pre-filled queries from other pages
+    default_query = ""
+    if hasattr(st.session_state, 'smart_query'):
+        default_query = st.session_state.smart_query
+        del st.session_state.smart_query
+    elif hasattr(st.session_state, 'example_query'):
+        default_query = st.session_state.example_query
         del st.session_state.example_query
 
     query = st.text_area(
@@ -467,7 +353,7 @@ if st.session_state.get('selected_mode'):
         value=default_query,
         placeholder=f"例如：{mode_info['examples'][0]}",
         height=100,
-        help=f"当前模式：{mode_info['description']}"
+        help=f"当前模式：{mode_info['description']} | 预计耗时：{mode_info['time_estimate']}"
     )
 
     # Filters (simplified for UX)
@@ -495,16 +381,21 @@ if st.session_state.get('selected_mode'):
     if year:
         filters["year"] = int(year)
 
-    # Submit button
+    # Submit button with enhanced information
+    submit_text = f"🚀 开始{mode_info['name']}"
+    if mode_info.get('is_default'):
+        submit_text += " (推荐)"
+
     if st.button(
-            f"🚀 开始{mode_info['name']}",
+            submit_text,
             type="primary",
             disabled=not query.strip(),
-            use_container_width=True
+            use_container_width=True,
+            help=f"预计处理时间：{mode_info['time_estimate']}"
     ):
         if query.strip():
-            with st.spinner(f"正在进行{mode_info['name']}..."):
-                job_id = submit_enhanced_query(query.strip(), mode, filters if filters else None)
+            with st.spinner(f"正在进行{mode_info['name']}，预计{mode_info['time_estimate']}..."):
+                job_id = submit_unified_query(query.strip(), mode, filters if filters else None)
 
                 if job_id:
                     st.session_state.current_job_id = job_id
@@ -519,13 +410,18 @@ else:
     st.info("👆 请选择一个查询模式开始分析")
 
     # Mode comparison table
-    st.subheader("📊 模式对比")
+    st.subheader("📊 查询模式对比")
 
     comparison_data = []
     for mode_key, mode_info in QUERY_MODES.items():
+        mode_name = f"{mode_info['icon']} {mode_info['name']}"
+        if mode_info.get('is_default'):
+            mode_name += " (推荐)"
+
         comparison_data.append({
-            "模式": f"{mode_info['icon']} {mode_info['name']}",
-            "描述": mode_info['description'],
+            "模式": mode_name,
+            "复杂度": mode_info['complexity'],
+            "预计时间": mode_info['time_estimate'],
             "适用场景": mode_info['use_case'],
             "输出结构": "双层结构" if mode_info['two_layer'] else "单层输出"
         })
@@ -536,6 +432,24 @@ else:
     df = pd.DataFrame(comparison_data)
     st.dataframe(df, use_container_width=True, hide_index=True)
 
+    # Quick start recommendations
+    st.markdown("### 🚀 快速开始建议")
+    rec_col1, rec_col2 = st.columns(2)
+
+    with rec_col1:
+        st.markdown("**🆕 新用户推荐：**")
+        if st.button("📌 开始Facts查询", type="primary", use_container_width=True):
+            st.session_state.selected_mode = "facts"
+            st.rerun()
+        st.caption("简单快速，验证具体规格参数")
+
+    with rec_col2:
+        st.markdown("**🏆 专业用户推荐：**")
+        if st.button("💡 开始功能建议", use_container_width=True):
+            st.session_state.selected_mode = "features"
+            st.rerun()
+        st.caption("深度分析，产品决策支持")
+
 # Results section
 if hasattr(st.session_state, 'current_job_id') and st.session_state.current_job_id:
     job_id = st.session_state.current_job_id
@@ -545,12 +459,12 @@ if hasattr(st.session_state, 'current_job_id') and st.session_state.current_job_
     st.markdown("---")
     st.subheader(f"📋 {mode_info['name']} 结果")
 
-    # Get results with minimal API calls
+    # Rate-limited result checking
     if 'last_result_check' not in st.session_state:
         st.session_state.last_result_check = 0
 
     current_time = time.time()
-    if current_time - st.session_state.last_result_check > 3:  # Check every 3 seconds
+    if current_time - st.session_state.last_result_check > 3:
         result = get_query_result(job_id)
         st.session_state.last_query_result = result
         st.session_state.last_result_check = current_time
@@ -559,9 +473,17 @@ if hasattr(st.session_state, 'current_job_id') and st.session_state.current_job_
 
     if result:
         status = result.get("status", "")
+        result_query_mode = result.get("query_mode", query_mode)
 
         if status == "completed":
             st.success("✅ 分析完成！")
+
+            # Display unified system metadata
+            mode_metadata = result.get("mode_metadata", {})
+            if mode_metadata.get("unified_system"):
+                execution_time = result.get("execution_time", 0)
+                complexity = mode_metadata.get("complexity_level", "unknown")
+                st.caption(f"⏱️ 实际耗时: {execution_time:.1f}秒 | 复杂度: {complexity} | 系统: 统一查询v2.0")
 
             # Display results based on mode
             if mode_info['two_layer']:
@@ -584,16 +506,25 @@ if hasattr(st.session_state, 'current_job_id') and st.session_state.current_job_
                         st.markdown("---")
 
             # Actions for completed queries
-            action_col1, action_col2 = st.columns(2)
+            action_col1, action_col2, action_col3 = st.columns(3)
             with action_col1:
-                if st.button("🔄 新的分析", key="new_analysis"):
+                if st.button("🔄 新的查询", key="new_analysis"):
                     # Clear session state
-                    for key in ['current_job_id', 'query_text', 'last_query_result', 'selected_mode']:
+                    for key in ['current_job_id', 'query_text', 'last_query_result']:
                         if key in st.session_state:
                             del st.session_state[key]
                     st.rerun()
 
             with action_col2:
+                if st.button("🔀 切换模式", key="switch_mode"):
+                    # Keep query but allow mode change
+                    st.session_state.example_query = st.session_state.get('query_text', '')
+                    for key in ['current_job_id', 'last_query_result']:
+                        if key in st.session_state:
+                            del st.session_state[key]
+                    st.rerun()
+
+            with action_col3:
                 if st.button("📋 查看详情", key="view_job_details"):
                     st.session_state.selected_job_id = job_id
                     st.switch_page("pages/后台任务.py")
@@ -609,6 +540,14 @@ if hasattr(st.session_state, 'current_job_id') and st.session_state.current_job_
             progress_msg = result.get("answer", "正在处理您的查询...")
             st.info(progress_msg)
 
+            # Show elapsed time and estimated remaining
+            if hasattr(st.session_state, 'query_submitted_at'):
+                elapsed = time.time() - st.session_state.query_submitted_at
+                estimated_total = int(mode_info['time_estimate'].replace('~', '').replace('秒', ''))
+                remaining = max(0, estimated_total - elapsed)
+
+                st.caption(f"已运行 {elapsed:.0f}秒 | 预计还需 {remaining:.0f}秒")
+
             # Manual refresh option
             if st.button("🔄 刷新状态", key="refresh_status"):
                 st.session_state.last_result_check = 0
@@ -621,12 +560,12 @@ st.markdown("---")
 nav_cols = st.columns(4)
 
 with nav_cols[0]:
-    if st.button("🔍 基础查询", use_container_width=True):
-        st.switch_page("pages/查询.py")
-
-with nav_cols[1]:
     if st.button("📤 上传资料", use_container_width=True):
         st.switch_page("pages/数据摄取.py")
+
+with nav_cols[1]:
+    if st.button("📚 浏览文档", use_container_width=True):
+        st.switch_page("pages/文档浏览.py")
 
 with nav_cols[2]:
     if st.button("📋 查看任务", use_container_width=True):
@@ -636,4 +575,4 @@ with nav_cols[3]:
     if st.button("🏠 返回主页", use_container_width=True):
         st.switch_page("src/ui/主页.py")
 
-st.caption("智能查询 - 多角度深度分析，适合专业用户的不同需求")
+st.caption("智能查询系统 - 统一平台，从快速验证到深度分析")
