@@ -1,14 +1,223 @@
 import json
 import time
 import logging
-from typing import Dict, List, Optional, Any
+from typing import List, Tuple, Dict, Optional, Any
+from langchain_core.documents import Document
 from enum import Enum
 import dramatiq
 
 from .job_tracker import job_tracker, JobStatus
 from .common import get_redis_client
+from src.utils.quality_utils import extract_key_terms, has_numerical_data, has_garbled_content
 
 logger = logging.getLogger(__name__)
+
+def adaptive_quality_filter(
+        results: List[Tuple[Document, float]],
+        query: str,
+        query_mode: str,
+        debug_mode: bool = False
+) -> List[Tuple[Document, float]]:
+    """
+    Adaptive quality filter that adjusts strictness based on query mode.
+
+    Args:
+        results: List of (document, similarity_score) tuples
+        query: Original query string
+        query_mode: Query mode (facts, features, scenarios, etc.)
+        debug_mode: Whether to log excluded documents
+
+    Returns:
+        Filtered list of documents with quality scores
+    """
+    # Define strict vs soft filtering modes
+    strict_modes = {"facts", "quotes"}
+    soft_modes = {"features", "scenarios", "tradeoffs", "debate"}
+
+    # Set quality thresholds based on mode
+    if query_mode in strict_modes:
+        required_quality_score = 3  # Strict for factual queries
+        logger.info(f"Using STRICT filtering for '{query_mode}' mode")
+    elif query_mode in soft_modes:
+        required_quality_score = 2  # More lenient for reasoning queries
+        logger.info(f"Using SOFT filtering for '{query_mode}' mode")
+    else:
+        required_quality_score = 2  # Default to soft
+        logger.info(f"Using default SOFT filtering for '{query_mode}' mode")
+
+    filtered_results = []
+    excluded_docs = []
+
+    # Extract key terms from query for relevance checking
+    query_terms = extract_key_terms(query)
+
+    for doc, similarity_score in results:
+        content = doc.page_content.lower()
+        metadata = doc.metadata
+
+        # Initialize quality score
+        quality_score = 0
+        quality_reasons = []
+
+        # 1. Content length check (more flexible ranges)
+        content_length = len(content)
+        if query_mode in strict_modes:
+            # Stricter for facts/quotes
+            if 30 <= content_length <= 2000:
+                quality_score += 1
+                quality_reasons.append("good_length")
+        else:
+            # More lenient for reasoning modes
+            if 20 <= content_length <= 3000:
+                quality_score += 1
+                quality_reasons.append("acceptable_length")
+
+        # 2. IMPROVED: Semantic similarity vs keyword matching
+        # If semantic score is high, let it through regardless of keyword matches
+        if similarity_score > 0.75:
+            quality_score += 2
+            quality_reasons.append("high_semantic_similarity")
+        elif similarity_score > 0.6:
+            quality_score += 1
+            quality_reasons.append("good_semantic_similarity")
+        else:
+            # Fallback to keyword matching for lower semantic scores
+            term_matches = sum(1 for term in query_terms if term in content)
+            if term_matches > 0:
+                quality_score += 1
+                quality_reasons.append(f"keyword_matches_{term_matches}")
+
+        # 3. Source credibility (slightly less strict)
+        source_type = metadata.get("source", "")
+        if source_type in ["youtube", "bilibili"]:
+            quality_score += 1
+            quality_reasons.append("video_source")
+        elif source_type == "pdf":
+            quality_score += 0.5  # PDFs are okay but not as preferred
+            quality_reasons.append("pdf_source")
+
+        # 4. Metadata completeness (more forgiving)
+        metadata_score = 0
+        if metadata.get("title"):
+            metadata_score += 0.5
+        if metadata.get("author"):
+            metadata_score += 0.5
+        if metadata_score >= 0.5:  # At least title OR author
+            quality_score += 1
+            quality_reasons.append("has_metadata")
+
+        # 5. Content coherence (uses shared utility)
+        if not has_garbled_content(content):
+            quality_score += 1
+            quality_reasons.append("coherent_content")
+
+        # 6. Numerical data presence (uses shared utility)
+        if query_mode == "facts":
+            if has_numerical_data(content):
+                quality_score += 1
+                quality_reasons.append("has_numerical_data")
+        elif query_mode in ["scenarios", "debate"]:
+            # For reasoning modes, don't penalize lack of numerical data
+            # but give bonus if present
+            if has_numerical_data(content):
+                quality_score += 0.5
+                quality_reasons.append("bonus_numerical_data")
+
+        # Decision: keep or filter
+        if quality_score >= required_quality_score:
+            # Store quality info with the document for potential later use
+            enhanced_metadata = metadata.copy()
+            enhanced_metadata["quality_score"] = quality_score
+            enhanced_metadata["quality_reasons"] = quality_reasons
+
+            enhanced_doc = Document(
+                page_content=doc.page_content,
+                metadata=enhanced_metadata
+            )
+
+            filtered_results.append((enhanced_doc, similarity_score))
+        else:
+            excluded_docs.append({
+                "title": metadata.get("title", "No title"),
+                "similarity_score": similarity_score,
+                "quality_score": quality_score,
+                "quality_reasons": quality_reasons,
+                "content_preview": content[:100] + "..." if len(content) > 100 else content
+            })
+
+    # Log filtering results
+    logger.info(f"Adaptive filtering for '{query_mode}': {len(results)} -> {len(filtered_results)} documents")
+    logger.info(f"Required quality score: {required_quality_score}")
+
+    # Debug logging of excluded docs
+    if debug_mode and excluded_docs:
+        logger.debug(f"Excluded {len(excluded_docs)} documents:")
+        for i, doc_info in enumerate(excluded_docs[:5]):  # Show first 5
+            logger.debug(f"  {i + 1}. {doc_info['title']} (sim: {doc_info['similarity_score']:.3f}, "
+                         f"quality: {doc_info['quality_score']:.1f}, reasons: {doc_info['quality_reasons']})")
+
+    # Sort by similarity score (keep original ranking)
+    filtered_results.sort(key=lambda x: x[1], reverse=True)
+
+    return filtered_results
+
+
+def reranker_confidence_backfill(
+        filtered_results: List[Tuple[Document, float]],
+        original_results: List[Tuple[Document, float]],
+        target_count: int,
+        query_mode: str
+) -> List[Tuple[Document, float]]:
+    """
+    Allow reranker to backfill high-confidence documents that were filtered out.
+
+    This gives the semantic reranker a "second vote" on borderline documents.
+    """
+    if len(filtered_results) >= target_count:
+        return filtered_results[:target_count]
+
+    # Find documents that were filtered out
+    filtered_ids = {doc.metadata.get("id", "") for doc, _ in filtered_results}
+    excluded_docs = [
+        (doc, score) for doc, score in original_results
+        if doc.metadata.get("id", "") not in filtered_ids
+    ]
+
+    if not excluded_docs:
+        return filtered_results
+
+    # For reasoning modes, be more willing to backfill
+    confidence_threshold = 0.8 if query_mode in ["facts", "quotes"] else 0.7
+
+    # Add back high-confidence excluded documents
+    backfilled = []
+    needed = target_count - len(filtered_results)
+
+    for doc, score in excluded_docs[:needed * 2]:  # Consider 2x what we need
+        if score > confidence_threshold:
+            # Mark as backfilled
+            enhanced_metadata = doc.metadata.copy()
+            enhanced_metadata["backfilled"] = True
+            enhanced_metadata["backfill_reason"] = f"high_confidence_{score:.3f}"
+
+            enhanced_doc = Document(
+                page_content=doc.page_content,
+                metadata=enhanced_metadata
+            )
+
+            backfilled.append((enhanced_doc, score))
+
+        if len(backfilled) >= needed:
+            break
+
+    if backfilled:
+        logger.info(f"Backfilled {len(backfilled)} high-confidence documents for '{query_mode}' mode")
+
+    # Combine and sort
+    combined_results = filtered_results + backfilled
+    combined_results.sort(key=lambda x: x[1], reverse=True)
+
+    return combined_results[:target_count]
 
 class JobType(Enum):
     VIDEO_PROCESSING = "video_processing"
@@ -982,9 +1191,11 @@ def generate_embeddings_task(job_id: str, documents: List[Dict]):
 
 @dramatiq.actor(queue_name="embedding_tasks", store_results=True, max_retries=2)
 def retrieve_documents_task(job_id: str, query: str, metadata_filter: Optional[Dict] = None, query_mode: str = "facts"):
-    """Retrieve documents with mode awareness."""
+    """
+    Enhanced document retrieval with adaptive quality filtering.
+    """
     try:
-        logger.info(f"Retrieving documents for job {job_id} in '{query_mode}' mode: {query}")
+        logger.info(f"Adaptive retrieval for job {job_id} in '{query_mode}' mode: {query}")
 
         from .models import get_vector_store
         from src.config.settings import settings
@@ -992,7 +1203,7 @@ def retrieve_documents_task(job_id: str, query: str, metadata_filter: Optional[D
 
         vector_store = get_vector_store()
 
-        # Adjust retrieval parameters based on mode complexity
+        # Adjust parameters based on mode (increased for better filtering)
         mode_complexity = {
             "facts": "simple",
             "features": "moderate",
@@ -1004,15 +1215,15 @@ def retrieve_documents_task(job_id: str, query: str, metadata_filter: Optional[D
 
         complexity = mode_complexity.get(query_mode, "moderate")
 
+        # Increase initial retrieval to allow for quality filtering
         if complexity == "complex":
-            # Get more documents for complex analysis modes
-            retrieval_k = min(settings.retriever_top_k * 2, 40)
+            retrieval_k = min(settings.retriever_top_k * 3, 60)
             reranker_k = min(settings.reranker_top_k * 2, 15)
         elif complexity == "moderate":
-            retrieval_k = int(settings.retriever_top_k * 1.5)
-            reranker_k = int(settings.reranker_top_k * 1.2)
+            retrieval_k = int(settings.retriever_top_k * 2.5)
+            reranker_k = int(settings.reranker_top_k * 1.5)
         else:
-            retrieval_k = settings.retriever_top_k
+            retrieval_k = int(settings.retriever_top_k * 2)
             reranker_k = settings.reranker_top_k
 
         # Perform semantic similarity search
@@ -1022,8 +1233,7 @@ def retrieve_documents_task(job_id: str, query: str, metadata_filter: Optional[D
             metadata_filter=metadata_filter
         )
 
-        logger.info(
-            f"Semantic search returned {len(results)} results for mode '{query_mode}' (complexity: {complexity})")
+        logger.info(f"Initial semantic search returned {len(results)} results")
 
         if not results:
             logger.warning(f"No documents found for query: {query}")
@@ -1031,22 +1241,34 @@ def retrieve_documents_task(job_id: str, query: str, metadata_filter: Optional[D
                 "documents": [],
                 "document_count": 0,
                 "retrieval_completed_at": time.time(),
-                "retrieval_method": f"semantic_search_{query_mode}",
+                "retrieval_method": f"adaptive_semantic_search_{query_mode}",
                 "query_used": query,
                 "query_mode": query_mode,
-                "complexity_level": complexity
+                "adaptive_filtering": True
             })
             return
+
+        # ENHANCED: Adaptive quality filtering
+        debug_mode = getattr(settings, 'debug_mode', False)
+        filtered_results = adaptive_quality_filter(results, query, query_mode, debug_mode)
+
+        logger.info(f"Adaptive quality filtering: {len(results)} -> {len(filtered_results)} documents")
+
+        # ENHANCED: Reranker confidence backfill
+        if len(filtered_results) < reranker_k:
+            filtered_results = reranker_confidence_backfill(
+                filtered_results, results, reranker_k, query_mode
+            )
 
         # Apply diversity filtering
         if settings.diversity_enabled:
             diverse_results = apply_document_diversity(
-                results,
+                filtered_results,
                 max_per_source=settings.max_docs_per_source
             )
-            logger.info(f"Diversity filtering for mode '{query_mode}': {len(results)} -> {len(diverse_results)}")
+            logger.info(f"Diversity filtering: {len(filtered_results)} -> {len(diverse_results)}")
         else:
-            diverse_results = results[:reranker_k]
+            diverse_results = filtered_results[:reranker_k]
 
         # Format results for transfer to inference worker
         serialized_docs = []
@@ -1070,28 +1292,26 @@ def retrieve_documents_task(job_id: str, query: str, metadata_filter: Optional[D
                 "relevance_score": json_safe_score
             })
 
-        logger.info(
-            f"Document retrieval completed for job {job_id} in mode '{query_mode}': {len(diverse_results)} documents")
+        logger.info(f"Adaptive retrieval completed for job {job_id}: {len(diverse_results)} quality documents")
 
-        # Trigger LLM inference with mode information
+        # Trigger LLM inference
         job_chain.task_completed(job_id, {
             "documents": serialized_docs,
             "document_count": len(serialized_docs),
             "retrieval_completed_at": time.time(),
-            "retrieval_method": f"semantic_search_with_diversity_{query_mode}",
+            "retrieval_method": f"adaptive_quality_filtered_{query_mode}",
             "original_results": len(results),
-            "diverse_results": len(diverse_results),
+            "quality_filtered_results": len(filtered_results),
+            "final_results": len(diverse_results),
             "query_mode": query_mode,
             "complexity_level": complexity,
-            "mode_adjusted_params": {
-                "retrieval_k": retrieval_k,
-                "reranker_k": reranker_k
-            }
+            "adaptive_filtering": True,
+            "filtering_mode": "strict" if query_mode in ["facts", "quotes"] else "soft"
         })
 
     except Exception as e:
-        logger.error(f"Document retrieval failed for job {job_id}: {str(e)}")
-        job_chain.task_failed(job_id, f"Document retrieval failed: {str(e)}")
+        logger.error(f"Adaptive document retrieval failed for job {job_id}: {str(e)}")
+        job_chain.task_failed(job_id, f"Adaptive document retrieval failed: {str(e)}")
 
 
 @dramatiq.actor(queue_name="inference_tasks", store_results=True, max_retries=2)

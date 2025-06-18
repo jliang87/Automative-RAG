@@ -68,6 +68,7 @@ mypy = "*"
 debugpy = "*"
 pydevd_pycharm = "~243.25659.43"
 ctranslate2 = "*"
+jieba = ">=0.42.1"
 
 [build-system]
 requires = ["poetry-core"]
