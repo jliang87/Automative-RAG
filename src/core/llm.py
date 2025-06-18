@@ -31,6 +31,7 @@ def _format_documents_for_context(
 ) -> str:
     """
     Format retrieved documents into context for the prompt.
+    ENHANCED: Adds document IDs for sentence-level citation tracking.
     """
     context_parts = []
 
@@ -40,19 +41,22 @@ def _format_documents_for_context(
         source_type = metadata.get("source", "unknown")
         title = metadata.get("title", f"Document {i + 1}")
 
-        # Format source information
+        # Format source information with unique ID
+        doc_id = f"DOC_{i + 1}"
         if source_type == "youtube":
-            source_info = f"Source {i + 1}: YouTube - '{title}'"
+            source_info = f"{doc_id} (YouTube - '{title}'"
             if "url" in metadata:
-                source_info += f" ({metadata['url']})"
+                source_info += f" - {metadata['url']}"
+            source_info += ")"
         elif source_type == "bilibili":
-            source_info = f"Source {i + 1}: Bilibili - '{title}'"
+            source_info = f"{doc_id} (Bilibili - '{title}'"
             if "url" in metadata:
-                source_info += f" ({metadata['url']})"
+                source_info += f" - {metadata['url']}"
+            source_info += ")"
         elif source_type == "pdf":
-            source_info = f"Source {i + 1}: PDF - '{title}'"
+            source_info = f"{doc_id} (PDF - '{title}')"
         else:
-            source_info = f"Source {i + 1}: {title}"
+            source_info = f"{doc_id} ({title})"
 
         # Add manufacturer and model if available
         manufacturer = metadata.get("manufacturer")
@@ -68,17 +72,275 @@ def _format_documents_for_context(
             if year:
                 source_info += f" ({year})"
 
-        # Format content block
+        # Format content block with document ID
         content_block = f"{source_info}\n{doc.page_content}\n"
         context_parts.append(content_block)
 
     return "\n\n".join(context_parts)
 
 
+class ContradictionDetector:
+    """
+    ENHANCED: Detect contradictions in numerical specifications across documents.
+    """
+
+    def __init__(self):
+        # Define key automotive specs to check for contradictions
+        self.spec_patterns = {
+            "acceleration": [
+                r'(?:百公里加速|0-100|零至100|加速时间).*?(\d+\.?\d*)\s*秒',
+                r'(\d+\.?\d*)\s*秒.*?(?:百公里加速|0-100|加速时间)'
+            ],
+            "top_speed": [
+                r'(?:最高时速|最大速度|极速|顶速).*?(\d+)\s*(?:公里|千米|km/h)',
+                r'时速.*?(?:最高|最大|可达).*?(\d+)\s*(?:公里|千米|km/h)'
+            ],
+            "horsepower": [
+                r'(?:最大功率|功率|马力).*?(\d+)\s*(?:马力|HP|hp)',
+                r'(\d+)\s*(?:马力|HP|hp).*?(?:功率|输出|最大)'
+            ],
+            "trunk_capacity": [
+                r'(?:后备箱|行李箱|尾箱).*?(?:容积|空间).*?(\d+)\s*(?:升|L)',
+                r'(?:容积|空间).*?(\d+)\s*(?:升|L).*?(?:后备箱|行李箱)'
+            ],
+            "fuel_consumption": [
+                r'(?:油耗|燃油消耗|百公里油耗).*?(\d+\.?\d*)\s*(?:升|L)',
+                r'(\d+\.?\d*)\s*(?:升|L).*?(?:百公里|油耗)'
+            ]
+        }
+
+    def detect_contradictions(self, documents: List[Tuple[Document, float]]) -> Dict[str, Any]:
+        """
+        Detect contradictions in specifications across documents.
+
+        Returns:
+            Dictionary with detected contradictions and recommendations
+        """
+        contradictions = {}
+
+        for spec_name, patterns in self.spec_patterns.items():
+            spec_values = []
+
+            # Extract values for this spec from all documents
+            for i, (doc, score) in enumerate(documents):
+                content = doc.page_content
+                doc_id = f"DOC_{i + 1}"
+                doc_title = doc.metadata.get("title", f"Document {i + 1}")
+
+                for pattern in patterns:
+                    matches = re.findall(pattern, content, re.IGNORECASE)
+                    for match in matches:
+                        try:
+                            value = float(match)
+                            spec_values.append({
+                                "value": value,
+                                "doc_id": doc_id,
+                                "doc_title": doc_title,
+                                "source": doc.metadata.get("source", "unknown")
+                            })
+                        except ValueError:
+                            continue
+
+            # Check for contradictions (significant differences)
+            if len(spec_values) > 1:
+                values = [item["value"] for item in spec_values]
+                min_val, max_val = min(values), max(values)
+
+                # Consider it a contradiction if difference is > 20% or > 10 for acceleration
+                if spec_name == "acceleration":
+                    threshold_diff = 2.0  # 2 seconds difference
+                else:
+                    threshold_diff = min_val * 0.2  # 20% difference
+
+                if (max_val - min_val) > threshold_diff:
+                    contradictions[spec_name] = {
+                        "spec_name_chinese": self._get_chinese_spec_name(spec_name),
+                        "conflicting_values": spec_values,
+                        "min_value": min_val,
+                        "max_value": max_val,
+                        "difference": max_val - min_val,
+                        "recommendation": self._generate_contradiction_advice(spec_name, spec_values)
+                    }
+
+        return contradictions
+
+    def _get_chinese_spec_name(self, spec_name: str) -> str:
+        """Get Chinese name for specification."""
+        chinese_names = {
+            "acceleration": "百公里加速",
+            "top_speed": "最高时速",
+            "horsepower": "马力",
+            "trunk_capacity": "后备箱容积",
+            "fuel_consumption": "油耗"
+        }
+        return chinese_names.get(spec_name, spec_name)
+
+    def _generate_contradiction_advice(self, spec_name: str, values: List[Dict]) -> str:
+        """Generate advice for handling contradictions."""
+        sources = [item["source"] for item in values]
+
+        if "youtube" in sources and "bilibili" in sources:
+            return "建议优先参考视频测试数据，并核实测试条件是否一致"
+        elif "pdf" in sources:
+            return "建议优先参考官方PDF文档数据"
+        else:
+            return "建议进一步核实数据来源的权威性"
+
+
+class StructuredOutputGenerator:
+    """
+    ENHANCED: Generate structured JSON output to reduce hallucination.
+    """
+
+    def __init__(self):
+        self.structured_fields = {
+            "basic_specs": {
+                "acceleration_0_100_kph": "百公里加速时间（秒）",
+                "top_speed_kph": "最高时速（公里/小时）",
+                "horsepower": "马力",
+                "trunk_capacity_liters": "后备箱容积（升）",
+                "fuel_consumption_l_100km": "油耗（升/百公里）"
+            },
+            "dimensions": {
+                "length_mm": "车长（毫米）",
+                "width_mm": "车宽（毫米）",
+                "height_mm": "车高（毫米）",
+                "wheelbase_mm": "轴距（毫米）"
+            },
+            "powertrain": {
+                "engine_type": "发动机类型",
+                "transmission": "变速箱",
+                "drivetrain": "驱动方式"
+            }
+        }
+
+    def extract_structured_data(self, answer: str, documents: List[Tuple[Document, float]]) -> Dict[str, Any]:
+        """
+        Extract structured data from answer and documents.
+
+        Returns:
+            Structured JSON representation of automotive specifications
+        """
+        structured_data = {
+            "basic_specs": {},
+            "dimensions": {},
+            "powertrain": {},
+            "sources": [],
+            "extraction_confidence": "medium"
+        }
+
+        # Extract sources
+        for i, (doc, score) in enumerate(documents):
+            source_info = {
+                "id": f"DOC_{i + 1}",
+                "title": doc.metadata.get("title", ""),
+                "source_type": doc.metadata.get("source", "unknown"),
+                "url": doc.metadata.get("url", ""),
+                "relevance_score": float(score)
+            }
+            structured_data["sources"].append(source_info)
+
+        # Extract numerical specifications using regex patterns
+        self._extract_basic_specs(answer, structured_data)
+        self._extract_dimensions(answer, structured_data)
+        self._extract_powertrain(answer, structured_data)
+
+        # Calculate extraction confidence
+        filled_fields = sum(
+            len([v for v in category.values() if v])
+            for category in
+            [structured_data["basic_specs"], structured_data["dimensions"], structured_data["powertrain"]]
+        )
+
+        total_fields = sum(len(category) for category in self.structured_fields.values())
+        confidence_ratio = filled_fields / total_fields
+
+        if confidence_ratio > 0.7:
+            structured_data["extraction_confidence"] = "high"
+        elif confidence_ratio > 0.3:
+            structured_data["extraction_confidence"] = "medium"
+        else:
+            structured_data["extraction_confidence"] = "low"
+
+        return structured_data
+
+    def _extract_basic_specs(self, text: str, data: Dict):
+        """Extract basic specifications from text."""
+        # Acceleration
+        acc_patterns = [
+            r'(?:百公里加速|0-100|加速时间).*?(\d+\.?\d*)\s*秒',
+            r'(\d+\.?\d*)\s*秒.*?(?:百公里加速|加速)'
+        ]
+        for pattern in acc_patterns:
+            match = re.search(pattern, text)
+            if match:
+                data["basic_specs"]["acceleration_0_100_kph"] = float(match.group(1))
+                break
+
+        # Top speed
+        speed_patterns = [
+            r'(?:最高时速|极速|顶速).*?(\d+)\s*(?:公里|km/h)',
+            r'时速.*?(\d+)\s*(?:公里|km/h)'
+        ]
+        for pattern in speed_patterns:
+            match = re.search(pattern, text)
+            if match:
+                data["basic_specs"]["top_speed_kph"] = int(match.group(1))
+                break
+
+        # Horsepower
+        hp_patterns = [
+            r'(?:马力|功率).*?(\d+)\s*(?:马力|HP|hp)',
+            r'(\d+)\s*(?:马力|HP|hp)'
+        ]
+        for pattern in hp_patterns:
+            match = re.search(pattern, text)
+            if match:
+                data["basic_specs"]["horsepower"] = int(match.group(1))
+                break
+
+    def _extract_dimensions(self, text: str, data: Dict):
+        """Extract dimension specifications from text."""
+        # Length, width, height patterns
+        dim_patterns = {
+            "length_mm": [r'车长.*?(\d{4,5})\s*(?:毫米|mm)', r'长度.*?(\d{4,5})'],
+            "width_mm": [r'车宽.*?(\d{4,5})\s*(?:毫米|mm)', r'宽度.*?(\d{4,5})'],
+            "height_mm": [r'车高.*?(\d{4,5})\s*(?:毫米|mm)', r'高度.*?(\d{4,5})'],
+            "wheelbase_mm": [r'轴距.*?(\d{4,5})\s*(?:毫米|mm)']
+        }
+
+        for field, patterns in dim_patterns.items():
+            for pattern in patterns:
+                match = re.search(pattern, text)
+                if match:
+                    data["dimensions"][field] = int(match.group(1))
+                    break
+
+    def _extract_powertrain(self, text: str, data: Dict):
+        """Extract powertrain information from text."""
+        # Engine type
+        if re.search(r'汽油|gasoline|petrol', text, re.IGNORECASE):
+            data["powertrain"]["engine_type"] = "汽油"
+        elif re.search(r'柴油|diesel', text, re.IGNORECASE):
+            data["powertrain"]["engine_type"] = "柴油"
+        elif re.search(r'电动|electric|EV|纯电', text, re.IGNORECASE):
+            data["powertrain"]["engine_type"] = "电动"
+        elif re.search(r'混合动力|hybrid|混动', text, re.IGNORECASE):
+            data["powertrain"]["engine_type"] = "混合动力"
+
+        # Transmission
+        if re.search(r'自动|automatic|自动挡', text, re.IGNORECASE):
+            data["powertrain"]["transmission"] = "自动"
+        elif re.search(r'手动|manual|手动挡', text, re.IGNORECASE):
+            data["powertrain"]["transmission"] = "手动"
+        elif re.search(r'CVT|无级变速', text, re.IGNORECASE):
+            data["powertrain"]["transmission"] = "CVT"
+
+
 class AutomotiveFactChecker:
     """
     Fact checker for automotive specifications to detect obvious hallucinations.
-    DEDUPED: Uses shared utility functions from quality_utils.py
+    ENHANCED: Now includes contradiction detection.
     """
 
     def __init__(self):
@@ -99,10 +361,14 @@ class AutomotiveFactChecker:
             "price": (50000, 5000000),  # CNY
         }
 
-    def check_answer_quality(self, answer: str, context: str) -> Dict[str, any]:
+        # ENHANCED: Add contradiction detector
+        self.contradiction_detector = ContradictionDetector()
+
+    def check_answer_quality(self, answer: str, context: str, documents: List[Tuple[Document, float]] = None) -> Dict[
+        str, any]:
         """
         Comprehensive answer quality check using shared utility functions.
-        DEDUPED: All actual checking is done by quality_utils functions.
+        ENHANCED: Now includes contradiction detection.
         """
         warnings = []
 
@@ -111,6 +377,16 @@ class AutomotiveFactChecker:
         warnings.extend(check_numerical_specs_realistic(answer))
         warnings.extend(self._verify_context_support(answer, context))
 
+        # ENHANCED: Check for contradictions in source documents
+        contradictions = {}
+        if documents:
+            contradictions = self.contradiction_detector.detect_contradictions(documents)
+            if contradictions:
+                for spec_name, contradiction_info in contradictions.items():
+                    spec_chinese = contradiction_info["spec_name_chinese"]
+                    warning = f"⚠️ 发现{spec_chinese}数据冲突: {contradiction_info['recommendation']}"
+                    warnings.append(warning)
+
         # Calculate quality score
         quality_score = max(0, 100 - len(warnings) * 15)
 
@@ -118,6 +394,7 @@ class AutomotiveFactChecker:
             "warnings": warnings,
             "quality_score": quality_score,
             "has_issues": len(warnings) > 0,
+            "contradictions": contradictions,
             "recommendation": "review_answer" if len(warnings) > 2 else "acceptable"
         }
 
@@ -149,7 +426,7 @@ class AnswerConfidenceScorer:
         str, any]:
         """
         Calculate comprehensive confidence score for an answer.
-        DEDUPED: Uses quality_utils functions where possible.
+        ENHANCED: Now includes contradiction analysis.
         """
         scores = {}
 
@@ -160,7 +437,7 @@ class AnswerConfidenceScorer:
         scores['document_relevance'] = self._calculate_document_relevance(answer, documents)
 
         # 3. Factual Consistency Score (0-100) - uses quality_utils via fact_checker
-        scores['factual_consistency'] = self._calculate_factual_consistency(answer, context)
+        scores['factual_consistency'] = self._calculate_factual_consistency(answer, context, documents)
 
         # 4. Specificity Score (0-100) - uses quality_utils functions
         scores['specificity'] = self._calculate_specificity(answer)
@@ -219,9 +496,10 @@ class AnswerConfidenceScorer:
         # Normalize to 0-100 scale (assuming scores are typically 0-1)
         return min(100, avg_score * 100)
 
-    def _calculate_factual_consistency(self, answer: str, context: str) -> float:
+    def _calculate_factual_consistency(self, answer: str, context: str,
+                                       documents: List[Tuple[Document, float]] = None) -> float:
         """Check for factual consistency using the fact checker."""
-        quality_check = self.fact_checker.check_answer_quality(answer, context)
+        quality_check = self.fact_checker.check_answer_quality(answer, context, documents)
 
         # Convert quality score to consistency score
         return quality_check['quality_score']
@@ -306,8 +584,7 @@ class LocalLLM:
     """
     Local DeepSeek LLM integration for RAG with GPU acceleration.
 
-    DEDUPED: English templates with explicit Chinese response instruction.
-    Uses quality_utils.py for all automotive domain logic.
+    ENHANCED: Now supports sentence-level citations, contradiction detection, and structured output.
     """
 
     def __init__(
@@ -337,12 +614,13 @@ class LocalLLM:
         self.use_8bit = settings.llm_use_8bit  # Default: false
         self.torch_dtype = settings.llm_torch_dtype  # Default: float16
 
-        # Initialize fact checker and confidence scorer
+        # Initialize enhanced components
         self.fact_checker = AutomotiveFactChecker()
         self.confidence_scorer = AnswerConfidenceScorer()
+        self.structured_generator = StructuredOutputGenerator()
 
         # Log configuration for debugging
-        print(f"LocalLLM Configuration (DEDUPED: Uses quality_utils.py):")
+        print(f"LocalLLM Configuration (ENHANCED: Advanced Anti-Hallucination):")
         print(f"  Model: {self.model_name}")
         print(f"  Device: {self.device}")
         print(f"  Use 4-bit: {self.use_4bit}")
@@ -352,14 +630,13 @@ class LocalLLM:
         print(f"  Max tokens: {self.max_tokens}")
         print(f"  Template Language: ENGLISH (token efficient)")
         print(f"  Response Language: CHINESE (enforced)")
-        print(f"  Anti-Hallucination: CHINESE-OPTIMIZED (quality_utils.py)")
-        print(f"  Code Duplication: ELIMINATED")
+        print(f"  Enhanced Features: SENTENCE_CITATIONS + CONTRADICTION_DETECTION + STRUCTURED_OUTPUT")
 
         # Initialize tokenizer and model
         self._load_model()
 
-        # DEDUPED: English templates with Chinese response instruction
-        self.qa_prompt_template = self._create_english_anti_hallucination_template()
+        # ENHANCED: English templates with sentence-level citation requirements
+        self.qa_prompt_template = self._create_enhanced_anti_hallucination_template()
 
     def _load_model(self):
         """Load the local LLM model using environment-driven Tesla T4 configuration."""
@@ -440,28 +717,38 @@ class LocalLLM:
             else:
                 raise e
 
-    def _create_english_anti_hallucination_template(self) -> str:
+    def _create_enhanced_anti_hallucination_template(self) -> str:
         """
-        DEDUPED: Create English template with explicit Chinese response instruction.
-        This dramatically reduces token count while ensuring Chinese output.
+        ENHANCED: Create English template with sentence-level citation requirements.
+        This dramatically improves citation granularity and reduces hallucination.
         """
-        template = """You are a professional automotive specifications expert assistant with strict accuracy requirements.
+        template = """You are a professional automotive specifications expert assistant with STRICT accuracy requirements.
 
 CRITICAL RULES:
 1. Only use information explicitly mentioned in the provided documents
 2. If specific numbers/specs are not in documents, say "According to provided documents, specific [parameter] data not found"
 3. Never estimate, guess, or infer any numerical values
 4. If document content is unclear or contradictory, acknowledge this uncertainty
-5. Always cite the exact sources where information was found
+5. MANDATORY: Cite the source document for EVERY factual sentence using the format 【来源：DOC_X】
+
+SENTENCE-LEVEL CITATION REQUIREMENT:
+- Every sentence containing facts must end with 【来源：DOC_X (title)】
+- Multiple sources can be cited as 【来源：DOC_1, DOC_2】
+- Opinion or uncertainty statements don't need citations
+- Example: "最高时速为220公里/小时【来源：DOC_1 (Bilibili - 实测比亚迪汉EV极速表现)】。"
 
 NUMERICAL ACCURACY CHECK:
 - 0-100 km/h acceleration: normal range is 3-15 seconds
 - If you see obviously wrong values (like 0.8 seconds), mark as suspicious
 - Always double-check technical specs against automotive standards
+
+CONTRADICTION HANDLING:
+- If documents contain conflicting information, mention both values with their sources
+- Example: "加速时间为3.9秒【来源：DOC_1】，但另一来源显示为4.2秒【来源：DOC_2】，建议进一步核实。"
 
 Your task is to help users find automotive specifications, features, and technical details.
 
-Use ONLY the following document content to answer questions. If documents don't contain the answer, say you don't know and suggest what additional information might be needed.
+Use ONLY the following document content to answer questions. Each document has a unique ID (DOC_1, DOC_2, etc.).
 
 Document Content:
 {context}
@@ -469,22 +756,46 @@ Document Content:
 Question:
 {question}
 
-IMPORTANT: You must respond in Chinese, but be precise and factual. Cite specific sources (document titles or URLs) where you found the information.
-
-Response Format:
-1. Direct answer based on documents (or "information not found")
-2. Source citations
-3. If uncertain, clearly state limitations"""
+IMPORTANT: 
+1. Respond in Chinese with precise facts
+2. Cite specific document sources for EVERY factual sentence using 【来源：DOC_X】
+3. If contradictions exist, present both values with sources
+4. If uncertain, clearly state limitations"""
         return template
 
-    def get_prompt_template_for_mode(self, mode: str) -> str:
+    def get_prompt_template_for_mode(self, mode: str, structured_output: bool = False) -> str:
         """
-        DEDUPED: Get English prompt templates with Chinese response instruction.
-        Much more token-efficient than Chinese templates.
+        ENHANCED: Get English prompt templates with sentence-level citations and optional structured output.
         """
 
+        # Base citation requirement for all modes
+        citation_requirement = """
+SENTENCE-LEVEL CITATION REQUIREMENT:
+- Every sentence containing facts must end with 【来源：DOC_X (title)】
+- Multiple sources can be cited as 【来源：DOC_1, DOC_2】
+- Example: "最高时速为220公里/小时【来源：DOC_1 (YouTube - 性能测试视频)】。"
+"""
+
+        structured_instruction = ""
+        if structured_output:
+            structured_instruction = """
+STRUCTURED OUTPUT REQUIREMENT:
+After providing the natural language answer, also provide a JSON structure with extracted specifications:
+
+```json
+{
+  "basic_specs": {
+    "acceleration_0_100_kph": "数值或null",
+    "top_speed_kph": "数值或null", 
+    "horsepower": "数值或null"
+  },
+  "sources": ["DOC_1: 标题", "DOC_2: 标题"]
+}
+```
+"""
+
         templates = {
-            "facts": """You are a professional automotive specifications expert assistant with strict accuracy requirements.
+            "facts": f"""You are a professional automotive specifications expert assistant with strict accuracy requirements.
 
 CRITICAL RULES:
 1. Only use information explicitly mentioned in the provided documents
@@ -492,6 +803,8 @@ CRITICAL RULES:
 3. Never estimate, guess, or infer any numerical values
 4. If document content is unclear or contradictory, acknowledge this uncertainty
 5. Always cite the exact sources where information was found
+
+{citation_requirement}
 
 NUMERICAL ACCURACY CHECK:
 - 0-100 km/h acceleration: normal range is 3-15 seconds
@@ -501,14 +814,16 @@ NUMERICAL ACCURACY CHECK:
 Use ONLY the following document content to answer questions. If documents don't contain the answer, say you don't know and suggest what additional information might be needed.
 
 Document Content:
-{context}
+{{context}}
 
 Question:
-{question}
+{{question}}
 
-IMPORTANT: Respond in Chinese and cite specific sources (document titles or URLs).""",
+{structured_instruction}
 
-            "features": """You are a professional automotive product strategy expert with strict accuracy requirements.
+IMPORTANT: Respond in Chinese with sentence-level citations 【来源：DOC_X】 for every factual statement.""",
+
+            "features": f"""You are a professional automotive product strategy expert with strict accuracy requirements.
 
 CRITICAL RULES:
 1. Only use information explicitly mentioned in the provided documents
@@ -516,23 +831,27 @@ CRITICAL RULES:
 3. Never make assumptions beyond document content
 4. If documents lack relevant information, clearly state this limitation
 
+{citation_requirement}
+
 Your task is to analyze whether a feature should be added, strictly based on provided document content.
 
 Please analyze feature requirements in two sections:
-【Evidence Analysis】 - Evidence-based analysis from provided documents
-【Strategic Reasoning】 - Strategic reasoning based on found evidence
+【Evidence Analysis】 - Evidence-based analysis from provided documents (with citations)
+【Strategic Reasoning】 - Strategic reasoning based on found evidence (with citations)
 
 Be factual and cite specific sources. Do not make assumptions beyond document content.
 
 Document Content:
-{context}
+{{context}}
 
 Feature Question:
-{question}
+{{question}}
 
-IMPORTANT: Respond in Chinese and cite specific sources (document titles or URLs).""",
+{structured_instruction}
 
-            "tradeoffs": """You are a professional automotive design decision analyst with strict accuracy requirements.
+IMPORTANT: Respond in Chinese with sentence-level citations 【来源：DOC_X】 for evidence.""",
+
+            "tradeoffs": f"""You are a professional automotive design decision analyst with strict accuracy requirements.
 
 CRITICAL RULES:
 1. Only use information explicitly mentioned in the provided documents
@@ -540,23 +859,27 @@ CRITICAL RULES:
 3. Never speculate beyond document content
 4. If documents lack sufficient comparison information, clearly state this
 
+{citation_requirement}
+
 Your task is to analyze design choice pros and cons, strictly based on provided document content.
 
 Please analyze in two sections:
-【Document Evidence】 - Evidence from provided documents
-【Pros/Cons Analysis】 - Pros and cons analysis based on evidence
+【Document Evidence】 - Evidence from provided documents (with citations)
+【Pros/Cons Analysis】 - Pros and cons analysis based on evidence (with citations)
 
 Be objective and cite specific sources. Do not speculate beyond document content.
 
 Document Content:
-{context}
+{{context}}
 
 Design Decision Question:
-{question}
+{{question}}
 
-IMPORTANT: Respond in Chinese and cite specific sources (document titles or URLs).""",
+{structured_instruction}
 
-            "scenarios": """You are a professional automotive user experience analyst with strict accuracy requirements.
+IMPORTANT: Respond in Chinese with sentence-level citations 【来源：DOC_X】 for all evidence.""",
+
+            "scenarios": f"""You are a professional automotive user experience analyst with strict accuracy requirements.
 
 CRITICAL RULES:
 1. Only use information explicitly mentioned in the provided documents
@@ -564,23 +887,27 @@ CRITICAL RULES:
 3. Never create scenarios not mentioned in documents
 4. If documents lack relevant scenario information, clearly state this
 
+{citation_requirement}
+
 Your task is to analyze feature performance in real usage scenarios, strictly based on provided document content.
 
 Please analyze in two sections:
-【Document Scenarios】 - Scenarios mentioned in provided documents
-【Scenario Reasoning】 - Scenario analysis based on found evidence
+【Document Scenarios】 - Scenarios mentioned in provided documents (with citations)
+【Scenario Reasoning】 - Scenario analysis based on found evidence (with citations)
 
 Be specific and cite sources. Do not create scenarios not mentioned in documents.
 
 Document Content:
-{context}
+{{context}}
 
 Scenario Question:
-{question}
+{{question}}
 
-IMPORTANT: Respond in Chinese and cite specific sources (document titles or URLs).""",
+{structured_instruction}
 
-            "debate": """You are a professional automotive industry roundtable discussion moderator with strict accuracy requirements.
+IMPORTANT: Respond in Chinese with sentence-level citations 【来源：DOC_X】 for all scenarios.""",
+
+            "debate": f"""You are a professional automotive industry roundtable discussion moderator with strict accuracy requirements.
 
 CRITICAL RULES:
 1. Only use information explicitly mentioned in the provided documents
@@ -588,26 +915,30 @@ CRITICAL RULES:
 3. Never fabricate viewpoints not supported by documents
 4. If documents lack sufficient multi-perspective analysis information, clearly state this
 
+{citation_requirement}
+
 Your task is to present different professional perspectives based on provided document content.
 
 Please present viewpoints from these perspectives:
-**👔 Product Manager Perspective:** Based on evidence in documents
-**🔧 Engineer Perspective:** Based on technical information in documents
-**👥 User Representative Perspective:** Based on user feedback in documents
+**👔 Product Manager Perspective:** Based on evidence in documents (with citations)
+**🔧 Engineer Perspective:** Based on technical information in documents (with citations)
+**👥 User Representative Perspective:** Based on user feedback in documents (with citations)
 
-**📋 Discussion Summary:** Only synthesize content that documents can support
+**📋 Discussion Summary:** Only synthesize content that documents can support (with citations)
 
 Be factual and cite specific sources for each perspective.
 
 Document Content:
-{context}
+{{context}}
 
 Discussion Topic:
-{question}
+{{question}}
 
-IMPORTANT: Respond in Chinese and cite specific sources (document titles or URLs).""",
+{structured_instruction}
 
-            "quotes": """You are a professional automotive market research analyst with strict accuracy requirements.
+IMPORTANT: Respond in Chinese with sentence-level citations 【来源：DOC_X】 for all viewpoints.""",
+
+            "quotes": f"""You are a professional automotive market research analyst with strict accuracy requirements.
 
 CRITICAL RULES:
 1. Only extract quotes that actually exist in the provided documents
@@ -615,23 +946,27 @@ CRITICAL RULES:
 3. Never create or fabricate quotes
 4. If no relevant quotes found, clearly state this
 
+{citation_requirement}
+
 Your task is to extract actual user quotes and feedback from provided document content.
 
 Please extract quotes in this format:
-【Source 1】："Exact quote from documents..."
-【Source 2】："Another exact quote from documents..."
+【来源：DOC_1】："Exact quote from documents..."
+【来源：DOC_2】："Another exact quote from documents..."
 
 If no relevant user quotes found, state: "According to provided documents, no relevant user comments or feedback found."
 
 CRITICAL: Only extract quotes that actually exist in documents. Do not create or rewrite content.
 
 Document Content:
-{context}
+{{context}}
 
 Quote Topic:
-{question}
+{{question}}
 
-IMPORTANT: Respond in Chinese and cite specific sources (document titles or URLs)."""
+{structured_instruction}
+
+IMPORTANT: Respond in Chinese with exact document citations 【来源：DOC_X】 for all quotes."""
         }
 
         return templates.get(mode, templates["facts"])
@@ -641,11 +976,21 @@ IMPORTANT: Respond in Chinese and cite specific sources (document titles or URLs
             query: str,
             documents: List[Tuple[Document, float]],
             query_mode: str = "facts",
+            structured_output: bool = False,
             metadata_filter: Optional[Dict[str, Union[str, List[str], int, List[int]]]] = None,
-    ) -> str:
+    ) -> Union[str, Dict[str, Any]]:
         """
-        UNIFIED: Answer a query using a specific mode template with anti-hallucination features.
-        DEDUPED: All automotive logic delegated to quality_utils.py
+        ENHANCED: Answer a query with advanced anti-hallucination features.
+
+        Args:
+            query: The user's query
+            documents: Retrieved documents with scores
+            query_mode: The query mode to use (defaults to "facts")
+            structured_output: Whether to return structured JSON output
+            metadata_filter: Optional metadata filters
+
+        Returns:
+            Generated answer (string) or structured output (dict) with enhanced fact checking
         """
         # Validate mode (fallback to facts)
         if not self.validate_mode(query_mode):
@@ -653,24 +998,54 @@ IMPORTANT: Respond in Chinese and cite specific sources (document titles or URLs
             query_mode = "facts"
 
         # Use enhanced anti-hallucination approach
-        return self._answer_with_anti_hallucination(query, documents, query_mode, metadata_filter)
+        answer = self._answer_with_enhanced_anti_hallucination(query, documents, query_mode, structured_output,
+                                                               metadata_filter)
 
-    def _answer_with_anti_hallucination(
+        if structured_output:
+            # Generate structured JSON output
+            structured_data = self.structured_generator.extract_structured_data(answer, documents)
+            return {
+                "natural_language_answer": answer,
+                "structured_data": structured_data,
+                "query_mode": query_mode,
+                "has_contradictions": len(self.fact_checker.contradiction_detector.detect_contradictions(documents)) > 0
+            }
+        else:
+            return answer
+
+    def _answer_with_enhanced_anti_hallucination(
             self,
             query: str,
             documents: List[Tuple[Document, float]],
             query_mode: str,
+            structured_output: bool = False,
             metadata_filter: Optional[Dict[str, Union[str, List[str], int, List[int]]]] = None,
     ) -> str:
         """
-        Enhanced answer generation with comprehensive anti-hallucination measures.
-        DEDUPED: Uses quality_utils.py functions for all domain-specific checks.
+        ENHANCED: Answer generation with comprehensive anti-hallucination measures including contradiction detection.
         """
-        # Get the appropriate template for this mode
-        template = self.get_prompt_template_for_mode(query_mode)
+        # ENHANCED: Check for contradictions in documents first
+        contradictions = self.fact_checker.contradiction_detector.detect_contradictions(documents)
 
-        # Format documents into context
+        # Get the appropriate template for this mode
+        template = self.get_prompt_template_for_mode(query_mode, structured_output)
+
+        # Format documents into context with document IDs
         context = _format_documents_for_context(documents)
+
+        # Add contradiction warning to prompt if needed
+        if contradictions:
+            contradiction_warning = "\n\nIMPORTANT: The following contradictions were detected in the documents:\n"
+            for spec_name, contradiction_info in contradictions.items():
+                spec_chinese = contradiction_info["spec_name_chinese"]
+                values_info = ", ".join([
+                    f"{item['value']} ({item['doc_id']})"
+                    for item in contradiction_info["conflicting_values"]
+                ])
+                contradiction_warning += f"- {spec_chinese}: {values_info}\n"
+            contradiction_warning += "Please acknowledge these contradictions in your response.\n"
+
+            context += contradiction_warning
 
         # Create prompt using the mode-specific template
         prompt = template.format(
@@ -700,15 +1075,17 @@ IMPORTANT: Respond in Chinese and cite specific sources (document titles or URLs
             if initial_answer.startswith("<think>") and "</think>" in initial_answer:
                 initial_answer = initial_answer.split("</think>")[-1].strip()
 
-            # DEDUPED: Perform fact checking using quality_utils functions
-            quality_check = self.fact_checker.check_answer_quality(initial_answer, context)
+            # ENHANCED: Perform fact checking with contradiction detection
+            quality_check = self.fact_checker.check_answer_quality(initial_answer, context, documents)
 
             # If serious issues detected, regenerate with stricter prompt
             if quality_check["has_issues"] and quality_check["quality_score"] < 70:
                 logger.warning(f"Fact checking detected issues for mode '{query_mode}': {quality_check['warnings']}")
 
                 # Use stricter prompt for regeneration
-                strict_prompt = self._create_strict_verification_prompt(query, context, quality_check["warnings"])
+                strict_prompt = self._create_enhanced_strict_verification_prompt(query, context,
+                                                                                 quality_check["warnings"],
+                                                                                 contradictions)
 
                 try:
                     strict_results = self.pipe(
@@ -723,7 +1100,7 @@ IMPORTANT: Respond in Chinese and cite specific sources (document titles or URLs
                     regenerated_answer = strict_results[0]["generated_text"]
 
                     # Re-check the regenerated answer
-                    second_check = self.fact_checker.check_answer_quality(regenerated_answer, context)
+                    second_check = self.fact_checker.check_answer_quality(regenerated_answer, context, documents)
 
                     if second_check["quality_score"] > quality_check["quality_score"]:
                         logger.info(
@@ -748,9 +1125,18 @@ IMPORTANT: Respond in Chinese and cite specific sources (document titles or URLs
                 disclaimer = "\n\n⚠️ 注意: 此答案可能包含需要验证的信息，建议查阅更多资料确认。"
                 final_answer += disclaimer
 
+            # ENHANCED: Add contradiction summary if detected
+            if contradictions:
+                contradiction_summary = "\n\n📋 数据冲突提醒:\n"
+                for spec_name, contradiction_info in contradictions.items():
+                    spec_chinese = contradiction_info["spec_name_chinese"]
+                    recommendation = contradiction_info["recommendation"]
+                    contradiction_summary += f"• {spec_chinese}: {recommendation}\n"
+                final_answer += contradiction_summary
+
             generation_time = time.time() - start_time
             print(
-                f"Mode '{query_mode}' answer generated in {generation_time:.2f} seconds (Quality Score: {final_quality['quality_score']:.1f})")
+                f"Enhanced mode '{query_mode}' answer generated in {generation_time:.2f} seconds (Quality Score: {final_quality['quality_score']:.1f})")
 
             return final_answer
 
@@ -763,30 +1149,46 @@ IMPORTANT: Respond in Chinese and cite specific sources (document titles or URLs
                 print(f"  GPU_MEMORY_FRACTION_INFERENCE: {settings.gpu_memory_fraction_inference}")
             raise e
 
-    def _create_strict_verification_prompt(self, query: str, context: str, warnings: List[str]) -> str:
+    def _create_enhanced_strict_verification_prompt(self, query: str, context: str, warnings: List[str],
+                                                    contradictions: Dict) -> str:
         """
-        DEDUPED: Create strict English prompt for answer regeneration.
+        ENHANCED: Create strict English prompt for answer regeneration with contradiction awareness.
         """
         warnings_text = "\n".join(f"- {warning}" for warning in warnings)
+
+        contradiction_text = ""
+        if contradictions:
+            contradiction_text = "\n\nDETECTED CONTRADICTIONS:\n"
+            for spec_name, contradiction_info in contradictions.items():
+                spec_chinese = contradiction_info["spec_name_chinese"]
+                values_info = ", ".join([
+                    f"{item['value']} (from {item['doc_id']})"
+                    for item in contradiction_info["conflicting_values"]
+                ])
+                contradiction_text += f"- {spec_chinese}: {values_info}\n"
 
         prompt = f"""As an automotive specifications expert, please answer the question based on the following documents.
 
 CRITICAL: Previous answer detected these issues:
 {warnings_text}
 
-STRICT REQUIREMENTS:
+{contradiction_text}
+
+ENHANCED STRICT REQUIREMENTS:
 1. Only use information explicitly mentioned in documents
 2. If documents lack specific data, clearly state "Documents do not mention this data"
 3. Do not guess or infer any numerical values
 4. If you find unreasonable data, question its accuracy
 5. All numerical values must be traceable to document content
+6. MANDATORY: Use sentence-level citations 【来源：DOC_X】 for every factual statement
+7. If contradictions exist, acknowledge them and present both values with sources
 
 Document Content:
 {context}
 
 Question: {query}
 
-IMPORTANT: Provide accurate, evidence-based Chinese response with specific source citations:"""
+IMPORTANT: Provide accurate, evidence-based Chinese response with sentence-level citations 【来源：DOC_X】 for every fact:"""
 
         return prompt
 
@@ -795,32 +1197,58 @@ IMPORTANT: Provide accurate, evidence-based Chinese response with specific sourc
             query: str,
             documents: List[Tuple[Document, float]],
             query_mode: str = "facts",
+            structured_output: bool = False,
             metadata_filter: Optional[Dict[str, Union[str, List[str], int, List[int]]]] = None,
     ) -> Dict[str, any]:
         """
-        Generate answer with confidence scoring and quality assessment.
-        DEDUPED: Uses quality_utils.py functions via confidence scorer.
+        ENHANCED: Generate answer with confidence scoring, contradiction detection, and optional structured output.
         """
-        # Generate the answer with anti-hallucination measures
-        answer = self._answer_with_anti_hallucination(query, documents, query_mode, metadata_filter)
+        # Generate the answer with enhanced anti-hallucination measures
+        answer = self._answer_with_enhanced_anti_hallucination(query, documents, query_mode, structured_output,
+                                                               metadata_filter)
 
-        # Calculate confidence using quality_utils functions
+        # Calculate confidence using quality_utils functions and enhanced fact checking
         context = _format_documents_for_context(documents)
         confidence_metrics = self.confidence_scorer.calculate_confidence(answer, context, documents)
+
+        # Detect contradictions
+        contradictions = self.fact_checker.contradiction_detector.detect_contradictions(documents)
+
+        # Generate structured output if requested
+        structured_data = None
+        if structured_output:
+            structured_data = self.structured_generator.extract_structured_data(answer, documents)
 
         # Prepare enhanced response
         response = {
             'answer': answer,
             'confidence_metrics': confidence_metrics,
+            'contradictions': contradictions,
             'query_mode': query_mode,
             'document_count': len(documents),
-            'timestamp': time.time()
+            'timestamp': time.time(),
+            'enhanced_features': {
+                'sentence_level_citations': True,
+                'contradiction_detection': len(contradictions) > 0,
+                'structured_output_available': structured_output
+            }
         }
 
-        # Add warning if confidence is low
+        if structured_data:
+            response['structured_data'] = structured_data
+
+        # Add warning if confidence is low or contradictions exist
+        warnings = []
         if confidence_metrics['should_flag']:
-            warning = f"⚠️ 置信度较低 ({confidence_metrics['overall_confidence']:.1f}%), {confidence_metrics['recommendation']}"
-            response['answer'] = f"{answer}\n\n{warning}"
+            warnings.append(
+                f"⚠️ 置信度较低 ({confidence_metrics['overall_confidence']:.1f}%), {confidence_metrics['recommendation']}")
+
+        if contradictions:
+            warnings.append(f"⚠️ 检测到 {len(contradictions)} 项数据冲突，请注意核实")
+
+        if warnings:
+            warning_text = "\n\n" + "\n".join(warnings)
+            response['answer'] = f"{answer}{warning_text}"
             response['flagged_for_review'] = True
         else:
             response['flagged_for_review'] = False
@@ -840,73 +1268,73 @@ IMPORTANT: Provide accurate, evidence-based Chinese response with specific sourc
                 "description": "直接验证具体的车辆规格参数",
                 "two_layer": False,
                 "complexity": "simple",
-                "template_type": "english_anti_hallucination_chinese_response",
+                "template_type": "enhanced_english_anti_hallucination_chinese_response",
                 "is_default": True,
                 "anti_hallucination": True,
                 "language": "chinese_response_english_template",
-                "deduplication": "quality_utils_integration"
+                "enhanced_features": ["sentence_level_citations", "contradiction_detection", "structured_output"]
             },
             "features": {
                 "name": "新功能建议",
                 "description": "评估是否应该添加某项功能",
                 "two_layer": True,
                 "complexity": "moderate",
-                "template_type": "english_structured_analysis_chinese_response",
+                "template_type": "enhanced_english_structured_analysis_chinese_response",
                 "is_default": False,
                 "anti_hallucination": True,
                 "language": "chinese_response_english_template",
-                "deduplication": "quality_utils_integration"
+                "enhanced_features": ["sentence_level_citations", "contradiction_detection", "structured_output"]
             },
             "tradeoffs": {
                 "name": "权衡利弊分析",
                 "description": "分析设计选择的优缺点",
                 "two_layer": True,
                 "complexity": "complex",
-                "template_type": "english_structured_analysis_chinese_response",
+                "template_type": "enhanced_english_structured_analysis_chinese_response",
                 "is_default": False,
                 "anti_hallucination": True,
                 "language": "chinese_response_english_template",
-                "deduplication": "quality_utils_integration"
+                "enhanced_features": ["sentence_level_citations", "contradiction_detection", "structured_output"]
             },
             "scenarios": {
                 "name": "用户场景分析",
                 "description": "评估功能在实际使用场景中的表现",
                 "two_layer": True,
                 "complexity": "complex",
-                "template_type": "english_structured_analysis_chinese_response",
+                "template_type": "enhanced_english_structured_analysis_chinese_response",
                 "is_default": False,
                 "anti_hallucination": True,
                 "language": "chinese_response_english_template",
-                "deduplication": "quality_utils_integration"
+                "enhanced_features": ["sentence_level_citations", "contradiction_detection", "structured_output"]
             },
             "debate": {
                 "name": "多角色讨论",
                 "description": "模拟不同角色的观点和讨论",
                 "two_layer": False,
                 "complexity": "complex",
-                "template_type": "english_multi_perspective_chinese_response",
+                "template_type": "enhanced_english_multi_perspective_chinese_response",
                 "is_default": False,
                 "anti_hallucination": True,
                 "language": "chinese_response_english_template",
-                "deduplication": "quality_utils_integration"
+                "enhanced_features": ["sentence_level_citations", "contradiction_detection", "structured_output"]
             },
             "quotes": {
                 "name": "原始用户评论",
                 "description": "提取相关的用户评论和反馈",
                 "two_layer": False,
                 "complexity": "simple",
-                "template_type": "english_extraction_chinese_response",
+                "template_type": "enhanced_english_extraction_chinese_response",
                 "is_default": False,
                 "anti_hallucination": True,
                 "language": "chinese_response_english_template",
-                "deduplication": "quality_utils_integration"
+                "enhanced_features": ["sentence_level_citations", "contradiction_detection", "structured_output"]
             }
         }
 
         return mode_info.get(mode, mode_info["facts"])
 
     def get_model_info(self) -> Dict[str, any]:
-        """Get information about the loaded model including deduplication status."""
+        """Get information about the loaded model including enhanced features."""
         memory_info = {}
 
         # Get GPU memory usage if available
@@ -923,7 +1351,7 @@ IMPORTANT: Provide accurate, evidence-based Chinese response with specific sourc
                 "memory_utilization": f"{(memory_allocated / total_memory) * 100:.1f}%"
             })
 
-        # Model configuration info including deduplication status
+        # Model configuration info including enhanced features
         model_config = {
             "model_name": self.model_name,
             "device": self.device,
@@ -936,15 +1364,15 @@ IMPORTANT: Provide accurate, evidence-based Chinese response with specific sourc
             "worker_type": os.environ.get("WORKER_TYPE", "unknown"),
             "memory_fraction": settings.get_worker_memory_fraction(),
             "tesla_t4_optimized": not self.use_4bit,
-            "query_system": "unified_enhanced_DEDUPED_english_templates_chinese_responses",
+            "query_system": "unified_enhanced_ADVANCED_anti_hallucination",
             "default_mode": "facts",
-            "template_system": "DEDUPED_english_anti_hallucination_chinese_output",
+            "template_system": "ENHANCED_english_anti_hallucination_chinese_output",
             "response_language": "chinese",
             "template_language": "english",
             "token_efficiency": "optimized_english_templates",
             "code_architecture": "DEDUPED_quality_utils_integration",
             "supported_modes": ["facts", "features", "tradeoffs", "scenarios", "debate", "quotes"],
-            "anti_hallucination_features": {
+            "enhanced_anti_hallucination_features": {
                 "fact_checker": True,
                 "confidence_scorer": True,
                 "strict_prompts": True,
@@ -956,7 +1384,14 @@ IMPORTANT: Provide accurate, evidence-based Chinese response with specific sourc
                 "automotive_domain_knowledge": True,
                 "token_optimized": True,
                 "code_deduplication": "COMPLETE",
-                "shared_utilities": "quality_utils.py"
+                "shared_utilities": "quality_utils.py",
+                # ENHANCED FEATURES
+                "sentence_level_citations": True,
+                "contradiction_detection": True,
+                "structured_json_output": True,
+                "advanced_citation_tracking": True,
+                "multi_source_validation": True,
+                "enhanced_quality_scoring": True
             }
         }
 
