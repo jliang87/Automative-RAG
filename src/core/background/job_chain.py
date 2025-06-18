@@ -9,8 +9,11 @@ import dramatiq
 from .job_tracker import job_tracker, JobStatus
 from .common import get_redis_client
 from src.utils.quality_utils import extract_key_terms, has_numerical_data, has_garbled_content
+from src.core.mode_config import mode_config, QueryMode, trim_documents_by_tokens, estimate_token_count
+from src.config.settings import settings
 
 logger = logging.getLogger(__name__)
+
 
 def adaptive_quality_filter(
         results: List[Tuple[Document, float]],
@@ -219,17 +222,20 @@ def reranker_confidence_backfill(
 
     return combined_results[:target_count]
 
+
 class JobType(Enum):
     VIDEO_PROCESSING = "video_processing"
     PDF_PROCESSING = "pdf_processing"
     TEXT_PROCESSING = "text_processing"
     LLM_INFERENCE = "llm_inference"
 
+
 class TaskStatus(Enum):
     PENDING = "pending"
     RUNNING = "running"
     COMPLETED = "completed"
     FAILED = "failed"
+
 
 class JobChain:
     def __init__(self):
@@ -694,7 +700,7 @@ job_chain = JobChain()
 
 
 # ==============================================================================
-# ENHANCED TASK DEFINITIONS WITH COMPREHENSIVE UNICODE SUPPORT
+# ENHANCED TASK DEFINITIONS WITH MODE-SPECIFIC PARAMETERS AND TOKEN MANAGEMENT
 # ==============================================================================
 
 @dramatiq.actor(queue_name="cpu_tasks", store_results=True, max_retries=2)
@@ -767,7 +773,6 @@ def transcribe_video_task(job_id: str, media_path: str):
         from .models import get_whisper_model
         from langchain_core.documents import Document
         from langchain_text_splitters import RecursiveCharacterTextSplitter
-        from src.config.settings import settings
 
         # Get the preloaded Whisper model
         whisper_model = get_whisper_model()
@@ -946,7 +951,6 @@ def process_pdf_task(job_id: str, file_path: str, metadata: Optional[Dict] = Non
         logger.info(f"Processing PDF for job {job_id}: {file_path}")
 
         from src.core.pdf_loader import PDFLoader
-        from src.config.settings import settings
 
         # Create PDF loader
         pdf_loader = PDFLoader(
@@ -1006,7 +1010,6 @@ def process_text_task(job_id: str, text: str, metadata: Optional[Dict] = None):
 
         from langchain_text_splitters import RecursiveCharacterTextSplitter
         from langchain_core.documents import Document
-        from src.config.settings import settings
 
         # Validate text input (already clean from global fix)
         if not text or not text.strip():
@@ -1164,7 +1167,8 @@ def generate_embeddings_task(job_id: str, documents: List[Dict]):
         else:
             # In metadata-only mode, simulate doc IDs
             doc_ids = [f"sim-{job_id}-{i}" for i in range(len(doc_objects))]
-            logger.info(f"Simulated embedding generation for job {job_id}: {len(doc_ids)} document IDs (metadata-only mode)")
+            logger.info(
+                f"Simulated embedding generation for job {job_id}: {len(doc_ids)} document IDs (metadata-only mode)")
 
         # Create final result while PRESERVING ALL existing data
         final_result = {}
@@ -1192,48 +1196,37 @@ def generate_embeddings_task(job_id: str, documents: List[Dict]):
 @dramatiq.actor(queue_name="embedding_tasks", store_results=True, max_retries=2)
 def retrieve_documents_task(job_id: str, query: str, metadata_filter: Optional[Dict] = None, query_mode: str = "facts"):
     """
-    Enhanced document retrieval with adaptive quality filtering.
+    Enhanced document retrieval with mode-specific filtering and token management.
     """
     try:
-        logger.info(f"Adaptive retrieval for job {job_id} in '{query_mode}' mode: {query}")
-
         from .models import get_vector_store
-        from src.config.settings import settings
         import numpy as np
+
+        logger.info(f"Enhanced retrieval for job {job_id} in '{query_mode}' mode: {query}")
 
         vector_store = get_vector_store()
 
-        # Adjust parameters based on mode (increased for better filtering)
-        mode_complexity = {
-            "facts": "simple",
-            "features": "moderate",
-            "tradeoffs": "complex",
-            "scenarios": "complex",
-            "debate": "complex",
-            "quotes": "simple"
-        }
+        # Parse query mode
+        try:
+            mode_enum = QueryMode(query_mode)
+        except ValueError:
+            logger.warning(f"Invalid query mode '{query_mode}', falling back to facts")
+            mode_enum = QueryMode.FACTS
 
-        complexity = mode_complexity.get(query_mode, "moderate")
+        # Get mode-specific retrieval parameters
+        retrieval_params = mode_config.get_retrieval_params(mode_enum)
 
-        # Increase initial retrieval to allow for quality filtering
-        if complexity == "complex":
-            retrieval_k = min(settings.retriever_top_k * 3, 60)
-            reranker_k = min(settings.reranker_top_k * 2, 15)
-        elif complexity == "moderate":
-            retrieval_k = int(settings.retriever_top_k * 2.5)
-            reranker_k = int(settings.reranker_top_k * 1.5)
-        else:
-            retrieval_k = int(settings.retriever_top_k * 2)
-            reranker_k = settings.reranker_top_k
+        logger.info(f"Mode-specific params: {retrieval_params}")
 
-        # Perform semantic similarity search
+        # Phase 1: Initial broad retrieval
+        initial_k = retrieval_params["retrieval_k"]
         results = vector_store.similarity_search_with_score(
             query=query,
-            k=retrieval_k,
+            k=initial_k,
             metadata_filter=metadata_filter
         )
 
-        logger.info(f"Initial semantic search returned {len(results)} results")
+        logger.info(f"Initial retrieval returned {len(results)} results")
 
         if not results:
             logger.warning(f"No documents found for query: {query}")
@@ -1241,36 +1234,54 @@ def retrieve_documents_task(job_id: str, query: str, metadata_filter: Optional[D
                 "documents": [],
                 "document_count": 0,
                 "retrieval_completed_at": time.time(),
-                "retrieval_method": f"adaptive_semantic_search_{query_mode}",
+                "retrieval_method": f"enhanced_mode_specific_{query_mode}",
                 "query_used": query,
                 "query_mode": query_mode,
-                "adaptive_filtering": True
+                "mode_specific_filtering": True
             })
             return
 
-        # ENHANCED: Adaptive quality filtering
+        # Phase 2: Apply mode-specific relevance filtering
+        relevance_cutoff = retrieval_params["relevance_cutoff"]
+        filtered_results = []
+
+        for doc, score in results:
+            if not mode_config.should_trim_low_relevance(mode_enum, score):
+                filtered_results.append((doc, score))
+            else:
+                logger.debug(f"Trimmed doc with relevance {score:.3f} < {relevance_cutoff}")
+
+        logger.info(f"Relevance filtering: {len(results)} -> {len(filtered_results)} documents")
+
+        # Phase 3: Apply confidence-based filtering (NEW)
+        confidence_filtered = apply_confidence_based_filtering(filtered_results, query_mode)
+
+        logger.info(f"Confidence filtering: {len(filtered_results)} -> {len(confidence_filtered)} documents")
+
+        # Phase 4: Apply adaptive quality filtering (existing logic)
         debug_mode = getattr(settings, 'debug_mode', False)
-        filtered_results = adaptive_quality_filter(results, query, query_mode, debug_mode)
+        quality_filtered = adaptive_quality_filter(confidence_filtered, query, query_mode, debug_mode)
 
-        logger.info(f"Adaptive quality filtering: {len(results)} -> {len(filtered_results)} documents")
+        logger.info(f"Quality filtering: {len(confidence_filtered)} -> {len(quality_filtered)} documents")
 
-        # ENHANCED: Reranker confidence backfill
-        if len(filtered_results) < reranker_k:
-            filtered_results = reranker_confidence_backfill(
-                filtered_results, results, reranker_k, query_mode
-            )
+        # Phase 5: Token-aware document trimming
+        token_trimmed = trim_documents_by_tokens(quality_filtered, mode_enum)
 
-        # Apply diversity filtering
+        logger.info(f"Token trimming: {len(quality_filtered)} -> {len(token_trimmed)} documents")
+
+        # Phase 6: Apply final diversity filtering
+        final_k = retrieval_params["final_k"]
         if settings.diversity_enabled:
+            context_params = mode_config.get_context_params(mode_enum)
             diverse_results = apply_document_diversity(
-                filtered_results,
-                max_per_source=settings.max_docs_per_source
+                token_trimmed,
+                max_per_source=context_params["docs_per_source"]
             )
-            logger.info(f"Diversity filtering: {len(filtered_results)} -> {len(diverse_results)}")
+            logger.info(f"Diversity filtering: {len(token_trimmed)} -> {len(diverse_results)}")
         else:
-            diverse_results = filtered_results[:reranker_k]
+            diverse_results = token_trimmed[:final_k]
 
-        # Format results for transfer to inference worker
+        # Phase 7: Format results for transfer to inference worker
         serialized_docs = []
         for doc, score in diverse_results:
             json_safe_score = float(score) if isinstance(score, (np.floating, np.float32, np.float64)) else score
@@ -1292,171 +1303,46 @@ def retrieve_documents_task(job_id: str, query: str, metadata_filter: Optional[D
                 "relevance_score": json_safe_score
             })
 
-        logger.info(f"Adaptive retrieval completed for job {job_id}: {len(diverse_results)} quality documents")
+        logger.info(
+            f"Enhanced mode-specific retrieval completed for job {job_id}: {len(diverse_results)} quality documents")
 
-        # Trigger LLM inference
+        # Trigger LLM inference with enhanced metadata
         job_chain.task_completed(job_id, {
             "documents": serialized_docs,
             "document_count": len(serialized_docs),
             "retrieval_completed_at": time.time(),
-            "retrieval_method": f"adaptive_quality_filtered_{query_mode}",
-            "original_results": len(results),
-            "quality_filtered_results": len(filtered_results),
-            "final_results": len(diverse_results),
-            "query_mode": query_mode,
-            "complexity_level": complexity,
-            "adaptive_filtering": True,
-            "filtering_mode": "strict" if query_mode in ["facts", "quotes"] else "soft"
+            "retrieval_method": f"enhanced_mode_specific_{query_mode}",
+            "filtering_pipeline": {
+                "initial_results": len(results),
+                "relevance_filtered": len(filtered_results),
+                "confidence_filtered": len(confidence_filtered),
+                "quality_filtered": len(quality_filtered),
+                "token_trimmed": len(token_trimmed),
+                "final_results": len(diverse_results)
+            },
+            "mode_config": {
+                "query_mode": query_mode,
+                "complexity_level": mode_config.get_mode_complexity(mode_enum),
+                "relevance_cutoff": relevance_cutoff,
+                "max_docs": final_k
+            },
+            "enhanced_filtering": True
         })
 
     except Exception as e:
-        logger.error(f"Adaptive document retrieval failed for job {job_id}: {str(e)}")
-        job_chain.task_failed(job_id, f"Adaptive document retrieval failed: {str(e)}")
+        logger.error(f"Enhanced document retrieval failed for job {job_id}: {str(e)}")
+        job_chain.task_failed(job_id, f"Enhanced document retrieval failed: {str(e)}")
 
 
-@dramatiq.actor(queue_name="inference_tasks", store_results=True, max_retries=2)
-def llm_inference_task(job_id: str, query: str, documents: List[Dict], query_mode: str = "facts"):
-    """Perform LLM inference with mode support - Unicode cleaning happens automatically!"""
+def apply_confidence_based_filtering(documents, query_mode: str) -> list:
+    """
+    NEW: Apply confidence-based filtering to documents.
+
+    This creates a bridge between relevance scores and confidence assessment.
+    """
     try:
-        logger.info(f"Performing LLM inference for job {job_id} with mode '{query_mode}': {query}")
+        mode_enum = QueryMode(query_mode)
+    except ValueError:
+        mode_enum = QueryMode.FACTS
 
-        from .models import get_llm_model, get_colbert_reranker
-        from langchain_core.documents import Document
-        from src.config.settings import settings
-        import numpy as np
-
-        # Convert documents back to Document objects with scores
-        doc_objects = []
-        for doc_dict in documents:
-            doc = Document(
-                page_content=doc_dict["content"],
-                metadata=doc_dict.get("metadata", {})
-            )
-            score = doc_dict.get("relevance_score", 0)
-            if isinstance(score, (np.floating, np.float32, np.float64)):
-                score = float(score)
-            doc_objects.append((doc, score))
-
-        # Perform reranking using preloaded ColBERT model
-        reranker = get_colbert_reranker()
-        if reranker is not None:
-            logger.info(f"Reranking {len(doc_objects)} documents for job {job_id}")
-            reranked_docs = reranker.rerank(query, [doc for doc, _ in doc_objects], settings.reranker_top_k)
-        else:
-            logger.warning("Reranker not available, using original document order")
-            reranked_docs = doc_objects[:settings.reranker_top_k]
-
-        # Get preloaded LLM model and perform mode-aware inference
-        llm = get_llm_model()
-
-        # Validate query mode
-        if not llm.validate_mode(query_mode):
-            logger.warning(f"Invalid query mode '{query_mode}', falling back to 'facts'")
-            query_mode = "facts"
-
-        # Use the new mode-aware method
-        answer = llm.answer_query_with_mode(
-            query=query,
-            documents=reranked_docs,
-            query_mode=query_mode,
-            metadata_filter=None
-        )
-
-        # Prepare formatted documents for response with JSON-safe scores
-        formatted_documents = []
-        for doc, score in reranked_docs:
-            # Ensure all numeric values are JSON-serializable
-            json_safe_score = float(score) if isinstance(score, (np.floating, np.float32, np.float64)) else score
-
-            # Clean metadata to ensure all values are JSON-serializable
-            cleaned_metadata = {}
-            for key, value in doc.metadata.items():
-                if isinstance(value, (np.floating, np.float32, np.float64)):
-                    cleaned_metadata[key] = float(value)
-                elif isinstance(value, (np.integer, np.int32, np.int64)):
-                    cleaned_metadata[key] = int(value)
-                elif isinstance(value, np.ndarray):
-                    cleaned_metadata[key] = value.tolist()
-                else:
-                    cleaned_metadata[key] = value
-
-            formatted_doc = {
-                "id": cleaned_metadata.get("id", ""),
-                "content": doc.page_content,
-                "metadata": cleaned_metadata,
-                "relevance_score": json_safe_score,
-            }
-            formatted_documents.append(formatted_doc)
-
-        logger.info(f"LLM inference completed for job {job_id} with mode '{query_mode}'")
-
-        # Create the complete inference result with mode information
-        inference_result = {
-            "query": query,
-            "answer": answer,
-            "documents": formatted_documents,
-            "document_count": len(formatted_documents),
-            "query_mode": query_mode,
-            "mode_info": llm.get_mode_info(query_mode),
-            "inference_completed_at": time.time()
-        }
-
-        # Store the complete result in job tracker
-        job_tracker.update_job_status(
-            job_id,
-            "processing",
-            result=inference_result,
-            stage="llm_inference_completed"
-        )
-
-        # Pass the inference result to job chain (this will trigger completion)
-        job_chain.task_completed(job_id, inference_result)
-
-    except Exception as e:
-        logger.error(f"LLM inference failed for job {job_id}: {str(e)}")
-        job_chain.task_failed(job_id, f"LLM inference failed: {str(e)}")
-
-
-def apply_document_diversity(results, max_per_source: int):
-    """
-    Apply diversity filtering to ensure we don't get too many documents from the same source.
-
-    Args:
-        results: List of (document, score) tuples from similarity search
-        max_per_source: Maximum documents per source_id (from settings)
-
-    Returns:
-        Filtered list of (document, score) tuples with better diversity
-    """
-    from src.config.settings import settings
-
-    source_counts = {}
-    diverse_results = []
-
-    # Sort by relevance score (highest first)
-    sorted_results = sorted(results, key=lambda x: x[1], reverse=True)
-
-    for doc, score in sorted_results:
-        source_id = doc.metadata.get("source_id", "unknown")
-        chunk_id = doc.metadata.get("chunk_id", 0)
-
-        # Create a source key that groups chunks from the same source
-        source_key = f"{source_id}_{chunk_id // 3}"  # Group every 3 chunks
-
-        # Count how many documents we have from this source group
-        current_count = source_counts.get(source_key, 0)
-
-        # FIXED: Use the max_per_source parameter (from settings)
-        if current_count < max_per_source:
-            diverse_results.append((doc, score))
-            source_counts[source_key] = current_count + 1
-
-        # Stop if we have enough diverse documents (use reranker_top_k as limit)
-        if len(diverse_results) >= settings.reranker_top_k:
-            break
-
-    logger.info(
-        f"Diversity filter (max {max_per_source} per source): {len(results)} -> {len(diverse_results)} documents")
-    logger.info(f"Source distribution: {dict(source_counts)}")
-
-    return diverse_results
+    confidence_cutoff = mode_config.get_retrieval_params(mode_enum)["confidence_cutoff"]

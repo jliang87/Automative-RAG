@@ -12,6 +12,7 @@ from langchain_core.prompts import ChatPromptTemplate, PromptTemplate
 from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline, BitsAndBytesConfig
 
 from src.config.settings import settings
+from src.core.mode_config import mode_config, QueryMode
 
 # Import ALL shared utilities - NO DUPLICATION
 from src.utils.quality_utils import (
@@ -27,15 +28,38 @@ logger = logging.getLogger(__name__)
 
 
 def _format_documents_for_context(
-        documents: List[Tuple[Document, float]]
+        documents: List[Tuple[Document, float]],
+        max_token_budget: Optional[int] = None,
+        include_relevance_scores: bool = True
 ) -> str:
     """
-    Format retrieved documents into context for the prompt.
-    ENHANCED: Adds document IDs for sentence-level citation tracking.
-    """
-    context_parts = []
+    Format retrieved documents into context for the prompt with relevance scores and token management.
 
-    for i, (doc, score) in enumerate(documents):
+    ENHANCED:
+    - Shows relevance scores to help LLM assess trustworthiness
+    - Respects token budget limits
+    - Prioritizes higher-scoring documents
+
+    Args:
+        documents: List of (document, relevance_score) tuples
+        max_token_budget: Maximum tokens to use for context (optional)
+        include_relevance_scores: Whether to show relevance scores to LLM
+
+    Returns:
+        Formatted context string
+    """
+    from src.core.mode_config import estimate_token_count
+
+    if not documents:
+        return "No relevant documents found."
+
+    context_parts = []
+    total_tokens = 0
+
+    # Sort by relevance score (highest first) to prioritize best content
+    sorted_documents = sorted(documents, key=lambda x: x[1], reverse=True)
+
+    for i, (doc, score) in enumerate(sorted_documents):
         # Extract metadata for citation
         metadata = doc.metadata
         source_type = metadata.get("source", "unknown")
@@ -72,11 +96,86 @@ def _format_documents_for_context(
             if year:
                 source_info += f" ({year})"
 
-        # Format content block with document ID
+        # ENHANCED: Add relevance score to help LLM assess trustworthiness
+        if include_relevance_scores:
+            confidence_indicator = "🔥" if score > 0.8 else "⭐" if score > 0.6 else "📄"
+            source_info += f" {confidence_indicator} (Relevance: {score:.2f})"
+
+        # Create content block
         content_block = f"{source_info}\n{doc.page_content}\n"
+
+        # ENHANCED: Token budget management
+        if max_token_budget:
+            block_tokens = estimate_token_count(content_block)
+
+            # Check if adding this block would exceed budget
+            if total_tokens + block_tokens > max_token_budget:
+                # Try to include a truncated version if this is important content
+                if score > 0.7 and total_tokens < max_token_budget * 0.8:
+                    # Calculate how much content we can include
+                    remaining_tokens = max_token_budget - total_tokens - estimate_token_count(source_info + "\n")
+                    remaining_chars = int(remaining_tokens * 2.5)  # Rough char-to-token ratio
+
+                    if remaining_chars > 100:  # Only if we can include meaningful content
+                        truncated_content = doc.page_content[:remaining_chars] + "... [截断]"
+                        content_block = f"{source_info}\n{truncated_content}\n"
+                        context_parts.append(content_block)
+                        total_tokens = max_token_budget  # We're at the limit
+                        logger.info(f"Truncated high-relevance document {doc_id} to fit token budget")
+
+                break  # Stop adding more documents
+
+            total_tokens += block_tokens
+
         context_parts.append(content_block)
 
-    return "\n\n".join(context_parts)
+        # Safety limit to prevent extremely long contexts
+        if len(context_parts) >= 20:  # Maximum 20 documents
+            logger.info("Reached maximum document limit (20), stopping context building")
+            break
+
+    final_context = "\n\n".join(context_parts)
+
+    # Log context statistics
+    final_tokens = estimate_token_count(final_context)
+    logger.info(f"Context built: {len(context_parts)} documents, ~{final_tokens} tokens")
+    if max_token_budget:
+        logger.info(
+            f"Token budget utilization: {final_tokens}/{max_token_budget} ({(final_tokens / max_token_budget) * 100:.1f}%)")
+
+    return final_context
+
+
+def get_context_with_token_budget(
+        documents: List[Tuple[Document, float]],
+        query_mode: str = "facts",
+        custom_budget: Optional[int] = None
+) -> str:
+    """
+    Convenience function to get context with mode-specific token budget.
+
+    Args:
+        documents: List of (document, relevance_score) tuples
+        query_mode: Query mode to determine token budget
+        custom_budget: Override the mode-specific budget
+
+    Returns:
+        Formatted context string within token limits
+    """
+    try:
+        mode_enum = QueryMode(query_mode)
+    except ValueError:
+        mode_enum = QueryMode.FACTS
+
+    # Get mode-specific token budget
+    context_params = mode_config.get_context_params(mode_enum)
+    token_budget = custom_budget or context_params["max_context_tokens"]
+
+    return _format_documents_for_context(
+        documents=documents,
+        max_token_budget=token_budget,
+        include_relevance_scores=True
+    )
 
 
 class ContradictionDetector:
@@ -1013,6 +1112,171 @@ IMPORTANT: Respond in Chinese with exact document citations 【来源：DOC_X】
         else:
             return answer
 
+    def answer_query_with_mode_specific_params(
+            self,
+            query: str,
+            documents: List[Tuple[Document, float]],
+            query_mode: str = "facts",
+            temperature: Optional[float] = None,
+            max_tokens: Optional[int] = None,
+            top_p: Optional[float] = None,
+            repetition_penalty: Optional[float] = None,
+            metadata_filter: Optional[Dict] = None,
+    ) -> str:
+        """
+        Enhanced answer generation with mode-specific parameters.
+
+        This method allows dynamic parameter adjustment per query mode.
+        """
+        # Parse mode
+        try:
+            mode_enum = QueryMode(query_mode)
+        except ValueError:
+            mode_enum = QueryMode.FACTS
+
+        # Get mode-specific defaults if not provided
+        if None in [temperature, max_tokens, top_p, repetition_penalty]:
+            mode_defaults = mode_config.get_llm_params(mode_enum)
+            temperature = temperature or mode_defaults["temperature"]
+            max_tokens = max_tokens or mode_defaults["max_tokens"]
+            top_p = top_p or mode_defaults.get("top_p", 0.85)
+            repetition_penalty = repetition_penalty or mode_defaults.get("repetition_penalty", 1.1)
+
+        logger.info(f"LLM inference with mode-specific params: T={temperature}, max_tokens={max_tokens}, top_p={top_p}")
+
+        # Check for contradictions
+        contradictions = self.fact_checker.contradiction_detector.detect_contradictions(documents)
+
+        # Get mode-specific template
+        template = self.get_prompt_template_for_mode(query_mode, structured_output=False)
+
+        # Format context with relevance scores and token budget
+        context = get_context_with_token_budget(documents, query_mode)
+
+        # Add contradiction warning if needed
+        if contradictions:
+            contradiction_warning = "\n\nIMPORTANT: Contradictions detected in documents:\n"
+            for spec_name, contradiction_info in contradictions.items():
+                spec_chinese = contradiction_info["spec_name_chinese"]
+                values_info = ", ".join([
+                    f"{item['value']} ({item['doc_id']})"
+                    for item in contradiction_info["conflicting_values"]
+                ])
+                contradiction_warning += f"- {spec_chinese}: {values_info}\n"
+            contradiction_warning += "Please acknowledge these contradictions in your response.\n"
+            context += contradiction_warning
+
+        # Create prompt
+        prompt = template.format(context=context, question=query)
+
+        # Generate with mode-specific parameters
+        start_time = time.time()
+
+        try:
+            # Use custom pipeline parameters
+            results = self.pipe(
+                prompt,
+                num_return_sequences=1,
+                do_sample=temperature > 0,
+                temperature=temperature,
+                top_p=top_p,
+                repetition_penalty=repetition_penalty,
+                pad_token_id=self.tokenizer.eos_token_id,
+                max_new_tokens=max_tokens
+            )
+
+            answer = results[0]["generated_text"]
+
+            # Clean answer
+            if answer.startswith("</think>\n\n"):
+                answer = answer.replace("</think>\n\n", "").strip()
+            if answer.startswith("<think>") and "</think>" in answer:
+                answer = answer.split("</think>")[-1].strip()
+
+            # Enhanced fact checking with relevance consideration
+            quality_check = self.fact_checker.check_answer_quality(answer, context, documents)
+
+            # Add mode-specific quality adjustments
+            if mode_enum == QueryMode.FACTS and quality_check["quality_score"] < 70:
+                # More stringent quality requirements for facts mode
+                logger.warning(f"Facts mode quality below threshold: {quality_check['quality_score']}")
+
+            # Add quality disclaimer if needed
+            if quality_check["has_issues"]:
+                disclaimer = "\n\n⚠️ 注意: 此答案可能包含需要验证的信息，建议查阅更多资料确认。"
+                answer += disclaimer
+
+            # Add contradiction summary if detected
+            if contradictions:
+                contradiction_summary = "\n\n📋 数据冲突提醒:\n"
+                for spec_name, contradiction_info in contradictions.items():
+                    spec_chinese = contradiction_info["spec_name_chinese"]
+                    recommendation = contradiction_info["recommendation"]
+                    contradiction_summary += f"• {spec_chinese}: {recommendation}\n"
+                answer += contradiction_summary
+
+            generation_time = time.time() - start_time
+            logger.info(
+                f"Mode '{query_mode}' generation completed in {generation_time:.2f}s (Quality: {quality_check['quality_score']:.1f})")
+
+            return answer
+
+        except Exception as e:
+            logger.error(f"Generation failed for mode '{query_mode}': {e}")
+            raise e
+
+    def calculate_enhanced_confidence(
+            self,
+            answer: str,
+            documents: List[Tuple[Document, float]],
+            query_mode: str,
+            avg_relevance_score: float = 0.0
+    ) -> Dict[str, Any]:
+        """
+        Enhanced confidence calculation that incorporates relevance scores.
+
+        This creates the bridge between document relevance and answer confidence.
+        """
+        # Get context with proper formatting
+        context = get_context_with_token_budget(documents, query_mode)
+
+        # Get basic confidence metrics
+        base_confidence = self.confidence_scorer.calculate_confidence(answer, context, documents)
+
+        # Enhanced metrics with relevance correlation
+        enhanced_metrics = base_confidence.copy()
+
+        # Add relevance-confidence correlation
+        relevance_confidence_factor = min(1.0, avg_relevance_score * 2)  # Scale 0.5->1.0 relevance to 1.0 factor
+
+        # Adjust confidence based on relevance
+        adjusted_confidence = base_confidence["overall_confidence"] * (0.7 + 0.3 * relevance_confidence_factor)
+        adjusted_confidence = min(100, adjusted_confidence)
+
+        # Mode-specific confidence adjustments
+        try:
+            mode_enum = QueryMode(query_mode)
+            mode_complexity = mode_config.get_mode_complexity(mode_enum)
+
+            if mode_complexity == "complex" and adjusted_confidence > 90:
+                # Slightly reduce confidence for complex modes (harder to be certain)
+                adjusted_confidence *= 0.95
+            elif mode_complexity == "simple" and avg_relevance_score > 0.7:
+                # Boost confidence for simple modes with high relevance
+                adjusted_confidence = min(100, adjusted_confidence * 1.05)
+        except:
+            pass
+
+        enhanced_metrics.update({
+            "relevance_adjusted_confidence": adjusted_confidence,
+            "avg_document_relevance": avg_relevance_score,
+            "relevance_confidence_correlation": abs(avg_relevance_score - adjusted_confidence / 100),
+            "mode_complexity_factor": mode_config.get_mode_complexity(
+                QueryMode(query_mode)) if query_mode else "unknown"
+        })
+
+        return enhanced_metrics
+
     def _answer_with_enhanced_anti_hallucination(
             self,
             query: str,
@@ -1031,7 +1295,7 @@ IMPORTANT: Respond in Chinese with exact document citations 【来源：DOC_X】
         template = self.get_prompt_template_for_mode(query_mode, structured_output)
 
         # Format documents into context with document IDs
-        context = _format_documents_for_context(documents)
+        context = get_context_with_token_budget(documents, query_mode)
 
         # Add contradiction warning to prompt if needed
         if contradictions:
@@ -1208,7 +1472,7 @@ IMPORTANT: Provide accurate, evidence-based Chinese response with sentence-level
                                                                metadata_filter)
 
         # Calculate confidence using quality_utils functions and enhanced fact checking
-        context = _format_documents_for_context(documents)
+        context = get_context_with_token_budget(documents, query_mode)
         confidence_metrics = self.confidence_scorer.calculate_confidence(answer, context, documents)
 
         # Detect contradictions
@@ -1391,7 +1655,10 @@ IMPORTANT: Provide accurate, evidence-based Chinese response with sentence-level
                 "structured_json_output": True,
                 "advanced_citation_tracking": True,
                 "multi_source_validation": True,
-                "enhanced_quality_scoring": True
+                "enhanced_quality_scoring": True,
+                "mode_specific_parameters": True,
+                "relevance_score_integration": True,
+                "token_budget_management": True
             }
         }
 
