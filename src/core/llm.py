@@ -6,7 +6,6 @@ import logging
 from typing import Dict, List, Optional, Tuple, Union, Any
 
 import torch
-import jieba
 from langchain_core.documents import Document
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate, PromptTemplate
@@ -14,7 +13,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline, BitsAndB
 
 from src.config.settings import settings
 
-# Import shared utilities
+# Import shared utilities to avoid duplication
 from src.utils.quality_utils import (
     extract_automotive_key_phrases,
     check_acceleration_claims,
@@ -23,6 +22,55 @@ from src.utils.quality_utils import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _format_documents_for_context(
+        documents: List[Tuple[Document, float]]
+) -> str:
+    """
+    Format retrieved documents into context for the prompt.
+    """
+    context_parts = []
+
+    for i, (doc, score) in enumerate(documents):
+        # Extract metadata for citation
+        metadata = doc.metadata
+        source_type = metadata.get("source", "unknown")
+        title = metadata.get("title", f"Document {i + 1}")
+
+        # Format source information
+        if source_type == "youtube":
+            source_info = f"Source {i + 1}: YouTube - '{title}'"
+            if "url" in metadata:
+                source_info += f" ({metadata['url']})"
+        elif source_type == "bilibili":
+            source_info = f"Source {i + 1}: Bilibili - '{title}'"
+            if "url" in metadata:
+                source_info += f" ({metadata['url']})"
+        elif source_type == "pdf":
+            source_info = f"Source {i + 1}: PDF - '{title}'"
+        else:
+            source_info = f"Source {i + 1}: {title}"
+
+        # Add manufacturer and model if available
+        manufacturer = metadata.get("manufacturer")
+        model = metadata.get("model")
+        year = metadata.get("year")
+
+        if manufacturer or model or year:
+            source_info += " - "
+            if manufacturer:
+                source_info += manufacturer
+            if model:
+                source_info += f" {model}"
+            if year:
+                source_info += f" ({year})"
+
+        # Format content block
+        content_block = f"{source_info}\n{doc.page_content}\n"
+        context_parts.append(content_block)
+
+    return "\n\n".join(context_parts)
 
 
 class AutomotiveFactChecker:
@@ -58,7 +106,7 @@ class AutomotiveFactChecker:
         """
         warnings = []
 
-        # Use shared utility functions
+        # Use shared utility functions - NO DUPLICATION
         warnings.extend(check_acceleration_claims(answer))
         warnings.extend(check_numerical_specs_realistic(answer))
         warnings.extend(self._verify_context_support(answer, context))
@@ -75,7 +123,6 @@ class AutomotiveFactChecker:
 
     def _verify_context_support(self, answer: str, context: str) -> List[str]:
         """Check if numerical claims in answer are supported by context."""
-        import re
         warnings = []
 
         # Extract numbers from answer
@@ -151,7 +198,7 @@ class AnswerConfidenceScorer:
         if not context.strip():
             return 0.0
 
-        # Use shared utility to extract key phrases
+        # Use shared utility to extract key phrases - NO DUPLICATION
         answer_phrases = extract_automotive_key_phrases(answer)
 
         # Check how many phrases are found in context
@@ -183,7 +230,6 @@ class AnswerConfidenceScorer:
 
     def _calculate_specificity(self, answer: str) -> float:
         """Calculate how specific the answer is for Chinese text (specific answers are generally more reliable)."""
-        import re
         specificity_indicators = 0
 
         # Check for specific numbers
@@ -273,7 +319,7 @@ class LocalLLM:
     UNIFIED SYSTEM: Only supports enhanced queries with mode-specific templates.
     Facts mode serves as the default and replaces old normal queries.
     Tesla T4 optimized with proper quantization handling.
-    Enhanced with anti-hallucination features.
+    Enhanced with anti-hallucination features for Chinese responses.
     """
 
     def __init__(
@@ -311,7 +357,7 @@ class LocalLLM:
         self.confidence_scorer = AnswerConfidenceScorer()
 
         # Log configuration for debugging
-        print(f"LocalLLM Configuration (Unified System with Anti-Hallucination):")
+        print(f"LocalLLM Configuration (Unified System with Chinese Anti-Hallucination):")
         print(f"  Model: {self.model_name}")
         print(f"  Device: {self.device}")
         print(f"  Use 4-bit: {self.use_4bit}")
@@ -321,12 +367,12 @@ class LocalLLM:
         print(f"  Max tokens: {self.max_tokens}")
         print(f"  Query System: UNIFIED (Enhanced Only)")
         print(f"  Default Mode: FACTS")
-        print(f"  Anti-Hallucination: ENABLED")
+        print(f"  Anti-Hallucination: ENABLED (Chinese)")
 
         # Initialize tokenizer and model
         self._load_model()
 
-        # Enhanced QA prompt template with anti-hallucination measures
+        # Enhanced QA prompt template with Chinese anti-hallucination measures
         self.qa_prompt_template = self._create_anti_hallucination_qa_prompt_template()
 
     def _load_model(self):
@@ -831,54 +877,60 @@ class LocalLLM:
                 "description": "直接验证具体的车辆规格参数",
                 "two_layer": False,
                 "complexity": "simple",
-                "template_type": "anti_hallucination_qa",
+                "template_type": "anti_hallucination_qa_chinese",
                 "is_default": True,
-                "anti_hallucination": True
+                "anti_hallucination": True,
+                "language": "chinese"
             },
             "features": {
                 "name": "新功能建议",
                 "description": "评估是否应该添加某项功能",
                 "two_layer": True,
                 "complexity": "moderate",
-                "template_type": "structured_analysis_with_fact_check",
+                "template_type": "structured_analysis_chinese",
                 "is_default": False,
-                "anti_hallucination": True
+                "anti_hallucination": True,
+                "language": "chinese"
             },
             "tradeoffs": {
                 "name": "权衡利弊分析",
                 "description": "分析设计选择的优缺点",
                 "two_layer": True,
                 "complexity": "complex",
-                "template_type": "structured_analysis_with_fact_check",
+                "template_type": "structured_analysis_chinese",
                 "is_default": False,
-                "anti_hallucination": True
+                "anti_hallucination": True,
+                "language": "chinese"
             },
             "scenarios": {
                 "name": "用户场景分析",
                 "description": "评估功能在实际使用场景中的表现",
                 "two_layer": True,
                 "complexity": "complex",
-                "template_type": "structured_analysis_with_fact_check",
+                "template_type": "structured_analysis_chinese",
                 "is_default": False,
-                "anti_hallucination": True
+                "anti_hallucination": True,
+                "language": "chinese"
             },
             "debate": {
                 "name": "多角色讨论",
                 "description": "模拟不同角色的观点和讨论",
                 "two_layer": False,
                 "complexity": "complex",
-                "template_type": "multi_perspective_with_fact_check",
+                "template_type": "multi_perspective_chinese",
                 "is_default": False,
-                "anti_hallucination": True
+                "anti_hallucination": True,
+                "language": "chinese"
             },
             "quotes": {
                 "name": "原始用户评论",
                 "description": "提取相关的用户评论和反馈",
                 "two_layer": False,
                 "complexity": "simple",
-                "template_type": "extraction_with_verification",
+                "template_type": "extraction_chinese",
                 "is_default": False,
-                "anti_hallucination": True
+                "anti_hallucination": True,
+                "language": "chinese"
             }
         }
 
@@ -915,9 +967,10 @@ class LocalLLM:
             "worker_type": os.environ.get("WORKER_TYPE", "unknown"),
             "memory_fraction": settings.get_worker_memory_fraction(),
             "tesla_t4_optimized": not self.use_4bit,
-            "query_system": "unified_enhanced_with_anti_hallucination",
+            "query_system": "unified_enhanced_chinese_anti_hallucination",
             "default_mode": "facts",
-            "template_system": "anti_hallucination_enhanced",
+            "template_system": "chinese_anti_hallucination_enhanced",
+            "response_language": "chinese",
             "supported_modes": ["facts", "features", "tradeoffs", "scenarios", "debate", "quotes"],
             "anti_hallucination_features": {
                 "fact_checker": True,
@@ -925,7 +978,9 @@ class LocalLLM:
                 "strict_prompts": True,
                 "context_verification": True,
                 "numerical_validation": True,
-                "regeneration_on_issues": True
+                "regeneration_on_issues": True,
+                "chinese_language_support": True,
+                "automotive_domain_knowledge": True
             }
         }
 
