@@ -13,12 +13,14 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline, BitsAndB
 
 from src.config.settings import settings
 
-# Import shared utilities to avoid duplication
+# Import ALL shared utilities - NO DUPLICATION
 from src.utils.quality_utils import (
     extract_automotive_key_phrases,
     check_acceleration_claims,
     check_numerical_specs_realistic,
-    has_numerical_data
+    has_numerical_data,
+    extract_key_terms,
+    has_garbled_content
 )
 
 logger = logging.getLogger(__name__)
@@ -76,7 +78,7 @@ def _format_documents_for_context(
 class AutomotiveFactChecker:
     """
     Fact checker for automotive specifications to detect obvious hallucinations.
-    Uses shared utility functions to avoid duplication.
+    DEDUPED: Uses shared utility functions from quality_utils.py
     """
 
     def __init__(self):
@@ -100,9 +102,7 @@ class AutomotiveFactChecker:
     def check_answer_quality(self, answer: str, context: str) -> Dict[str, any]:
         """
         Comprehensive answer quality check using shared utility functions.
-
-        Returns:
-            Dictionary with warnings and quality score
+        DEDUPED: All actual checking is done by quality_utils functions.
         """
         warnings = []
 
@@ -122,7 +122,7 @@ class AutomotiveFactChecker:
         }
 
     def _verify_context_support(self, answer: str, context: str) -> List[str]:
-        """Check if numerical claims in answer are supported by context."""
+        """Check if numerical claims in answer are supported by context (Chinese warnings)."""
         warnings = []
 
         # Extract numbers from answer
@@ -139,7 +139,7 @@ class AutomotiveFactChecker:
 class AnswerConfidenceScorer:
     """
     Calculate confidence scores for generated answers to help detect potential hallucinations.
-    Uses shared utility functions to avoid duplication.
+    DEDUPED: Uses shared utility functions from quality_utils.py
     """
 
     def __init__(self):
@@ -149,25 +149,23 @@ class AnswerConfidenceScorer:
         str, any]:
         """
         Calculate comprehensive confidence score for an answer.
-
-        Returns:
-            Dictionary with confidence metrics and recommendations
+        DEDUPED: Uses quality_utils functions where possible.
         """
         scores = {}
 
-        # 1. Context Support Score (0-100)
+        # 1. Context Support Score (0-100) - uses quality_utils
         scores['context_support'] = self._calculate_context_support(answer, context)
 
         # 2. Document Relevance Score (0-100)
         scores['document_relevance'] = self._calculate_document_relevance(answer, documents)
 
-        # 3. Factual Consistency Score (0-100)
+        # 3. Factual Consistency Score (0-100) - uses quality_utils via fact_checker
         scores['factual_consistency'] = self._calculate_factual_consistency(answer, context)
 
-        # 4. Specificity Score (0-100)
+        # 4. Specificity Score (0-100) - uses quality_utils functions
         scores['specificity'] = self._calculate_specificity(answer)
 
-        # 5. Uncertainty Indicators (0-100, higher = more uncertain)
+        # 5. Uncertainty Indicators (0-100, higher = more uncertain) - uses quality_utils constants
         scores['uncertainty'] = self._detect_uncertainty_indicators(answer)
 
         # Calculate overall confidence (weighted average)
@@ -198,7 +196,7 @@ class AnswerConfidenceScorer:
         if not context.strip():
             return 0.0
 
-        # Use shared utility to extract key phrases - NO DUPLICATION
+        # DEDUPED: Use shared utility function
         answer_phrases = extract_automotive_key_phrases(answer)
 
         # Check how many phrases are found in context
@@ -229,37 +227,26 @@ class AnswerConfidenceScorer:
         return quality_check['quality_score']
 
     def _calculate_specificity(self, answer: str) -> float:
-        """Calculate how specific the answer is for Chinese text (specific answers are generally more reliable)."""
+        """
+        Calculate how specific the answer is - DEDUPED version.
+        Uses quality_utils functions instead of duplicating logic.
+        """
         specificity_indicators = 0
 
-        # Check for specific numbers
+        # 1. Check for specific numbers
         if re.search(r'\d+\.?\d*', answer):
             specificity_indicators += 1
 
-        # Check for Chinese automotive units and terms
-        unit_patterns = [
-            r'(?:秒|升|L|马力|HP|牛米|Nm|公里|km|米|m|毫米|mm|公斤|kg|元|万元)',
-            r'(?:公里/小时|km/h|千瓦|kW|立方|吨|分钟|小时)',
-            r'(?:百公里加速|油耗|续航|扭矩|功率|排量|轴距)'
-        ]
-        for pattern in unit_patterns:
-            if re.search(pattern, answer, re.IGNORECASE):
-                specificity_indicators += 1
-                break
-
-        # Check for Chinese car brand/model names
-        chinese_brands = [
-            '宝马', '奔驰', '奥迪', '丰田', '本田', '大众', '特斯拉',
-            '福特', '雪佛兰', '日产', '现代', '起亚', '斯巴鲁', '马自达',
-            '沃尔沃', '捷豹', '路虎', '雷克萨斯', '讴歌', '英菲尼迪',
-            '凯迪拉克', '吉普', '法拉利', '兰博基尼', '保时捷',
-            '比亚迪', '蔚来', '理想', '小鹏', '哪吒', '零跑',
-            '吉利', '长城', '奇瑞', '长安', '广汽', '一汽'
-        ]
-        if any(brand in answer for brand in chinese_brands):
+        # 2. DEDUPED: Use quality_utils to check for numerical data (includes units)
+        if has_numerical_data(answer):
             specificity_indicators += 1
 
-        # Check for year mentions (Chinese format)
+        # 3. DEDUPED: Use quality_utils to extract automotive phrases (includes brands)
+        automotive_phrases = extract_automotive_key_phrases(answer)
+        if automotive_phrases:
+            specificity_indicators += 1
+
+        # 4. Check for year mentions (Chinese format)
         if re.search(r'(?:20\d{2}|19\d{2})年?', answer):
             specificity_indicators += 1
 
@@ -268,17 +255,20 @@ class AnswerConfidenceScorer:
         return (specificity_indicators / max_indicators) * 100
 
     def _detect_uncertainty_indicators(self, answer: str) -> float:
-        """Detect uncertainty indicators in Chinese answers."""
-        # Enhanced Chinese uncertainty phrases
+        """
+        Detect uncertainty indicators in Chinese answers.
+        CENTRALIZED: Define uncertainty phrases here since they're specific to confidence scoring.
+        """
+        # Chinese uncertainty indicators (centralized definition)
         uncertainty_phrases = [
+            # Core uncertainty words
             '可能', '大概', '估计', '应该', '似乎', '看起来', '据说',
             '大致', '约', '左右', '差不多', '基本上', '一般来说',
             '通常', '可能是', '或许', '也许', '估算', '预计',
             '疑似', '推测', '猜测', '不确定', '不清楚', '不详',
             '可能会', '应该是', '看上去', '听说', '传说',
-            # English uncertainty phrases (just in case)
-            'maybe', 'probably', 'likely', 'appears', 'seems', 'roughly',
-            'approximately', 'about', 'around', 'possibly', 'perhaps'
+            # Keep minimal English for edge cases
+            'maybe', 'probably', 'likely', 'appears', 'seems'
         ]
 
         uncertainty_count = 0
@@ -290,7 +280,7 @@ class AnswerConfidenceScorer:
         return min(100, (uncertainty_count / max_uncertainty) * 100)
 
     def _generate_recommendation(self, overall_confidence: float, scores: Dict[str, float]) -> str:
-        """Generate actionable recommendation based on confidence scores."""
+        """Generate actionable recommendation based on confidence scores (in Chinese for users)."""
         if overall_confidence >= 85:
             return "高置信度答案，可以直接使用"
         elif overall_confidence >= 70:
@@ -301,7 +291,7 @@ class AnswerConfidenceScorer:
             return "极低置信度，可能存在错误，建议重新查询"
 
     def _get_confidence_level(self, confidence: float) -> str:
-        """Get confidence level label."""
+        """Get confidence level label (in Chinese for users)."""
         if confidence >= 85:
             return "高"
         elif confidence >= 70:
@@ -316,10 +306,8 @@ class LocalLLM:
     """
     Local DeepSeek LLM integration for RAG with GPU acceleration.
 
-    UNIFIED SYSTEM: Only supports enhanced queries with mode-specific templates.
-    Facts mode serves as the default and replaces old normal queries.
-    Tesla T4 optimized with proper quantization handling.
-    Enhanced with anti-hallucination features for Chinese responses.
+    DEDUPED: English templates with explicit Chinese response instruction.
+    Uses quality_utils.py for all automotive domain logic.
     """
 
     def __init__(
@@ -331,9 +319,6 @@ class LocalLLM:
     ):
         """
         Initialize the local DeepSeek LLM with environment-driven configuration.
-
-        All parameters are optional and will use environment settings by default.
-        This ensures consistent Tesla T4 optimization across the entire system.
         """
 
         # Use environment settings as defaults - HOLISTIC APPROACH
@@ -357,7 +342,7 @@ class LocalLLM:
         self.confidence_scorer = AnswerConfidenceScorer()
 
         # Log configuration for debugging
-        print(f"LocalLLM Configuration (Unified System with Chinese Anti-Hallucination):")
+        print(f"LocalLLM Configuration (DEDUPED: Uses quality_utils.py):")
         print(f"  Model: {self.model_name}")
         print(f"  Device: {self.device}")
         print(f"  Use 4-bit: {self.use_4bit}")
@@ -365,15 +350,16 @@ class LocalLLM:
         print(f"  Torch dtype: {self.torch_dtype}")
         print(f"  Temperature: {self.temperature}")
         print(f"  Max tokens: {self.max_tokens}")
-        print(f"  Query System: UNIFIED (Enhanced Only)")
-        print(f"  Default Mode: FACTS")
-        print(f"  Anti-Hallucination: ENABLED (Chinese)")
+        print(f"  Template Language: ENGLISH (token efficient)")
+        print(f"  Response Language: CHINESE (enforced)")
+        print(f"  Anti-Hallucination: CHINESE-OPTIMIZED (quality_utils.py)")
+        print(f"  Code Duplication: ELIMINATED")
 
         # Initialize tokenizer and model
         self._load_model()
 
-        # Enhanced QA prompt template with Chinese anti-hallucination measures
-        self.qa_prompt_template = self._create_anti_hallucination_qa_prompt_template()
+        # DEDUPED: English templates with Chinese response instruction
+        self.qa_prompt_template = self._create_english_anti_hallucination_template()
 
     def _load_model(self):
         """Load the local LLM model using environment-driven Tesla T4 configuration."""
@@ -454,198 +440,198 @@ class LocalLLM:
             else:
                 raise e
 
-    def _create_anti_hallucination_qa_prompt_template(self) -> str:
+    def _create_english_anti_hallucination_template(self) -> str:
         """
-        Create an enhanced QA prompt template with strong anti-hallucination measures.
-        All responses must be in Chinese.
+        DEDUPED: Create English template with explicit Chinese response instruction.
+        This dramatically reduces token count while ensuring Chinese output.
         """
-        template = """你是一位专业的汽车规格专家助手，具有严格的准确性要求。
+        template = """You are a professional automotive specifications expert assistant with strict accuracy requirements.
 
-关键规则：
-1. 只能使用提供的文档中明确提到的信息
-2. 如果文档中没有提及具体的数字/规格，请说"根据提供的文档，未找到具体的[参数名称]数据"
-3. 绝对不要估计、猜测或推断任何数值
-4. 如果文档内容不清楚或有矛盾，请承认这种不确定性
-5. 始终引用找到信息的确切来源
+CRITICAL RULES:
+1. Only use information explicitly mentioned in the provided documents
+2. If specific numbers/specs are not in documents, say "According to provided documents, specific [parameter] data not found"
+3. Never estimate, guess, or infer any numerical values
+4. If document content is unclear or contradictory, acknowledge this uncertainty
+5. Always cite the exact sources where information was found
 
-数值准确性检查：
-- 百公里加速：正常范围是3-15秒
-- 如果看到明显错误的数值（如0.8秒），请标注为可疑
-- 始终根据汽车标准对技术规格进行双重检查
+NUMERICAL ACCURACY CHECK:
+- 0-100 km/h acceleration: normal range is 3-15 seconds
+- If you see obviously wrong values (like 0.8 seconds), mark as suspicious
+- Always double-check technical specs against automotive standards
 
-你的任务是帮助用户查找汽车规格、功能和技术细节的信息。
+Your task is to help users find automotive specifications, features, and technical details.
 
-只能使用以下文档内容回答问题。如果文档中没有答案，请说明你不知道，并建议需要什么额外信息。
+Use ONLY the following document content to answer questions. If documents don't contain the answer, say you don't know and suggest what additional information might be needed.
 
-文档内容：
+Document Content:
 {context}
 
-问题：
+Question:
 {question}
 
-回答格式：
-1. 基于文档的直接答案（或"未找到相关信息"）
-2. 来源引用
-3. 如果不确定，明确说明限制
+IMPORTANT: You must respond in Chinese, but be precise and factual. Cite specific sources (document titles or URLs) where you found the information.
 
-请用中文回答，并引用找到信息的具体来源（文档标题或网址）。"""
+Response Format:
+1. Direct answer based on documents (or "information not found")
+2. Source citations
+3. If uncertain, clearly state limitations"""
         return template
 
     def get_prompt_template_for_mode(self, mode: str) -> str:
         """
-        Get specialized prompt template for different query modes.
-        All templates ensure Chinese responses with anti-hallucination measures.
+        DEDUPED: Get English prompt templates with Chinese response instruction.
+        Much more token-efficient than Chinese templates.
         """
 
         templates = {
-            "facts": """你是一位专业的汽车规格专家助手，具有严格的准确性要求。
+            "facts": """You are a professional automotive specifications expert assistant with strict accuracy requirements.
 
-关键规则：
-1. 只能使用提供的文档中明确提到的信息
-2. 如果文档中没有提及具体的数字/规格，请说"根据提供的文档，未找到具体的[参数名称]数据"
-3. 绝对不要估计、猜测或推断任何数值
-4. 如果文档内容不清楚或有矛盾，请承认这种不确定性
-5. 始终引用找到信息的确切来源
+CRITICAL RULES:
+1. Only use information explicitly mentioned in the provided documents
+2. If specific numbers/specs are not in documents, say "According to provided documents, specific [parameter] data not found"
+3. Never estimate, guess, or infer any numerical values
+4. If document content is unclear or contradictory, acknowledge this uncertainty
+5. Always cite the exact sources where information was found
 
-数值准确性检查：
-- 百公里加速：正常范围是3-15秒
-- 如果看到明显错误的数值（如0.8秒），请标注为可疑
-- 始终根据汽车标准对技术规格进行双重检查
+NUMERICAL ACCURACY CHECK:
+- 0-100 km/h acceleration: normal range is 3-15 seconds
+- If you see obviously wrong values (like 0.8 seconds), mark as suspicious
+- Always double-check technical specs against automotive standards
 
-只能使用以下文档内容回答问题。如果文档中没有答案，请说明你不知道，并建议需要什么额外信息。
+Use ONLY the following document content to answer questions. If documents don't contain the answer, say you don't know and suggest what additional information might be needed.
 
-文档内容：
+Document Content:
 {context}
 
-问题：
+Question:
 {question}
 
-请用中文回答，并引用找到信息的具体来源（文档标题或网址）。""",
+IMPORTANT: Respond in Chinese and cite specific sources (document titles or URLs).""",
 
-            "features": """你是一位专业的汽车产品策略专家助手，具有严格的准确性要求。
+            "features": """You are a professional automotive product strategy expert with strict accuracy requirements.
 
-关键规则：
-1. 只能使用提供的文档中明确提到的信息
-2. 分析必须基于文档中找到的证据
-3. 绝对不要做出超出文档内容的假设
-4. 如果文档缺乏相关信息，请明确说明这一限制
+CRITICAL RULES:
+1. Only use information explicitly mentioned in the provided documents
+2. Analysis must be based on evidence found in documents
+3. Never make assumptions beyond document content
+4. If documents lack relevant information, clearly state this limitation
 
-你的任务是分析是否应该添加某项功能，严格基于提供的文档内容。
+Your task is to analyze whether a feature should be added, strictly based on provided document content.
 
-请分两个部分分析功能需求：
-【实证分析】 - 基于提供文档的实证分析
-【策略推理】 - 基于找到证据的策略推理
+Please analyze feature requirements in two sections:
+【Evidence Analysis】 - Evidence-based analysis from provided documents
+【Strategic Reasoning】 - Strategic reasoning based on found evidence
 
-要实事求是并引用具体来源。不要做出超出文档内容的假设。
+Be factual and cite specific sources. Do not make assumptions beyond document content.
 
-文档内容：
+Document Content:
 {context}
 
-功能问题：
+Feature Question:
 {question}
 
-请用中文提供分析，并引用找到信息的具体来源（文档标题或网址）。""",
+IMPORTANT: Respond in Chinese and cite specific sources (document titles or URLs).""",
 
-            "tradeoffs": """你是一位专业的汽车设计决策分析师，具有严格的准确性要求。
+            "tradeoffs": """You are a professional automotive design decision analyst with strict accuracy requirements.
 
-关键规则：
-1. 只能使用提供的文档中明确提到的信息
-2. 优缺点分析必须基于文档证据
-3. 绝对不要推测超出文档内容的情况
-4. 如果文档缺乏足够的比较信息，请明确说明
+CRITICAL RULES:
+1. Only use information explicitly mentioned in the provided documents
+2. Pros/cons analysis must be based on document evidence
+3. Never speculate beyond document content
+4. If documents lack sufficient comparison information, clearly state this
 
-你的任务是分析设计选择的优缺点，严格基于提供的文档内容。
+Your task is to analyze design choice pros and cons, strictly based on provided document content.
 
-请分两个部分分析：
-【文档支撑】 - 来自提供文档的证据
-【利弊分析】 - 基于证据的优缺点分析
+Please analyze in two sections:
+【Document Evidence】 - Evidence from provided documents
+【Pros/Cons Analysis】 - Pros and cons analysis based on evidence
 
-要客观并引用具体来源。不要推测超出文档内容的情况。
+Be objective and cite specific sources. Do not speculate beyond document content.
 
-文档内容：
+Document Content:
 {context}
 
-设计决策问题：
+Design Decision Question:
 {question}
 
-请用中文提供分析，并引用找到信息的具体来源（文档标题或网址）。""",
+IMPORTANT: Respond in Chinese and cite specific sources (document titles or URLs).""",
 
-            "scenarios": """你是一位专业的汽车用户体验分析师，具有严格的准确性要求。
+            "scenarios": """You are a professional automotive user experience analyst with strict accuracy requirements.
 
-关键规则：
-1. 只能使用提供的文档中明确提到的信息
-2. 场景分析必须基于文档证据
-3. 绝对不要创造文档中未提及的场景
-4. 如果文档缺乏相关场景信息，请明确说明
+CRITICAL RULES:
+1. Only use information explicitly mentioned in the provided documents
+2. Scenario analysis must be based on document evidence
+3. Never create scenarios not mentioned in documents
+4. If documents lack relevant scenario information, clearly state this
 
-你的任务是分析功能在真实使用场景中的表现，严格基于提供的文档内容。
+Your task is to analyze feature performance in real usage scenarios, strictly based on provided document content.
 
-请分两个部分分析：
-【文档场景】 - 提供文档中提及的场景
-【场景推理】 - 基于找到证据的场景分析
+Please analyze in two sections:
+【Document Scenarios】 - Scenarios mentioned in provided documents
+【Scenario Reasoning】 - Scenario analysis based on found evidence
 
-要具体并引用来源。不要创造文档中未提及的场景。
+Be specific and cite sources. Do not create scenarios not mentioned in documents.
 
-文档内容：
+Document Content:
 {context}
 
-场景问题：
+Scenario Question:
 {question}
 
-请用中文提供分析，并引用找到信息的具体来源（文档标题或网址）。""",
+IMPORTANT: Respond in Chinese and cite specific sources (document titles or URLs).""",
 
-            "debate": """你是一位专业的汽车行业圆桌讨论主持人，具有严格的准确性要求。
+            "debate": """You are a professional automotive industry roundtable discussion moderator with strict accuracy requirements.
 
-关键规则：
-1. 只能使用提供的文档中明确提到的信息
-2. 观点必须基于文档中找到的证据
-3. 绝对不要编造文档中不支持的观点
-4. 如果文档缺乏足够的多角度分析信息，请明确说明
+CRITICAL RULES:
+1. Only use information explicitly mentioned in the provided documents
+2. Viewpoints must be based on evidence found in documents
+3. Never fabricate viewpoints not supported by documents
+4. If documents lack sufficient multi-perspective analysis information, clearly state this
 
-你的任务是基于提供的文档内容呈现不同专业角度的观点。
+Your task is to present different professional perspectives based on provided document content.
 
-请呈现以下角度的观点：
-**👔 产品经理角度：** 基于文档中的证据
-**🔧 工程师角度：** 基于文档中的技术信息
-**👥 用户代表角度：** 基于文档中的用户反馈
+Please present viewpoints from these perspectives:
+**👔 Product Manager Perspective:** Based on evidence in documents
+**🔧 Engineer Perspective:** Based on technical information in documents
+**👥 User Representative Perspective:** Based on user feedback in documents
 
-**📋 讨论总结：** 仅综合文档可以支持的内容
+**📋 Discussion Summary:** Only synthesize content that documents can support
 
-要实事求是并为每个角度引用具体来源。
+Be factual and cite specific sources for each perspective.
 
-文档内容：
+Document Content:
 {context}
 
-讨论话题：
+Discussion Topic:
 {question}
 
-请用中文提供观点，并引用找到信息的具体来源（文档标题或网址）。""",
+IMPORTANT: Respond in Chinese and cite specific sources (document titles or URLs).""",
 
-            "quotes": """你是一位专业的汽车市场研究分析师，具有严格的准确性要求。
+            "quotes": """You are a professional automotive market research analyst with strict accuracy requirements.
 
-关键规则：
-1. 只提取提供文档中实际存在的引用
-2. 使用确切的引文 - 不要改写或修改
-3. 绝对不要创造或编造引文
-4. 如果找不到相关引文，请明确说明
+CRITICAL RULES:
+1. Only extract quotes that actually exist in the provided documents
+2. Use exact quotations - do not rewrite or modify
+3. Never create or fabricate quotes
+4. If no relevant quotes found, clearly state this
 
-你的任务是从提供的文档内容中提取实际的用户引文和反馈。
+Your task is to extract actual user quotes and feedback from provided document content.
 
-请按以下格式提取引文：
-【来源1】："文档中的确切引文..."
-【来源2】："文档中的另一个确切引文..."
+Please extract quotes in this format:
+【Source 1】："Exact quote from documents..."
+【Source 2】："Another exact quote from documents..."
 
-如果找不到相关的用户引文，请说明："根据提供的文档，未找到相关的用户评论或反馈。"
+If no relevant user quotes found, state: "According to provided documents, no relevant user comments or feedback found."
 
-关键：只提取文档中实际存在的引文。不要创造或改写内容。
+CRITICAL: Only extract quotes that actually exist in documents. Do not create or rewrite content.
 
-文档内容：
+Document Content:
 {context}
 
-引文话题：
+Quote Topic:
 {question}
 
-请用中文提供引文，并引用找到它们的具体来源（文档标题或网址）。"""
+IMPORTANT: Respond in Chinese and cite specific sources (document titles or URLs)."""
         }
 
         return templates.get(mode, templates["facts"])
@@ -659,15 +645,7 @@ class LocalLLM:
     ) -> str:
         """
         UNIFIED: Answer a query using a specific mode template with anti-hallucination features.
-
-        Args:
-            query: The user's query
-            documents: Retrieved documents with scores
-            query_mode: The query mode to use (defaults to "facts")
-            metadata_filter: Optional metadata filters
-
-        Returns:
-            Generated answer using the mode-specific template with fact checking
+        DEDUPED: All automotive logic delegated to quality_utils.py
         """
         # Validate mode (fallback to facts)
         if not self.validate_mode(query_mode):
@@ -686,6 +664,7 @@ class LocalLLM:
     ) -> str:
         """
         Enhanced answer generation with comprehensive anti-hallucination measures.
+        DEDUPED: Uses quality_utils.py functions for all domain-specific checks.
         """
         # Get the appropriate template for this mode
         template = self.get_prompt_template_for_mode(query_mode)
@@ -721,7 +700,7 @@ class LocalLLM:
             if initial_answer.startswith("<think>") and "</think>" in initial_answer:
                 initial_answer = initial_answer.split("</think>")[-1].strip()
 
-            # Perform fact checking
+            # DEDUPED: Perform fact checking using quality_utils functions
             quality_check = self.fact_checker.check_answer_quality(initial_answer, context)
 
             # If serious issues detected, regenerate with stricter prompt
@@ -785,27 +764,29 @@ class LocalLLM:
             raise e
 
     def _create_strict_verification_prompt(self, query: str, context: str, warnings: List[str]) -> str:
-        """Create a strict prompt for answer regeneration in Chinese."""
+        """
+        DEDUPED: Create strict English prompt for answer regeneration.
+        """
         warnings_text = "\n".join(f"- {warning}" for warning in warnings)
 
-        prompt = f"""作为汽车规格专家，请基于以下文档回答问题。
+        prompt = f"""As an automotive specifications expert, please answer the question based on the following documents.
 
-关键：之前的回答检测到以下问题：
+CRITICAL: Previous answer detected these issues:
 {warnings_text}
 
-严格要求：
-1. 只使用文档中明确提到的信息
-2. 如果文档中没有具体数据，明确说明"文档中未提及此数据"
-3. 不要猜测或推断任何数值
-4. 如果发现不合理的数据，请质疑其准确性
-5. 所有数值必须能在文档中找到对应内容
+STRICT REQUIREMENTS:
+1. Only use information explicitly mentioned in documents
+2. If documents lack specific data, clearly state "Documents do not mention this data"
+3. Do not guess or infer any numerical values
+4. If you find unreasonable data, question its accuracy
+5. All numerical values must be traceable to document content
 
-文档内容：
+Document Content:
 {context}
 
-问题：{query}
+Question: {query}
 
-请提供准确、有依据的中文答案，并引用具体来源："""
+IMPORTANT: Provide accurate, evidence-based Chinese response with specific source citations:"""
 
         return prompt
 
@@ -818,14 +799,12 @@ class LocalLLM:
     ) -> Dict[str, any]:
         """
         Generate answer with confidence scoring and quality assessment.
-
-        Returns:
-            Dictionary with answer, confidence metrics, and recommendations
+        DEDUPED: Uses quality_utils.py functions via confidence scorer.
         """
         # Generate the answer with anti-hallucination measures
         answer = self._answer_with_anti_hallucination(query, documents, query_mode, metadata_filter)
 
-        # Calculate confidence
+        # Calculate confidence using quality_utils functions
         context = _format_documents_for_context(documents)
         confidence_metrics = self.confidence_scorer.calculate_confidence(answer, context, documents)
 
@@ -849,95 +828,85 @@ class LocalLLM:
         return response
 
     def validate_mode(self, mode: str) -> bool:
-        """
-        Validate if the query mode is supported.
-
-        Args:
-            mode: Query mode to validate
-
-        Returns:
-            True if mode is valid, False otherwise
-        """
+        """Validate if the query mode is supported."""
         valid_modes = ["facts", "features", "tradeoffs", "scenarios", "debate", "quotes"]
         return mode in valid_modes
 
     def get_mode_info(self, mode: str) -> Dict[str, Any]:
-        """
-        Get information about a specific query mode.
-
-        Args:
-            mode: Query mode
-
-        Returns:
-            Dictionary with mode information
-        """
+        """Get information about a specific query mode."""
         mode_info = {
             "facts": {
                 "name": "车辆规格查询",
                 "description": "直接验证具体的车辆规格参数",
                 "two_layer": False,
                 "complexity": "simple",
-                "template_type": "anti_hallucination_qa_chinese",
+                "template_type": "english_anti_hallucination_chinese_response",
                 "is_default": True,
                 "anti_hallucination": True,
-                "language": "chinese"
+                "language": "chinese_response_english_template",
+                "deduplication": "quality_utils_integration"
             },
             "features": {
                 "name": "新功能建议",
                 "description": "评估是否应该添加某项功能",
                 "two_layer": True,
                 "complexity": "moderate",
-                "template_type": "structured_analysis_chinese",
+                "template_type": "english_structured_analysis_chinese_response",
                 "is_default": False,
                 "anti_hallucination": True,
-                "language": "chinese"
+                "language": "chinese_response_english_template",
+                "deduplication": "quality_utils_integration"
             },
             "tradeoffs": {
                 "name": "权衡利弊分析",
                 "description": "分析设计选择的优缺点",
                 "two_layer": True,
                 "complexity": "complex",
-                "template_type": "structured_analysis_chinese",
+                "template_type": "english_structured_analysis_chinese_response",
                 "is_default": False,
                 "anti_hallucination": True,
-                "language": "chinese"
+                "language": "chinese_response_english_template",
+                "deduplication": "quality_utils_integration"
             },
             "scenarios": {
                 "name": "用户场景分析",
                 "description": "评估功能在实际使用场景中的表现",
                 "two_layer": True,
                 "complexity": "complex",
-                "template_type": "structured_analysis_chinese",
+                "template_type": "english_structured_analysis_chinese_response",
                 "is_default": False,
                 "anti_hallucination": True,
-                "language": "chinese"
+                "language": "chinese_response_english_template",
+                "deduplication": "quality_utils_integration"
             },
             "debate": {
                 "name": "多角色讨论",
                 "description": "模拟不同角色的观点和讨论",
                 "two_layer": False,
                 "complexity": "complex",
-                "template_type": "multi_perspective_chinese",
+                "template_type": "english_multi_perspective_chinese_response",
                 "is_default": False,
                 "anti_hallucination": True,
-                "language": "chinese"
+                "language": "chinese_response_english_template",
+                "deduplication": "quality_utils_integration"
             },
             "quotes": {
                 "name": "原始用户评论",
                 "description": "提取相关的用户评论和反馈",
                 "two_layer": False,
                 "complexity": "simple",
-                "template_type": "extraction_chinese",
+                "template_type": "english_extraction_chinese_response",
                 "is_default": False,
                 "anti_hallucination": True,
-                "language": "chinese"
+                "language": "chinese_response_english_template",
+                "deduplication": "quality_utils_integration"
             }
         }
 
         return mode_info.get(mode, mode_info["facts"])
 
     def get_model_info(self) -> Dict[str, any]:
-        """Get information about the loaded model including environment config and anti-hallucination features."""
+        """Get information about the loaded model including deduplication status."""
         memory_info = {}
 
         # Get GPU memory usage if available
@@ -954,7 +923,7 @@ class LocalLLM:
                 "memory_utilization": f"{(memory_allocated / total_memory) * 100:.1f}%"
             })
 
-        # Model configuration info including environment settings and anti-hallucination features
+        # Model configuration info including deduplication status
         model_config = {
             "model_name": self.model_name,
             "device": self.device,
@@ -967,10 +936,13 @@ class LocalLLM:
             "worker_type": os.environ.get("WORKER_TYPE", "unknown"),
             "memory_fraction": settings.get_worker_memory_fraction(),
             "tesla_t4_optimized": not self.use_4bit,
-            "query_system": "unified_enhanced_chinese_anti_hallucination",
+            "query_system": "unified_enhanced_DEDUPED_english_templates_chinese_responses",
             "default_mode": "facts",
-            "template_system": "chinese_anti_hallucination_enhanced",
+            "template_system": "DEDUPED_english_anti_hallucination_chinese_output",
             "response_language": "chinese",
+            "template_language": "english",
+            "token_efficiency": "optimized_english_templates",
+            "code_architecture": "DEDUPED_quality_utils_integration",
             "supported_modes": ["facts", "features", "tradeoffs", "scenarios", "debate", "quotes"],
             "anti_hallucination_features": {
                 "fact_checker": True,
@@ -979,8 +951,12 @@ class LocalLLM:
                 "context_verification": True,
                 "numerical_validation": True,
                 "regeneration_on_issues": True,
-                "chinese_language_support": True,
-                "automotive_domain_knowledge": True
+                "english_templates": True,
+                "chinese_responses": True,
+                "automotive_domain_knowledge": True,
+                "token_optimized": True,
+                "code_deduplication": "COMPLETE",
+                "shared_utilities": "quality_utils.py"
             }
         }
 

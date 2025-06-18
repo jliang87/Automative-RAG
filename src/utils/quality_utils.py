@@ -114,6 +114,7 @@ def extract_automotive_key_phrases(text: str) -> List[str]:
     """
     Extract automotive-specific key phrases for confidence analysis.
     Used primarily by LLM confidence scoring.
+    FIXED: Better error handling with Chinese messages.
     """
     try:
         # Extract numbers with automotive units as key phrases
@@ -154,7 +155,7 @@ def extract_automotive_key_phrases(text: str) -> List[str]:
         return number_phrases + technical_terms
 
     except Exception as e:
-        logger.warning(f"Error extracting automotive key phrases: {e}")
+        logger.warning(f"汽车关键词提取错误: {e}")  # FIXED: Chinese error message
         return []
 
 
@@ -162,6 +163,7 @@ def check_acceleration_claims(text: str) -> List[str]:
     """
     Check for unrealistic acceleration claims in Chinese text.
     Used by LLM fact checker.
+    ALREADY OPTIMIZED: Uses Chinese patterns and warning messages.
     """
     warnings = []
 
@@ -198,6 +200,7 @@ def check_numerical_specs_realistic(text: str) -> List[str]:
     """
     Check various numerical specifications for realistic ranges in Chinese text.
     Used by LLM fact checker.
+    ALREADY OPTIMIZED: Uses Chinese patterns and warning messages.
     """
     warnings = []
 
