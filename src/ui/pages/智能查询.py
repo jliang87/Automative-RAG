@@ -271,9 +271,6 @@ def display_quotes_result(answer: str):
 st.title("🧠 汽车智能查询系统")
 st.markdown("统一查询平台 - 从快速Facts验证到深度专业分析")
 
-# System info banner
-st.info("🔄 **统一查询系统** - 一个平台包含所有查询功能，Facts模式为默认推荐")
-
 # Mode selection
 st.subheader("📋 选择查询模式")
 

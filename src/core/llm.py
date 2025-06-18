@@ -226,7 +226,8 @@ When providing your answer, cite the specific sources (document titles or URLs) 
         """
         Get specialized prompt template for different query modes.
 
-        UNIFIED: Facts mode is the default and replaces normal queries.
+        FIXED: All modes now use the same strict, factual approach as Facts mode.
+        This ensures consistent quality and accuracy across all query types.
         """
 
         templates = {
@@ -246,113 +247,110 @@ Question:
 
 When providing your answer, cite the specific sources (document titles or URLs) where you found the information.""",
 
-            "features": """你是汽车产品策略专家。请按照以下格式分析是否应该添加某项功能：
+            "features": """You are an automotive product strategy expert assistant.
 
-【实证分析】
-基于提供的文档中关于类似功能或相关技术的信息进行分析。如果文档中没有相关信息，说明"根据提供的文档，未找到相关功能信息"。
+Your task is to analyze whether a specific feature should be added, based strictly on the provided context.
 
-【策略推理】
-基于产品思维和用户需求，分析这个功能的潜在价值：
-- 用户受益分析：谁会从这个功能中受益？
-- 技术可行性：实现难度和技术要求
-- 市场竞争优势：相比竞品的差异化价值
-- 成本效益评估：投入产出比分析
+Use ONLY the following context to answer the question. If the context doesn't contain relevant information about the feature, say you don't know and suggest what additional information might be needed.
 
-提供的文档内容：
+Analyze the feature request in two sections:
+【实证分析】 - Evidence-based analysis from the provided documents
+【策略推理】 - Strategic reasoning based on the evidence found
+
+Be factual and cite specific sources. Do not make assumptions beyond what the context provides.
+
+Context:
 {context}
 
-用户询问的功能：
+Feature Question:
 {question}
 
-请提供平衡、专业的评估意见。""",
+When providing your analysis, cite the specific sources (document titles or URLs) where you found the information.""",
 
-            "tradeoffs": """你是汽车设计决策分析师。请按照以下格式分析设计选择的利弊：
+            "tradeoffs": """You are an automotive design decision analyst.
 
-【文档支撑】
-基于提供文档中的相关信息和数据进行分析。如果文档中缺少信息，明确说明。
+Your task is to analyze the pros and cons of design choices based strictly on the provided context.
 
-【利弊分析】
-**优点：**
-- [基于文档的优点]
-- [基于行业经验推理的优点]
+Use ONLY the following context to answer the question. If the context doesn't contain sufficient information for comparison, say you don't know and suggest what additional information might be needed.
 
-**缺点：**
-- [基于文档的缺点]
-- [基于行业经验推理的缺点]
+Analyze in two sections:
+【文档支撑】 - Evidence from the provided documents  
+【利弊分析】 - Pros and cons analysis based on the evidence
 
-**总结建议：**
-综合评估和具体建议
+Be objective and cite specific sources. Do not speculate beyond what the context provides.
 
-提供的文档内容：
+Context:
 {context}
 
-设计决策问题：
+Design Decision Question:
 {question}
 
-请确保分析客观、全面，区分事实和推理。""",
+When providing your analysis, cite the specific sources (document titles or URLs) where you found the information.""",
 
-            "scenarios": """你是用户体验分析专家。请按照以下格式分析功能在不同场景下的表现：
+            "scenarios": """You are an automotive user experience analyst.
 
-【文档场景】
-提取文档中提到的使用场景、用户反馈和实际应用案例。
+Your task is to analyze how features perform in real-world scenarios based strictly on the provided context.
 
-【场景推理】
-基于产品思维和用户同理心，分析在以下维度的表现：
-- 目标用户群：谁会最需要这个功能？
-- 使用时机：什么时候这个功能最有价值？
-- 最佳条件：在什么条件下效果最好？
-- 潜在问题：可能遇到的限制和挑战
-- 改进建议：如何优化用户体验
+Use ONLY the following context to answer the question. If the context doesn't contain relevant scenario information, say you don't know and suggest what additional information might be needed.
 
-提供的文档内容：
+Analyze in two sections:
+【文档场景】 - Scenarios mentioned in the provided documents
+【场景推理】 - Scenario analysis based on the evidence found
+
+Be specific and cite sources. Do not create scenarios not mentioned in the context.
+
+Context:
 {context}
 
-分析主题：
+Scenario Question:
 {question}
 
-请提供具体、实用的场景分析，重点关注用户实际需求。""",
+When providing your analysis, cite the specific sources (document titles or URLs) where you found the information.""",
 
-            "debate": """你是汽车行业圆桌讨论主持人。请模拟以下三个角色对这个问题的不同观点：
+            "debate": """You are an automotive industry roundtable moderator.
 
-**👔 产品经理观点：**
-从商业价值、市场需求、用户体验和产品策略角度分析
+Your task is to present different professional perspectives based strictly on the provided context.
 
-**🔧 工程师观点：**
-从技术实现难度、成本控制、系统集成和可靠性角度分析
+Use ONLY the following context to answer the question. If the context doesn't contain enough information for multi-perspective analysis, say you don't know and suggest what additional information might be needed.
 
-**👥 用户代表观点：**
-从实际使用需求、日常体验、价格敏感度和功能实用性角度分析
+Present viewpoints from:
+**👔 Product Manager Perspective:** Based on evidence in the context
+**🔧 Engineer Perspective:** Based on technical information in the context  
+**👥 User Representative Perspective:** Based on user feedback in the context
 
-**📋 讨论总结：**
-- 共同观点：三方都认同的点
-- 主要分歧：存在不同看法的地方
-- 平衡建议：综合考虑的解决方案
+**📋 Discussion Summary:** Synthesize only what can be supported by the context
 
-提供的文档内容：
+Be factual and cite specific sources for each perspective.
+
+Context:
 {context}
 
-讨论话题：
+Discussion Topic:
 {question}
 
-请让每个角色基于各自专业背景提出有深度的观点。""",
+When providing perspectives, cite the specific sources (document titles or URLs) where you found the information.""",
 
-            "quotes": """你是汽车市场研究分析师。请从提供的文档中提取与查询主题相关的用户原始评论和反馈：
+            "quotes": """You are an automotive market research analyst.
 
-请严格按以下格式提供用户评论，只使用文档中的真实内容：
+Your task is to extract actual user quotes and feedback from the provided context.
 
-【来源1】："这里是文档中的原始用户评论或反馈..."
-【来源2】："这里是另一条文档中的原始评论..."
-【来源3】："这里是第三条相关的用户反馈..."
+Use ONLY the following context to find user comments. If the context doesn't contain user quotes or feedback, say you don't know and suggest what additional information might be needed.
 
-如果文档中没有找到相关的用户评论，请明确说明："根据提供的文档，未找到相关的用户评论或反馈。"
+Extract quotes in this format:
+【来源1】："Exact quote from the document..."
+【来源2】："Another exact quote from the document..."
 
-提供的文档内容：
+If no relevant user quotes are found, state: "根据提供的文档，未找到相关的用户评论或反馈。"
+
+CRITICAL: Only extract quotes that actually exist in the provided context. Do not create or paraphrase content.
+
+Context:
 {context}
 
-查询主题：
+Quote Topic:
 {question}
 
-重要：只提取真实存在于文档中的用户评论，不要编造或推测内容。"""
+When providing quotes, cite the specific sources (document titles or URLs) where you found them."""
         }
 
         return templates.get(mode, templates["facts"])
@@ -367,7 +365,7 @@ When providing your answer, cite the specific sources (document titles or URLs) 
         """
         UNIFIED: Answer a query using a specific mode template.
 
-        Facts mode is the default and replaces old normal queries.
+        FIXED: All modes now use the same proven approach as Facts mode.
 
         Args:
             query: The user's query
@@ -383,14 +381,24 @@ When providing your answer, cite the specific sources (document titles or URLs) 
             logger.warning(f"Invalid query mode '{query_mode}', using facts mode")
             query_mode = "facts"
 
-        # CRITICAL FIX: For Facts mode, use the ORIGINAL working logic
-        if query_mode == "facts":
-            return self._answer_facts_mode_original(query, documents, metadata_filter)
+        # FIXED: All modes now use the same proven generation approach
+        return self._answer_with_proven_approach(query, documents, query_mode, metadata_filter)
 
-        # For other modes, use the enhanced templates
+    def _answer_with_proven_approach(
+            self,
+            query: str,
+            documents: List[Tuple[Document, float]],
+            query_mode: str,
+            metadata_filter: Optional[Dict[str, Union[str, List[str], int, List[int]]]] = None,
+    ) -> str:
+        """
+        FIXED: Use the proven working approach for ALL modes.
+        This ensures consistent quality and performance across all query types.
+        """
+        # Get the appropriate template for this mode
         template = self.get_prompt_template_for_mode(query_mode)
 
-        # Format documents into context
+        # Format documents into context using the same proven method
         context = _format_documents_for_context(documents)
 
         # Create prompt using the mode-specific template
@@ -399,28 +407,22 @@ When providing your answer, cite the specific sources (document titles or URLs) 
             question=query
         )
 
-        # Generate answer using environment-configured model
+        # Generate answer using the SAME proven parameters as Facts mode
         start_time = time.time()
 
         try:
-            # Adjust max tokens based on mode complexity
-            max_tokens = self.max_tokens
-            if query_mode in ["debate", "scenarios", "tradeoffs"]:
-                max_tokens = self.max_tokens * 2  # More tokens for complex modes
-            elif query_mode == "facts":
-                max_tokens = int(self.max_tokens * 0.8)  # Slightly fewer tokens for direct facts
-
+            # Use consistent generation parameters (same as the working Facts mode)
             results = self.pipe(
                 prompt,
                 num_return_sequences=1,
                 do_sample=True,
-                temperature=self.temperature,
+                temperature=self.temperature,  # Use the proven temperature
                 pad_token_id=self.tokenizer.eos_token_id,
-                max_new_tokens=max_tokens
+                max_new_tokens=self.max_tokens  # Use consistent token count
             )
 
             generation_time = time.time() - start_time
-            print(f"Unified mode '{query_mode}' answer generated in {generation_time:.2f} seconds")
+            print(f"Mode '{query_mode}' answer generated in {generation_time:.2f} seconds")
 
             answer = results[0]["generated_text"]
             return answer
