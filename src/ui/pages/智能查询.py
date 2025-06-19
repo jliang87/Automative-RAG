@@ -291,6 +291,24 @@ def display_quotes_result(answer: str):
         st.markdown(answer)
 
 
+def display_enhanced_sources(result: Dict[str, Any], in_expander: bool = False):
+    """Display sources with enhanced validation and unified indicators."""
+
+    documents = result.get("documents", [])
+    if not documents:
+        return
+
+    st.markdown("---")
+    st.subheader(f"📚 参考来源 ({len(documents)} 个)")
+
+    # Only create expander if we're not already inside one
+    if not in_expander:
+        with st.expander("查看所有来源", expanded=False):
+            _render_sources_content(documents)
+    else:
+        _render_sources_content(documents)
+
+
 def _render_sources_content(documents):
     """Render the actual sources content - extracted to avoid nested expanders."""
     for i, doc in enumerate(documents):
@@ -340,36 +358,29 @@ def _render_sources_content(documents):
 
         # Content preview - Use text_area directly instead of nested expander
         if doc.get("content"):
-            if st.button(f"查看来源 {i + 1} 内容片段", key=f"show_content_{i}"):
-                st.session_state[f"show_content_{i}"] = not st.session_state.get(f"show_content_{i}", False)
+            # Use separate keys for button and session state
+            button_key = f"btn_show_content_{i}"
+            state_key = f"content_visible_{i}"
 
-            if st.session_state.get(f"show_content_{i}", False):
+            # Check if button was clicked
+            if st.button(f"查看来源 {i + 1} 内容片段", key=button_key):
+                # Toggle the visibility state
+                current_state = st.session_state.get(state_key, False)
+                st.session_state[state_key] = not current_state
+                st.rerun()
+
+            # Show content if state is True
+            if st.session_state.get(state_key, False):
                 st.text_area(
                     f"来源 {i + 1} 内容预览",
                     doc['content'][:300] + "..." if len(doc['content']) > 300 else doc['content'],
                     height=100,
                     disabled=True,
-                    key=f"content_{i}"
+                    key=f"content_display_{i}"
                 )
 
         st.markdown("---")
-
-def display_enhanced_sources(result: Dict[str, Any], in_expander: bool = False):
-    """Display sources with enhanced validation and unified indicators."""
-
-    documents = result.get("documents", [])
-    if not documents:
-        return
-
-    st.markdown("---")
-    st.subheader(f"📚 参考来源 ({len(documents)} 个)")
-
-    # Only create expander if we're not already inside one
-    if not in_expander:
-        with st.expander("查看所有来源", expanded=False):
-            _render_sources_content(documents)
-    else:
-        _render_sources_content(documents)
+        
 
 # Main interface
 st.title("🧠 智能查询")
