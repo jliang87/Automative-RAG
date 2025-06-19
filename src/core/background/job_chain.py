@@ -5,222 +5,164 @@ from typing import List, Tuple, Dict, Optional, Any
 from langchain_core.documents import Document
 from enum import Enum
 import dramatiq
+import numpy as np
 
 from .job_tracker import job_tracker, JobStatus
 from .common import get_redis_client
-from src.utils.quality_utils import extract_key_terms, has_numerical_data, has_garbled_content
-from src.core.mode_config import mode_config, QueryMode, trim_documents_by_tokens, estimate_token_count
+from src.core.mode_config import mode_config, QueryMode, estimate_token_count
 from src.config.settings import settings
 
 logger = logging.getLogger(__name__)
 
 
-def adaptive_quality_filter(
+def minimal_effective_filter(
         results: List[Tuple[Document, float]],
-        query: str,
-        query_mode: str,
+        token_budget: int,
         debug_mode: bool = False
 ) -> List[Tuple[Document, float]]:
     """
-    Adaptive quality filter that adjusts strictness based on query mode.
+    MINIMAL effective filtering - ChatGPT's recommended approach.
+
+    NO REDUNDANT SIMILARITY FILTERING: Vector store already sorted by similarity!
+    FOCUS: Only filter obviously bad content + token management + diversity.
 
     Args:
-        results: List of (document, similarity_score) tuples
-        query: Original query string
-        query_mode: Query mode (facts, features, scenarios, etc.)
-        debug_mode: Whether to log excluded documents
+        results: List of (document, similarity_score) tuples (already sorted by vector store)
+        token_budget: Maximum tokens for context
+        debug_mode: Whether to log filtering details
 
     Returns:
-        Filtered list of documents with quality scores
+        Clean documents ready for LLM within token budget
     """
-    # Define strict vs soft filtering modes
-    strict_modes = {"facts", "quotes"}
-    soft_modes = {"features", "scenarios", "tradeoffs", "debate"}
+    if not results:
+        return results
 
-    # Set quality thresholds based on mode
-    if query_mode in strict_modes:
-        required_quality_score = 3  # Strict for factual queries
-        logger.info(f"Using STRICT filtering for '{query_mode}' mode")
-    elif query_mode in soft_modes:
-        required_quality_score = 2  # More lenient for reasoning queries
-        logger.info(f"Using SOFT filtering for '{query_mode}' mode")
-    else:
-        required_quality_score = 2  # Default to soft
-        logger.info(f"Using default SOFT filtering for '{query_mode}' mode")
+    from src.utils.quality_utils import has_garbled_content
 
-    filtered_results = []
-    excluded_docs = []
-
-    # Extract key terms from query for relevance checking
-    query_terms = extract_key_terms(query)
+    # STEP 1: Only filter OBVIOUSLY bad content (trust vector store ranking)
+    valid_docs = []
+    excluded_count = 0
 
     for doc, similarity_score in results:
-        content = doc.page_content.lower()
-        metadata = doc.metadata
+        content = doc.page_content.strip()
 
-        # Initialize quality score
-        quality_score = 0
-        quality_reasons = []
+        # Only filter truly problematic content
+        if (len(content) > 30 and  # Not too short
+                len(content) < 5000 and  # Not too long
+                content and  # Not empty
+                not has_garbled_content(content)):  # Not garbled OCR
 
-        # 1. Content length check (more flexible ranges)
-        content_length = len(content)
-        if query_mode in strict_modes:
-            # Stricter for facts/quotes
-            if 30 <= content_length <= 2000:
-                quality_score += 1
-                quality_reasons.append("good_length")
+            valid_docs.append((doc, similarity_score))
         else:
-            # More lenient for reasoning modes
-            if 20 <= content_length <= 3000:
-                quality_score += 1
-                quality_reasons.append("acceptable_length")
+            excluded_count += 1
 
-        # 2. IMPROVED: Semantic similarity vs keyword matching
-        # If semantic score is high, let it through regardless of keyword matches
-        if similarity_score > 0.75:
-            quality_score += 2
-            quality_reasons.append("high_semantic_similarity")
-        elif similarity_score > 0.6:
-            quality_score += 1
-            quality_reasons.append("good_semantic_similarity")
-        else:
-            # Fallback to keyword matching for lower semantic scores
-            term_matches = sum(1 for term in query_terms if term in content)
-            if term_matches > 0:
-                quality_score += 1
-                quality_reasons.append(f"keyword_matches_{term_matches}")
+    if debug_mode:
+        logger.info(f"Minimal filtering: {len(results)} -> {len(valid_docs)} docs")
+        logger.info(f"Excluded obviously bad content: {excluded_count}")
 
-        # 3. Source credibility (slightly less strict)
-        source_type = metadata.get("source", "")
-        if source_type in ["youtube", "bilibili"]:
-            quality_score += 1
-            quality_reasons.append("video_source")
-        elif source_type == "pdf":
-            quality_score += 0.5  # PDFs are okay but not as preferred
-            quality_reasons.append("pdf_source")
+    # STEP 2: Apply diversity filter (prevent source domination)
+    diverse_docs = apply_document_diversity(valid_docs, max_per_source=3)
 
-        # 4. Metadata completeness (more forgiving)
-        metadata_score = 0
-        if metadata.get("title"):
-            metadata_score += 0.5
-        if metadata.get("author"):
-            metadata_score += 0.5
-        if metadata_score >= 0.5:  # At least title OR author
-            quality_score += 1
-            quality_reasons.append("has_metadata")
+    # STEP 3: Apply token budget management
+    final_docs = apply_token_budget_management(diverse_docs, token_budget)
 
-        # 5. Content coherence (uses shared utility)
-        if not has_garbled_content(content):
-            quality_score += 1
-            quality_reasons.append("coherent_content")
+    if debug_mode:
+        logger.info(f"Final result: {len(final_docs)} documents within token budget")
 
-        # 6. Numerical data presence (uses shared utility)
-        if query_mode == "facts":
-            if has_numerical_data(content):
-                quality_score += 1
-                quality_reasons.append("has_numerical_data")
-        elif query_mode in ["scenarios", "debate"]:
-            # For reasoning modes, don't penalize lack of numerical data
-            # but give bonus if present
-            if has_numerical_data(content):
-                quality_score += 0.5
-                quality_reasons.append("bonus_numerical_data")
-
-        # Decision: keep or filter
-        if quality_score >= required_quality_score:
-            # Store quality info with the document for potential later use
-            enhanced_metadata = metadata.copy()
-            enhanced_metadata["quality_score"] = quality_score
-            enhanced_metadata["quality_reasons"] = quality_reasons
-
-            enhanced_doc = Document(
-                page_content=doc.page_content,
-                metadata=enhanced_metadata
-            )
-
-            filtered_results.append((enhanced_doc, similarity_score))
-        else:
-            excluded_docs.append({
-                "title": metadata.get("title", "No title"),
-                "similarity_score": similarity_score,
-                "quality_score": quality_score,
-                "quality_reasons": quality_reasons,
-                "content_preview": content[:100] + "..." if len(content) > 100 else content
-            })
-
-    # Log filtering results
-    logger.info(f"Adaptive filtering for '{query_mode}': {len(results)} -> {len(filtered_results)} documents")
-    logger.info(f"Required quality score: {required_quality_score}")
-
-    # Debug logging of excluded docs
-    if debug_mode and excluded_docs:
-        logger.debug(f"Excluded {len(excluded_docs)} documents:")
-        for i, doc_info in enumerate(excluded_docs[:5]):  # Show first 5
-            logger.debug(f"  {i + 1}. {doc_info['title']} (sim: {doc_info['similarity_score']:.3f}, "
-                         f"quality: {doc_info['quality_score']:.1f}, reasons: {doc_info['quality_reasons']})")
-
-    # Sort by similarity score (keep original ranking)
-    filtered_results.sort(key=lambda x: x[1], reverse=True)
-
-    return filtered_results
+    return final_docs
 
 
-def reranker_confidence_backfill(
-        filtered_results: List[Tuple[Document, float]],
-        original_results: List[Tuple[Document, float]],
-        target_count: int,
-        query_mode: str
+def apply_document_diversity(
+        documents: List[Tuple[Document, float]],
+        max_per_source: int = 3
 ) -> List[Tuple[Document, float]]:
     """
-    Allow reranker to backfill high-confidence documents that were filtered out.
+    Apply basic source diversity to prevent domination by one source.
 
-    This gives the semantic reranker a "second vote" on borderline documents.
+    Args:
+        documents: List of (document, similarity_score) tuples
+        max_per_source: Maximum documents per source
+
+    Returns:
+        Diversified list of documents
     """
-    if len(filtered_results) >= target_count:
-        return filtered_results[:target_count]
+    if not documents:
+        return documents
 
-    # Find documents that were filtered out
-    filtered_ids = {doc.metadata.get("id", "") for doc, _ in filtered_results}
-    excluded_docs = [
-        (doc, score) for doc, score in original_results
-        if doc.metadata.get("id", "") not in filtered_ids
-    ]
+    source_counts = {}
+    diversified_docs = []
 
-    if not excluded_docs:
-        return filtered_results
+    # Keep order (highest similarity first)
+    for doc, score in documents:
+        source_id = doc.metadata.get("source_id", "unknown")
 
-    # For reasoning modes, be more willing to backfill
-    confidence_threshold = 0.8 if query_mode in ["facts", "quotes"] else 0.7
+        # Check if we've hit the limit for this source
+        if source_counts.get(source_id, 0) < max_per_source:
+            diversified_docs.append((doc, score))
+            source_counts[source_id] = source_counts.get(source_id, 0) + 1
 
-    # Add back high-confidence excluded documents
-    backfilled = []
-    needed = target_count - len(filtered_results)
+    logger.info(f"Diversity filtering: {len(documents)} -> {len(diversified_docs)} documents")
+    logger.info(f"Sources: {len(source_counts)} unique sources")
+    return diversified_docs
 
-    for doc, score in excluded_docs[:needed * 2]:  # Consider 2x what we need
-        if score > confidence_threshold:
-            # Mark as backfilled
-            enhanced_metadata = doc.metadata.copy()
-            enhanced_metadata["backfilled"] = True
-            enhanced_metadata["backfill_reason"] = f"high_confidence_{score:.3f}"
 
-            enhanced_doc = Document(
-                page_content=doc.page_content,
-                metadata=enhanced_metadata
-            )
+def apply_token_budget_management(
+        documents: List[Tuple[Document, float]],
+        token_budget: int
+) -> List[Tuple[Document, float]]:
+    """
+    Apply token budget limits while preserving highest similarity documents.
 
-            backfilled.append((enhanced_doc, score))
+    Args:
+        documents: List of (document, similarity_score) tuples (sorted by similarity)
+        token_budget: Maximum tokens allowed
 
-        if len(backfilled) >= needed:
+    Returns:
+        Documents within token budget
+    """
+    if not documents:
+        return documents
+
+    selected_docs = []
+    total_tokens = 0
+
+    for doc, score in documents:
+        # Estimate tokens for this document
+        content_tokens = estimate_token_count(doc.page_content)
+
+        # Check if adding this doc would exceed budget
+        if total_tokens + content_tokens > token_budget and selected_docs:
+            break  # Stop if we'd exceed budget (but keep at least one doc)
+
+        # Add the document
+        selected_docs.append((doc, score))
+        total_tokens += content_tokens
+
+        # Safety limit
+        if len(selected_docs) >= 12:  # Reasonable upper limit
             break
 
-    if backfilled:
-        logger.info(f"Backfilled {len(backfilled)} high-confidence documents for '{query_mode}' mode")
+    logger.info(f"Token budget: {total_tokens}/{token_budget} tokens used")
 
-    # Combine and sort
-    combined_results = filtered_results + backfilled
-    combined_results.sort(key=lambda x: x[1], reverse=True)
+    return selected_docs
 
-    return combined_results[:target_count]
+
+def apply_token_budget_and_diversity(
+        documents: List[Tuple[Document, float]],
+        token_budget: int,
+        max_per_source: int = 3
+) -> List[Tuple[Document, float]]:
+    """
+    DEPRECATED: Use separate functions for clarity.
+
+    This function is kept for backwards compatibility but internally
+    calls the new separated functions.
+    """
+    # Apply diversity first
+    diverse_docs = apply_document_diversity(documents, max_per_source)
+
+    # Then apply token budget
+    return apply_token_budget_management(diverse_docs, token_budget)
 
 
 class JobType(Enum):
@@ -242,24 +184,23 @@ class JobChain:
         self.redis = get_redis_client()
 
         # Define job workflows - each job type has a sequence of tasks
-        # UPDATED: Ensure correct queue routing for dedicated workers
         self.workflows = {
             JobType.VIDEO_PROCESSING: [
-                ("download_video", "cpu_tasks"),  # CPU worker
-                ("transcribe_video", "transcription_tasks"),  # Whisper worker
-                ("generate_embeddings", "embedding_tasks")  # Embedding worker
+                ("download_video", "cpu_tasks"),
+                ("transcribe_video", "transcription_tasks"),
+                ("generate_embeddings", "embedding_tasks")
             ],
             JobType.PDF_PROCESSING: [
-                ("process_pdf", "cpu_tasks"),  # CPU worker
-                ("generate_embeddings", "embedding_tasks")  # Embedding worker
+                ("process_pdf", "cpu_tasks"),
+                ("generate_embeddings", "embedding_tasks")
             ],
             JobType.TEXT_PROCESSING: [
-                ("process_text", "cpu_tasks"),  # CPU worker
-                ("generate_embeddings", "embedding_tasks")  # Embedding worker
+                ("process_text", "cpu_tasks"),
+                ("generate_embeddings", "embedding_tasks")
             ],
             JobType.LLM_INFERENCE: [
-                ("retrieve_documents", "embedding_tasks"),  # Embedding worker
-                ("llm_inference", "inference_tasks")  # Inference worker
+                ("retrieve_documents", "embedding_tasks"),
+                ("llm_inference", "inference_tasks")
             ]
         }
 
@@ -305,7 +246,7 @@ class JobChain:
         self._execute_next_task(job_id)
 
     def _execute_next_task(self, job_id: str) -> None:
-        """Execute the next task in the chain with Unicode handling."""
+        """Execute the next task in the chain."""
         chain_state = self._get_chain_state(job_id)
         if not chain_state:
             logger.error(f"No chain state found for job {job_id}")
@@ -337,14 +278,14 @@ class JobChain:
         )
 
         # Update progress
-        progress = ((current_step + 0.5) / len(workflow)) * 100  # 0.5 for "in progress"
+        progress = ((current_step + 0.5) / len(workflow)) * 100
         job_tracker.update_job_progress(job_id, progress, f"Executing {task_name}")
 
         # Record step start time
         chain_state["step_timings"][task_name] = {"started_at": time.time()}
         self._save_chain_state(job_id, chain_state)
 
-        # CRITICAL FIX: Get the complete current data from job tracker
+        # Get the complete current data from job tracker
         current_job = job_tracker.get_job(job_id, include_progress=False)
         current_job_result = current_job.get("result", {}) if current_job else {}
 
@@ -357,8 +298,8 @@ class JobChain:
 
         # Merge chain data with current job data
         complete_data = {}
-        complete_data.update(chain_state["data"])  # Start with chain data
-        complete_data.update(current_job_result)  # Merge with current job result
+        complete_data.update(chain_state["data"])
+        complete_data.update(current_job_result)
 
         logger.info(f"Executing {task_name} with data keys: {list(complete_data.keys())}")
 
@@ -391,20 +332,18 @@ class JobChain:
             elif task_name == "generate_embeddings":
                 generate_embeddings_task.send(job_id, data.get("documents"))
             elif task_name == "retrieve_documents":
-                # Pass query mode to retrieval task
                 retrieve_documents_task.send(
                     job_id,
                     data.get("query"),
                     data.get("metadata_filter"),
-                    query_mode  # Pass mode information
+                    query_mode
                 )
             elif task_name == "llm_inference":
-                # Pass query mode to inference task
                 llm_inference_task.send(
                     job_id,
                     data.get("query"),
                     data.get("documents"),
-                    query_mode  # Pass mode information
+                    query_mode
                 )
             else:
                 logger.error(f"Unknown task: {task_name}")
@@ -431,7 +370,7 @@ class JobChain:
         job_tracker.update_job_progress(job_id, None, f"Waiting for {queue_name} to become available")
 
     def task_completed(self, job_id: str, result: Dict[str, Any]) -> None:
-        """Called when a task completes successfully with Unicode preservation."""
+        """Called when a task completes successfully."""
         logger.info(f"Task completed for job {job_id}, triggering next task")
 
         # Update chain state
@@ -468,10 +407,10 @@ class JobChain:
             except:
                 existing_job_result = {}
 
-        # CRITICAL: Merge task result with existing job data
+        # Merge task result with existing job data
         combined_result = {}
-        combined_result.update(existing_job_result)  # Preserve existing data first
-        combined_result.update(result)  # Add new task result
+        combined_result.update(existing_job_result)
+        combined_result.update(result)
 
         # Update chain state data with the combined result
         chain_state["data"].update(combined_result)
@@ -484,7 +423,7 @@ class JobChain:
         job_tracker.update_job_progress(job_id, progress,
                                         f"Completed step {chain_state['current_step']}/{len(chain_state['workflow'])}")
 
-        # Update job tracker with the combined result (now with cleaned Unicode)
+        # Update job tracker with the combined result
         job_tracker.update_job_status(
             job_id,
             "processing",
@@ -574,8 +513,8 @@ class JobChain:
         # Preserve ALL existing result data
         if existing_result and isinstance(existing_result, dict):
             final_result = {}
-            final_result.update(existing_result)  # Preserve all existing data first
-            final_result.update(completion_info)  # Add completion info
+            final_result.update(existing_result)
+            final_result.update(completion_info)
 
             logger.info(f"Preserving all job data for {job_id} with keys: {list(existing_result.keys())}")
         else:
@@ -679,7 +618,6 @@ class JobChain:
 
     def _save_chain_state(self, job_id: str, chain_state: Dict[str, Any]) -> None:
         """Save chain state with proper UTF-8 encoding."""
-        # CRITICAL: Use ensure_ascii=False for Chinese characters
         state_json = json.dumps(chain_state, ensure_ascii=False)
         self.redis.set(f"job_chain:{job_id}", state_json, ex=86400)
 
@@ -700,7 +638,7 @@ job_chain = JobChain()
 
 
 # ==============================================================================
-# ENHANCED TASK DEFINITIONS WITH MODE-SPECIFIC PARAMETERS AND TOKEN MANAGEMENT
+# SIMPLIFIED TASK DEFINITIONS - STREAMLINED FOR EFFECTIVENESS
 # ==============================================================================
 
 @dramatiq.actor(queue_name="cpu_tasks", store_results=True, max_retries=2)
@@ -716,10 +654,9 @@ def download_video_task(job_id: str, url: str, metadata: Optional[Dict] = None):
         # Extract audio
         media_path = transcriber.extract_audio(url)
 
-        # Get video metadata - no cleaning needed, parameters are already clean
+        # Get video metadata
         try:
             video_metadata = transcriber.get_video_metadata(url)
-
             logger.info(f"Successfully retrieved video metadata for job {job_id}")
             logger.info(f"Title: {video_metadata.get('title', 'NO_TITLE')}")
             logger.info(f"Author: {video_metadata.get('author', 'NO_AUTHOR')}")
@@ -895,8 +832,6 @@ def transcribe_video_task(job_id: str, media_path: str):
                 "source_id": video_id,
                 "language": info.language,
                 "total_chunks": len(chunks),
-
-                # Use video metadata (already clean from global fix)
                 "title": title,
                 "author": author,
                 "url": original_url,
@@ -905,8 +840,6 @@ def transcribe_video_task(job_id: str, media_path: str):
                 "description": video_metadata.get("description", ""),
                 "length": video_metadata.get("length", 0),
                 "views": video_metadata.get("views", 0),
-
-                # Add custom metadata from job if any
                 "custom_metadata": job_metadata.get("custom_metadata", {})
             }
 
@@ -920,7 +853,7 @@ def transcribe_video_task(job_id: str, media_path: str):
 
         # Create transcription result while preserving ALL existing data
         transcription_result = {}
-        transcription_result.update(existing_result)  # Preserve everything
+        transcription_result.update(existing_result)
 
         # Add new transcription data
         transcription_result.update({
@@ -961,7 +894,7 @@ def process_pdf_task(job_id: str, file_path: str, metadata: Optional[Dict] = Non
             ocr_languages=settings.ocr_languages
         )
 
-        # Process PDF (metadata is already clean from global fix)
+        # Process PDF
         documents = pdf_loader.process_pdf(
             file_path=file_path,
             custom_metadata=metadata,
@@ -1011,7 +944,7 @@ def process_text_task(job_id: str, text: str, metadata: Optional[Dict] = None):
         from langchain_text_splitters import RecursiveCharacterTextSplitter
         from langchain_core.documents import Document
 
-        # Validate text input (already clean from global fix)
+        # Validate text input
         if not text or not text.strip():
             error_msg = f"Text input is empty for job {job_id}"
             logger.error(error_msg)
@@ -1036,14 +969,14 @@ def process_text_task(job_id: str, text: str, metadata: Optional[Dict] = None):
             else:
                 extracted_metadata = {}
 
-            # Combine extracted metadata with provided metadata (both already clean)
+            # Combine extracted metadata with provided metadata
             doc_metadata = {
                 "chunk_id": i,
                 "source": "manual",
                 "source_id": job_id,
                 "total_chunks": len(chunks),
-                **extracted_metadata,  # Automotive metadata from text analysis
-                **(metadata or {})  # User-provided metadata
+                **extracted_metadata,
+                **(metadata or {})
             }
 
             doc = Document(
@@ -1103,7 +1036,7 @@ def generate_embeddings_task(job_id: str, documents: List[Dict]):
             job_chain.task_failed(job_id, error_msg)
             return
 
-        # Convert back to Document objects (data is already clean from global fix)
+        # Convert back to Document objects
         doc_objects = []
         for doc_dict in documents:
             if not doc_dict.get("content") or not doc_dict.get("metadata"):
@@ -1112,7 +1045,6 @@ def generate_embeddings_task(job_id: str, documents: List[Dict]):
                 job_chain.task_failed(job_id, error_msg)
                 return
 
-            # Create document (no cleaning needed - data is already clean)
             doc = Document(
                 page_content=doc_dict["content"],
                 metadata=doc_dict["metadata"]
@@ -1151,28 +1083,21 @@ def generate_embeddings_task(job_id: str, documents: List[Dict]):
             if "id" not in doc.metadata or not doc.metadata["id"]:
                 doc.metadata["id"] = f"doc-{job_id}-{len(doc_objects)}-{int(current_time)}"
 
-        # Check if we're in metadata-only mode
-        if not hasattr(job_tracker, '_metadata_only_mode'):
-            # Add to vector store using preloaded embedding model
-            vector_store = get_vector_store()
-            doc_ids = vector_store.add_documents(doc_objects)
+        # Add to vector store using preloaded embedding model
+        vector_store = get_vector_store()
+        doc_ids = vector_store.add_documents(doc_objects)
 
-            if not doc_ids:
-                error_msg = f"Vector store failed to generate document IDs for job {job_id}"
-                logger.error(error_msg)
-                job_chain.task_failed(job_id, error_msg)
-                return
+        if not doc_ids:
+            error_msg = f"Vector store failed to generate document IDs for job {job_id}"
+            logger.error(error_msg)
+            job_chain.task_failed(job_id, error_msg)
+            return
 
-            logger.info(f"Successfully added {len(doc_ids)} documents to vector store")
-        else:
-            # In metadata-only mode, simulate doc IDs
-            doc_ids = [f"sim-{job_id}-{i}" for i in range(len(doc_objects))]
-            logger.info(
-                f"Simulated embedding generation for job {job_id}: {len(doc_ids)} document IDs (metadata-only mode)")
+        logger.info(f"Successfully added {len(doc_ids)} documents to vector store")
 
         # Create final result while PRESERVING ALL existing data
         final_result = {}
-        final_result.update(existing_result)  # Preserve everything from previous steps
+        final_result.update(existing_result)
 
         # Add the new embedding data
         final_result.update({
@@ -1196,13 +1121,20 @@ def generate_embeddings_task(job_id: str, documents: List[Dict]):
 @dramatiq.actor(queue_name="embedding_tasks", store_results=True, max_retries=2)
 def retrieve_documents_task(job_id: str, query: str, metadata_filter: Optional[Dict] = None, query_mode: str = "facts"):
     """
-    Enhanced document retrieval with mode-specific filtering and token management.
+    Document retrieval with ChatGPT's recommended post-reranking fact validation.
+
+    STRATEGY:
+    1. Trust vector store semantic ranking
+    2. Apply minimal filtering (garbage removal)
+    3. POST-RERANKING: Apply automotive domain fact validation
+    4. Add validation warnings to metadata (don't remove docs)
     """
     try:
         from .models import get_vector_store
+        from src.utils.quality_utils import automotive_fact_check_documents
         import numpy as np
 
-        logger.info(f"Enhanced retrieval for job {job_id} in '{query_mode}' mode: {query}")
+        logger.info(f"Retrieval + automotive fact validation for job {job_id} in '{query_mode}' mode: {query}")
 
         vector_store = get_vector_store()
 
@@ -1213,12 +1145,11 @@ def retrieve_documents_task(job_id: str, query: str, metadata_filter: Optional[D
             logger.warning(f"Invalid query mode '{query_mode}', falling back to facts")
             mode_enum = QueryMode.FACTS
 
-        # Get mode-specific retrieval parameters
+        # Get mode-specific parameters (simplified)
         retrieval_params = mode_config.get_retrieval_params(mode_enum)
+        context_params = mode_config.get_context_params(mode_enum)
 
-        logger.info(f"Mode-specific params: {retrieval_params}")
-
-        # Phase 1: Initial broad retrieval
+        # Phase 1: Initial broad retrieval (trust vector store ranking)
         initial_k = retrieval_params["retrieval_k"]
         results = vector_store.similarity_search_with_score(
             query=query,
@@ -1234,56 +1165,43 @@ def retrieve_documents_task(job_id: str, query: str, metadata_filter: Optional[D
                 "documents": [],
                 "document_count": 0,
                 "retrieval_completed_at": time.time(),
-                "retrieval_method": f"enhanced_mode_specific_{query_mode}",
+                "retrieval_method": f"automotive_validated_{query_mode}",
                 "query_used": query,
-                "query_mode": query_mode,
-                "mode_specific_filtering": True
+                "query_mode": query_mode
             })
             return
 
-        # Phase 2: Apply mode-specific relevance filtering
-        relevance_cutoff = retrieval_params["relevance_cutoff"]
-        filtered_results = []
-
-        for doc, score in results:
-            if not mode_config.should_trim_low_relevance(mode_enum, score):
-                filtered_results.append((doc, score))
-            else:
-                logger.debug(f"Trimmed doc with relevance {score:.3f} < {relevance_cutoff}")
-
-        logger.info(f"Relevance filtering: {len(results)} -> {len(filtered_results)} documents")
-
-        # Phase 3: Apply confidence-based filtering (NEW)
-        confidence_filtered = apply_confidence_based_filtering(filtered_results, query_mode)
-
-        logger.info(f"Confidence filtering: {len(filtered_results)} -> {len(confidence_filtered)} documents")
-
-        # Phase 4: Apply adaptive quality filtering (existing logic)
+        # Phase 2: MINIMAL filtering (trust semantic ranking, remove only garbage)
         debug_mode = getattr(settings, 'debug_mode', False)
-        quality_filtered = adaptive_quality_filter(confidence_filtered, query, query_mode, debug_mode)
+        token_budget = context_params["max_context_tokens"]
 
-        logger.info(f"Quality filtering: {len(confidence_filtered)} -> {len(quality_filtered)} documents")
+        filtered_results = minimal_effective_filter(
+            results,
+            token_budget,
+            debug_mode
+        )
 
-        # Phase 5: Token-aware document trimming
-        token_trimmed = trim_documents_by_tokens(quality_filtered, mode_enum)
+        # Phase 3: POST-RERANKING automotive domain fact validation (ChatGPT's approach)
+        logger.info("Applying automotive domain fact validation...")
+        fact_checked_results = automotive_fact_check_documents(filtered_results)
 
-        logger.info(f"Token trimming: {len(quality_filtered)} -> {len(token_trimmed)} documents")
+        # Count validation results
+        docs_with_warnings = sum(1 for doc, _ in fact_checked_results
+                                 if doc.metadata.get("automotive_warnings"))
 
-        # Phase 6: Apply final diversity filtering
-        final_k = retrieval_params["final_k"]
-        if settings.diversity_enabled:
-            context_params = mode_config.get_context_params(mode_enum)
-            diverse_results = apply_document_diversity(
-                token_trimmed,
-                max_per_source=context_params["docs_per_source"]
-            )
-            logger.info(f"Diversity filtering: {len(token_trimmed)} -> {len(diverse_results)}")
+        logger.info(f"Automotive fact validation: {len(fact_checked_results)} docs processed, "
+                    f"{docs_with_warnings} with warnings")
+
+        # Calculate statistics
+        if fact_checked_results:
+            relevance_scores = [score for _, score in fact_checked_results]
+            avg_relevance_score = sum(relevance_scores) / len(relevance_scores)
         else:
-            diverse_results = token_trimmed[:final_k]
+            avg_relevance_score = 0.0
 
-        # Phase 7: Format results for transfer to inference worker
+        # Format results for transfer to inference worker
         serialized_docs = []
-        for doc, score in diverse_results:
+        for doc, score in fact_checked_results:
             json_safe_score = float(score) if isinstance(score, (np.floating, np.float32, np.float64)) else score
 
             cleaned_metadata = {}
@@ -1294,6 +1212,8 @@ def retrieve_documents_task(job_id: str, query: str, metadata_filter: Optional[D
                     cleaned_metadata[key] = int(value)
                 elif isinstance(value, np.ndarray):
                     cleaned_metadata[key] = value.tolist()
+                elif isinstance(value, list):
+                    cleaned_metadata[key] = value  # Keep lists (warnings, etc.)
                 else:
                     cleaned_metadata[key] = value
 
@@ -1303,46 +1223,178 @@ def retrieve_documents_task(job_id: str, query: str, metadata_filter: Optional[D
                 "relevance_score": json_safe_score
             })
 
-        logger.info(
-            f"Enhanced mode-specific retrieval completed for job {job_id}: {len(diverse_results)} quality documents")
+        logger.info(f"Automotive-validated retrieval completed for job {job_id}: {len(fact_checked_results)} documents")
+        logger.info(f"Average relevance score: {avg_relevance_score:.3f}")
 
-        # Trigger LLM inference with enhanced metadata
+        # Trigger LLM inference with fact-checked documents
         job_chain.task_completed(job_id, {
             "documents": serialized_docs,
             "document_count": len(serialized_docs),
             "retrieval_completed_at": time.time(),
-            "retrieval_method": f"enhanced_mode_specific_{query_mode}",
-            "filtering_pipeline": {
-                "initial_results": len(results),
-                "relevance_filtered": len(filtered_results),
-                "confidence_filtered": len(confidence_filtered),
-                "quality_filtered": len(quality_filtered),
-                "token_trimmed": len(token_trimmed),
-                "final_results": len(diverse_results)
+            "retrieval_method": f"automotive_validated_{query_mode}",
+            "query_mode": query_mode,
+            "avg_relevance_score": avg_relevance_score,
+            "token_budget_used": token_budget,
+            "automotive_validation": {
+                "total_documents": len(fact_checked_results),
+                "documents_with_warnings": docs_with_warnings,
+                "validation_applied": True,
+                "domain_specific": "automotive"
             },
-            "mode_config": {
-                "query_mode": query_mode,
-                "complexity_level": mode_config.get_mode_complexity(mode_enum),
-                "relevance_cutoff": relevance_cutoff,
-                "max_docs": final_k
-            },
-            "enhanced_filtering": True
+            "enhanced_with_fact_checking": True
         })
 
     except Exception as e:
-        logger.error(f"Enhanced document retrieval failed for job {job_id}: {str(e)}")
-        job_chain.task_failed(job_id, f"Enhanced document retrieval failed: {str(e)}")
+        logger.error(f"Automotive-validated retrieval failed for job {job_id}: {str(e)}")
+        job_chain.task_failed(job_id, f"Automotive-validated retrieval failed: {str(e)}")
 
 
-def apply_confidence_based_filtering(documents, query_mode: str) -> list:
+@dramatiq.actor(queue_name="inference_tasks", store_results=True, max_retries=2)
+def llm_inference_task(job_id: str, query: str, documents: List[Dict], query_mode: str = "facts"):
     """
-    NEW: Apply confidence-based filtering to documents.
+    LLM inference with automotive domain fact validation and user trust features.
 
-    This creates a bridge between relevance scores and confidence assessment.
+    STRATEGY (ChatGPT's approach):
+    1. Generate answer with mode-specific parameters
+    2. Apply automotive domain fact validation to final answer
+    3. Add validation warnings as footnotes for user trust
     """
     try:
-        mode_enum = QueryMode(query_mode)
-    except ValueError:
-        mode_enum = QueryMode.FACTS
+        from .models import get_llm_model
+        from langchain_core.documents import Document
+        from src.utils.quality_utils import (
+            automotive_fact_check_answer,
+            format_automotive_warnings_for_user,
+            get_automotive_validation_summary
+        )
 
-    confidence_cutoff = mode_config.get_retrieval_params(mode_enum)["confidence_cutoff"]
+        logger.info(f"LLM inference + automotive validation for job {job_id} in '{query_mode}' mode")
+
+        # Get the preloaded LLM model
+        llm_model = get_llm_model()
+
+        # Convert serialized documents back to Document objects
+        doc_objects = []
+        relevance_scores = []
+
+        for doc_dict in documents:
+            doc = Document(
+                page_content=doc_dict["content"],
+                metadata=doc_dict["metadata"]
+            )
+            doc_objects.append(doc)
+
+            # Extract relevance score
+            relevance_score = doc_dict.get("relevance_score", 0.0)
+            relevance_scores.append(relevance_score)
+
+        # Create documents with scores for LLM processing
+        documents_with_scores = list(zip(doc_objects, relevance_scores))
+
+        # Calculate average relevance for confidence assessment
+        avg_relevance_score = sum(relevance_scores) / len(relevance_scores) if relevance_scores else 0.0
+
+        logger.info(f"Processing {len(documents)} documents with avg relevance: {avg_relevance_score:.3f}")
+
+        # Parse query mode for mode-specific parameters
+        try:
+            mode_enum = QueryMode(query_mode)
+        except ValueError:
+            mode_enum = QueryMode.FACTS
+
+        # Get mode-specific LLM parameters
+        llm_params = mode_config.get_llm_params(mode_enum)
+
+        # Generate answer with mode-specific parameters
+        base_answer = llm_model.answer_query_with_mode_specific_params(
+            query=query,
+            documents=documents_with_scores,
+            query_mode=query_mode,
+            temperature=llm_params["temperature"],
+            max_tokens=llm_params["max_tokens"],
+            top_p=llm_params.get("top_p", 0.85),
+            repetition_penalty=llm_params.get("repetition_penalty", 1.1)
+        )
+
+        # AUTOMOTIVE DOMAIN FACT VALIDATION (ChatGPT's approach)
+        logger.info("Applying automotive domain fact validation to answer...")
+
+        # Validate answer against automotive domain knowledge
+        validation_results = automotive_fact_check_answer(base_answer, doc_objects)
+
+        # Format validation warnings for user display (increases trust)
+        warning_footnotes = format_automotive_warnings_for_user(validation_results)
+
+        # Create final answer with validation footnotes
+        final_answer = base_answer + warning_footnotes
+
+        # Get document validation summary
+        doc_validation_summary = get_automotive_validation_summary(doc_objects)
+
+        # Simple confidence assessment combining relevance and automotive validation
+        automotive_confidence = validation_results.get("automotive_confidence", "unknown")
+        simple_confidence = min(100, avg_relevance_score * 100 +
+                                (20 if automotive_confidence == "high" else
+                                 10 if automotive_confidence == "medium" else 0))
+
+        # Get current job data
+        current_job = job_tracker.get_job(job_id, include_progress=False)
+        existing_result = current_job.get("result", {}) if current_job else {}
+
+        if isinstance(existing_result, str):
+            try:
+                existing_result = json.loads(existing_result)
+            except:
+                existing_result = {}
+
+        # Create enhanced inference result with automotive validation
+        inference_result = {
+            "answer": final_answer,
+            "base_answer": base_answer,  # Answer without validation footnotes
+            "query": query,
+            "query_mode": query_mode,
+            "inference_completed_at": time.time(),
+            "llm_parameters_used": llm_params,
+
+            # Simple confidence metrics
+            "simple_confidence": simple_confidence,
+            "avg_relevance_score": avg_relevance_score,
+            "documents_used": len(documents),
+
+            # AUTOMOTIVE DOMAIN VALIDATION (the key addition)
+            "automotive_validation": {
+                "answer_validation": validation_results,
+                "document_validation_summary": doc_validation_summary,
+                "confidence_level": automotive_confidence,
+                "has_warnings": bool(
+                    validation_results.get("answer_warnings") or validation_results.get("source_warnings")),
+                "user_trust_features": {
+                    "validation_footnotes_added": bool(warning_footnotes),
+                    "transparent_fact_checking": True,
+                    "domain_specific_validation": "automotive"
+                }
+            },
+
+            "enhanced_with_automotive_validation": True
+        }
+
+        # Preserve existing data and add inference result
+        final_result = {}
+        final_result.update(existing_result)
+        final_result.update(inference_result)
+
+        logger.info(f"Automotive-validated LLM inference completed for job {job_id}")
+        logger.info(f"Simple confidence: {simple_confidence:.1f}%, Automotive confidence: {automotive_confidence}")
+
+        if validation_results.get("answer_warnings"):
+            logger.info(f"Answer warnings: {len(validation_results['answer_warnings'])}")
+        if validation_results.get("source_warnings"):
+            logger.info(f"Source warnings: {len(set(validation_results['source_warnings']))}")
+
+        # Complete the job
+        job_chain.task_completed(job_id, final_result)
+
+    except Exception as e:
+        error_msg = f"Automotive-validated LLM inference failed for job {job_id}: {str(e)}"
+        logger.error(error_msg)
+        job_chain.task_failed(job_id, error_msg)
