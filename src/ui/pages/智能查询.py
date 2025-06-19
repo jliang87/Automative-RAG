@@ -5,6 +5,10 @@ from typing import Dict, Any, Optional
 from src.ui.api_client import api_request
 from src.ui.session_init import initialize_session_state
 
+# Import the new components (these would be in separate files)
+from src.ui.components.fact_checker_display import render_fact_checking_display, render_real_time_validation_feedback
+from src.ui.components.trust_indicators import render_trust_indicators, render_quick_trust_badge
+
 initialize_session_state()
 
 # Query mode configurations (simplified)
@@ -19,7 +23,8 @@ QUERY_MODES = {
             "2023年宝马X5的后备箱容积是多少？",
             "特斯拉Model 3的刹车性能怎么样？",
             "奔驰E级有哪些安全配置？"
-        ]
+        ],
+        "fact_check_priority": "high"  # High priority for fact-checking
     },
     "features": {
         "icon": "💡",
@@ -30,7 +35,8 @@ QUERY_MODES = {
             "是否应该为电动车增加氛围灯功能？",
             "增加模拟引擎声音对用户体验的影响",
             "AR抬头显示器值得投资吗？"
-        ]
+        ],
+        "fact_check_priority": "medium"
     },
     "tradeoffs": {
         "icon": "⚖️",
@@ -41,7 +47,8 @@ QUERY_MODES = {
             "使用模拟声音 vs 自然静音的利弊",
             "移除物理按键的优缺点分析",
             "大屏幕 vs 传统仪表盘的对比"
-        ]
+        ],
+        "fact_check_priority": "medium"
     },
     "scenarios": {
         "icon": "🧩",
@@ -52,7 +59,8 @@ QUERY_MODES = {
             "长途旅行时这个功能如何表现？",
             "家庭用户在日常通勤中的体验如何？",
             "寒冷气候下的性能表现分析"
-        ]
+        ],
+        "fact_check_priority": "medium"
     },
     "debate": {
         "icon": "🗣️",
@@ -63,7 +71,8 @@ QUERY_MODES = {
             "产品经理、工程师和用户代表如何看待自动驾驶功能？",
             "不同团队对电池技术路线的观点",
             "关于车内空间设计的多方讨论"
-        ]
+        ],
+        "fact_check_priority": "low"
     },
     "quotes": {
         "icon": "🔍",
@@ -74,13 +83,14 @@ QUERY_MODES = {
             "用户对续航里程的真实评价",
             "关于内饰质量的用户反馈",
             "充电体验的用户评论摘录"
-        ]
+        ],
+        "fact_check_priority": "low"
     }
 }
 
 
 def submit_unified_query(query_text: str, mode: str, filters: Optional[Dict] = None) -> Optional[str]:
-    """Submit unified query"""
+    """Submit unified query with enhanced error handling."""
     try:
         unified_data = {
             "query": query_text,
@@ -108,7 +118,7 @@ def submit_unified_query(query_text: str, mode: str, filters: Optional[Dict] = N
 
 
 def get_query_result(job_id: str) -> Optional[Dict]:
-    """Get unified query results"""
+    """Get unified query results with enhanced error handling."""
     try:
         return api_request(f"/query/results/{job_id}", method="GET")
     except Exception as e:
@@ -116,24 +126,65 @@ def get_query_result(job_id: str) -> Optional[Dict]:
         return None
 
 
-def display_two_layer_result(result: Dict[str, Any], mode: str):
-    """Display results with two-layer structure for enhanced modes"""
-    answer = result.get("answer", "")
-    analysis_structure = result.get("analysis_structure")
+def display_enhanced_results(result: Dict[str, Any], mode: str):
+    """Display results with comprehensive fact-checking and trust indicators."""
 
+    answer = result.get("answer", "")
     if not answer:
         st.warning("未获得查询结果")
         return
 
+    # Main answer display
+    st.markdown("### 📋 分析结果")
+
+    # Quick trust badge at the top
+    trust_badge = render_quick_trust_badge(result)
+    st.markdown(f"**可信度评估**: {trust_badge}")
+
+    # Display the answer based on mode
+    mode_info = QUERY_MODES.get(mode, {})
+
+    if mode_info.get("two_layer"):
+        display_two_layer_result(result, mode)
+    elif mode == "debate":
+        display_debate_result(answer)
+    elif mode == "quotes":
+        display_quotes_result(answer)
+    else:
+        st.markdown(answer)
+
+    # Enhanced fact-checking display (high priority for facts mode)
+    fact_check_priority = mode_info.get("fact_check_priority", "medium")
+
+    if fact_check_priority in ["high", "medium"]:
+        st.markdown("---")
+        render_fact_checking_display(result)
+
+    # Comprehensive trust indicators
+    st.markdown("---")
+    render_trust_indicators(result)
+
+    # Enhanced sources display
+    display_enhanced_sources(result)
+
+
+def display_two_layer_result(result: Dict[str, Any], mode: str):
+    """Display results with two-layer structure for enhanced modes."""
+    answer = result.get("answer", "")
+    analysis_structure = result.get("analysis_structure")
+
     if analysis_structure and isinstance(analysis_structure, dict):
         if mode == "facts":
             if "【实证分析】" in analysis_structure:
-                st.subheader("📋 基于文档的实证分析")
-                st.info(analysis_structure["【实证分析】"])
+                st.subheader("📊 基于文档的实证分析")
+                with st.container():
+                    st.info(analysis_structure["【实证分析】"])
 
             if "【策略推理】" in analysis_structure:
                 st.subheader("🧠 专业推理补充")
-                st.warning(analysis_structure["【策略推理】"])
+                with st.container():
+                    st.warning(analysis_structure["【策略推理】"])
+                    st.caption("⚠️ 此部分为AI推理，请结合实证分析参考")
 
         elif mode == "features":
             if "【实证分析】" in analysis_structure:
@@ -169,7 +220,7 @@ def display_two_layer_result(result: Dict[str, Any], mode: str):
 
 
 def display_debate_result(answer: str):
-    """Display debate-style results with multiple perspectives"""
+    """Display debate-style results with multiple perspectives."""
     st.subheader("🗣️ 多角色讨论")
 
     roles = ["产品经理观点", "工程师观点", "用户代表观点"]
@@ -219,7 +270,7 @@ def display_debate_result(answer: str):
 
 
 def display_quotes_result(answer: str):
-    """Display user quotes in a structured format"""
+    """Display user quotes in a structured format."""
     st.subheader("💬 用户评论摘录")
 
     import re
@@ -236,9 +287,86 @@ def display_quotes_result(answer: str):
         st.markdown(answer)
 
 
+def display_enhanced_sources(result: Dict[str, Any]):
+    """Display sources with enhanced validation and trust indicators."""
+
+    documents = result.get("documents", [])
+    if not documents:
+        return
+
+    st.markdown("---")
+    st.subheader(f"📚 参考来源 ({len(documents)} 个)")
+
+    with st.expander("查看所有来源", expanded=False):
+        for i, doc in enumerate(documents):
+            metadata = doc.get("metadata", {})
+            relevance = doc.get("relevance_score", 0)
+
+            # Enhanced source display with validation status
+            title = metadata.get("title", f"文档 {i + 1}")
+            source_type = metadata.get("source", "unknown")
+
+            # Source quality indicator
+            if relevance > 0.8 and not metadata.get("automotive_warnings"):
+                st.success(f"**来源 {i + 1}** 🟢: {title[:60]}...")
+                st.caption("✅ 高质量来源，已通过验证")
+            elif relevance > 0.6:
+                if metadata.get("automotive_warnings"):
+                    st.warning(f"**来源 {i + 1}** 🟡: {title[:60]}...")
+                    st.caption("⚠️ 中等质量来源，包含需注意信息")
+                else:
+                    st.info(f"**来源 {i + 1}** 🟡: {title[:60]}...")
+                    st.caption("📋 中等质量来源")
+            else:
+                st.error(f"**来源 {i + 1}** 🔴: {title[:60]}...")
+                st.caption("❗ 低相关度来源，请谨慎参考")
+
+            # Source details
+            col1, col2 = st.columns([1, 1])
+            with col1:
+                st.caption(f"**来源类型**: {source_type}")
+                st.caption(f"**相关度**: {relevance:.1%}")
+            with col2:
+                if metadata.get("author"):
+                    st.caption(f"**作者**: {metadata['author']}")
+                if metadata.get("published_date"):
+                    st.caption(f"**发布**: {metadata['published_date']}")
+
+            # Show validation warnings if any
+            warnings = metadata.get("automotive_warnings", [])
+            if warnings:
+                st.caption("⚠️ **验证提醒**:")
+                for warning in warnings[:2]:  # Show max 2 warnings
+                    st.caption(f"  • {warning}")
+                if len(warnings) > 2:
+                    st.caption(f"  • 还有 {len(warnings) - 2} 项提醒...")
+
+            # Content preview
+            if doc.get("content"):
+                with st.expander("查看内容片段"):
+                    st.text_area(
+                        "内容预览",
+                        doc['content'][:300] + "..." if len(doc['content']) > 300 else doc['content'],
+                        height=100,
+                        disabled=True,
+                        key=f"content_{i}"
+                    )
+
+            st.markdown("---")
+
+
 # Main interface
 st.title("🧠 智能查询")
-st.markdown("统一查询平台")
+st.markdown("带有事实验证的统一查询平台")
+
+# System status check
+try:
+    health_response = api_request("/health", silent=True, timeout=3.0)
+    if not health_response or health_response.get("status") != "healthy":
+        st.warning("⚠️ 系统状态异常，查询结果可能不准确")
+except:
+    st.error("❌ 无法连接到服务器，请稍后重试")
+    st.stop()
 
 # Mode selection
 st.subheader("📋 选择查询模式")
@@ -250,7 +378,7 @@ if hasattr(st.session_state, 'smart_mode'):
     st.session_state.selected_mode = st.session_state.smart_mode
     del st.session_state.smart_mode
 
-# Display modes in a grid
+# Display modes in a grid with fact-check indicators
 mode_cols = st.columns(3)
 
 for i, (mode_key, mode_info) in enumerate(QUERY_MODES.items()):
@@ -260,7 +388,14 @@ for i, (mode_key, mode_info) in enumerate(QUERY_MODES.items()):
         is_selected = st.session_state.get('selected_mode') == mode_key
         button_type = "primary" if is_selected else "secondary"
 
-        button_text = f"{mode_info['icon']} {mode_info['name']}"
+        # Add fact-check priority indicator
+        fact_check_indicator = ""
+        if mode_info.get("fact_check_priority") == "high":
+            fact_check_indicator = " 🛡️"
+        elif mode_info.get("fact_check_priority") == "medium":
+            fact_check_indicator = " ✅"
+
+        button_text = f"{mode_info['icon']} {mode_info['name']}{fact_check_indicator}"
         if is_selected:
             button_text = f"✅ {button_text}"
 
@@ -280,6 +415,15 @@ if st.session_state.get('selected_mode'):
     mode_info = QUERY_MODES[mode]
 
     st.markdown("---")
+
+    # Mode description with fact-check info
+    fact_check_priority = mode_info.get("fact_check_priority", "medium")
+    if fact_check_priority == "high":
+        st.info(f"🛡️ **{mode_info['name']}** - 此模式包含高级事实验证功能")
+    elif fact_check_priority == "medium":
+        st.info(f"✅ **{mode_info['name']}** - 此模式包含基础事实验证功能")
+    else:
+        st.info(f"📝 **{mode_info['name']}** - {mode_info['description']}")
 
     # Query input section
     st.subheader("💭 输入您的问题")
@@ -305,6 +449,10 @@ if st.session_state.get('selected_mode'):
         placeholder=f"例如：{mode_info['examples'][0]}",
         height=100
     )
+
+    # Real-time validation feedback for high-priority modes
+    if fact_check_priority == "high" and query.strip():
+        render_real_time_validation_feedback(query)
 
     # Filters
     with st.expander("🔧 筛选条件（可选）"):
@@ -355,30 +503,31 @@ if st.session_state.get('selected_mode'):
 else:
     st.info("👆 请选择一个查询模式开始分析")
 
-    # Quick start recommendations
+    # Quick start recommendations with fact-check info
     st.markdown("### 🚀 快速开始")
     rec_col1, rec_col2 = st.columns(2)
 
     with rec_col1:
         st.markdown("**新用户推荐：**")
-        if st.button("📌 开始信息总览", type="primary", use_container_width=True):
+        if st.button("📌 开始信息总览 🛡️", type="primary", use_container_width=True,
+                     help="包含高级事实验证功能"):
             st.session_state.selected_mode = "facts"
             st.rerun()
 
     with rec_col2:
         st.markdown("**专业用户推荐：**")
-        if st.button("💡 开始功能建议", use_container_width=True):
+        if st.button("💡 开始功能建议 ✅", use_container_width=True,
+                     help="包含基础事实验证功能"):
             st.session_state.selected_mode = "features"
             st.rerun()
 
-# Results section
+# Enhanced results section
 if hasattr(st.session_state, 'current_job_id') and st.session_state.current_job_id:
     job_id = st.session_state.current_job_id
     query_mode = getattr(st.session_state, 'query_mode', 'facts')
     mode_info = QUERY_MODES[query_mode]
 
     st.markdown("---")
-    st.subheader(f"📋 {mode_info['name']} 结果")
 
     # Rate-limited result checking
     if 'last_result_check' not in st.session_state:
@@ -398,28 +547,13 @@ if hasattr(st.session_state, 'current_job_id') and st.session_state.current_job_
         if status == "completed":
             st.success("✅ 分析完成！")
 
-            # Display results based on mode
-            if mode_info['two_layer']:
-                display_two_layer_result(result, query_mode)
-            elif query_mode == "debate":
-                display_debate_result(result.get("answer", ""))
-            elif query_mode == "quotes":
-                display_quotes_result(result.get("answer", ""))
-            else:
-                st.markdown(result.get("answer", ""))
+            # Display enhanced results with fact-checking
+            display_enhanced_results(result, query_mode)
 
-            # Show sources
-            documents = result.get("documents", [])
-            if documents:
-                with st.expander(f"📚 参考来源 ({len(documents)} 个)"):
-                    for i, doc in enumerate(documents[:5]):
-                        st.markdown(f"**来源 {i + 1}:** {doc.get('metadata', {}).get('title', '文档')}")
-                        if doc.get("content"):
-                            st.caption(doc['content'][:200] + "...")
-                        st.markdown("---")
+            # Enhanced action buttons
+            st.markdown("---")
+            action_col1, action_col2, action_col3, action_col4 = st.columns(4)
 
-            # Actions for completed queries
-            action_col1, action_col2, action_col3 = st.columns(3)
             with action_col1:
                 if st.button("🔄 新的查询", key="new_analysis"):
                     for key in ['current_job_id', 'query_text', 'last_query_result']:
@@ -440,6 +574,11 @@ if hasattr(st.session_state, 'current_job_id') and st.session_state.current_job_
                     st.session_state.selected_job_id = job_id
                     st.switch_page("pages/后台任务.py")
 
+            with action_col4:
+                if st.button("🛡️ 验证说明", key="validation_help"):
+                    st.session_state.show_validation_help = True
+                    st.rerun()
+
         elif status == "failed":
             st.error("❌ 分析失败")
             error_msg = result.get("answer", "未知错误")
@@ -455,6 +594,40 @@ if hasattr(st.session_state, 'current_job_id') and st.session_state.current_job_
                 st.rerun()
     else:
         st.error("❌ 无法获取分析状态")
+
+# Validation help modal
+if st.session_state.get('show_validation_help', False):
+    with st.expander("🛡️ 事实验证系统说明", expanded=True):
+        st.markdown("""
+        ### 汽车领域事实验证系统
+
+        **我们的AI系统配备了专门的汽车领域事实验证功能：**
+
+        #### 🔍 验证内容
+        - **加速性能**: 检测不合理的0-100km/h加速时间
+        - **技术规格**: 验证功率、扭矩、油耗等参数的合理性
+        - **容量数据**: 确认后备箱容积、燃油箱容量等信息
+        - **速度参数**: 验证最高时速的真实性
+
+        #### 📊 可信度评估
+        - **🟢 高可信**: 多项验证通过，包含具体数据，来源可靠
+        - **🟡 中等可信**: 部分验证通过，建议交叉验证
+        - **🔴 需谨慎**: 检测到可疑信息，请通过权威渠道确认
+
+        #### 💡 使用建议
+        - 对于重要决策，请始终参考多个权威来源
+        - 注意信息的时效性，车型配置可能因年份而异
+        - 直接联系经销商获取最准确的当前信息
+
+        #### 🔬 技术原理
+        - 基于大量汽车数据训练的专业验证模型
+        - 实时检测数值规格的合理性范围
+        - 智能识别中文汽车术语和表达方式
+        """)
+
+        if st.button("关闭说明", key="close_help"):
+            st.session_state.show_validation_help = False
+            st.rerun()
 
 # Navigation
 st.markdown("---")
@@ -475,3 +648,8 @@ with nav_cols[2]:
 with nav_cols[3]:
     if st.button("🏠 返回主页", use_container_width=True):
         st.switch_page("src/ui/主页.py")
+
+# Footer with validation info
+st.markdown("---")
+st.caption("🛡️ 此查询系统配备汽车领域专业事实验证功能，帮助确保信息准确性")
+st.caption("💡 对于重要决策，建议结合多个权威来源进行验证")
