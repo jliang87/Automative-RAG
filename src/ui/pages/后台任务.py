@@ -11,12 +11,18 @@ from src.ui.api_client import (
 )
 from src.ui.session_init import initialize_session_state
 
+# UPDATED: Import unified validation display
+from src.ui.components.validation_display import (
+    render_unified_validation_display,
+    render_quick_validation_badge
+)
+
 logger = logging.getLogger(__name__)
 
 initialize_session_state()
 
 st.title("📋 后台任务")
-st.markdown("查看和管理您的处理任务")
+st.markdown("查看和管理您的处理任务，包括验证结果")
 
 # === JOB STATISTICS OVERVIEW ===
 job_stats = get_job_statistics()
@@ -150,8 +156,60 @@ def format_time(timestamp: float) -> str:
         return "时间格式错误"
 
 
+def has_validation_data(result: Dict[str, Any]) -> bool:
+    """Check if job result contains validation data"""
+    if not result or not isinstance(result, dict):
+        return False
+
+    # Check for automotive validation data
+    automotive_validation = result.get("automotive_validation", {})
+    if automotive_validation and isinstance(automotive_validation, dict):
+        return True
+
+    # Check for simple confidence score
+    if result.get("simple_confidence", 0) > 0:
+        return True
+
+    # Check for documents with validation metadata
+    documents = result.get("documents", [])
+    if documents and isinstance(documents, list):
+        for doc in documents:
+            if isinstance(doc, dict):
+                metadata = doc.get("metadata", {})
+                if metadata.get("automotive_warnings") or metadata.get("validation_status"):
+                    return True
+
+    return False
+
+
+def display_job_validation_summary(result: Dict[str, Any]) -> None:
+    """Display a summary of validation results for completed jobs"""
+    if not has_validation_data(result):
+        st.caption("此任务无验证数据")
+        return
+
+    # UPDATED: Use unified validation badge
+    validation_badge = render_quick_validation_badge(result)
+    st.markdown(f"**验证状态**: {validation_badge}")
+
+    # Quick summary of validation details
+    automotive_validation = result.get("automotive_validation", {})
+    if automotive_validation:
+        confidence_level = automotive_validation.get("confidence_level", "unknown")
+        has_warnings = automotive_validation.get("has_warnings", False)
+
+        if confidence_level == "high" and not has_warnings:
+            st.caption("✅ 高质量回答，已通过专业验证")
+        elif confidence_level == "medium":
+            st.caption("📋 中等质量回答，建议参考多个来源")
+        elif confidence_level == "low" or has_warnings:
+            st.caption("⚠️ 包含需注意信息，请查看验证详情")
+        else:
+            st.caption("❓ 验证状态未知")
+
+
 def display_job_card(job: Dict[str, Any], context: str, index: int):
-    """Display a job card with progress and actions."""
+    """Display a job card with progress and actions, including validation results."""
     job_id = job.get("job_id", "")
     job_type = job.get("job_type", "")
     status = job.get("status", "")
@@ -352,6 +410,12 @@ def display_job_card(job: Dict[str, Any], context: str, index: int):
                     if metadata.get('platform'):
                         st.write(f"**平台:** {metadata['platform']}")
 
+                    # UPDATED: Show query mode information
+                    if metadata.get('query_mode'):
+                        st.write(f"**查询模式:** {metadata['query_mode']}")
+                    if metadata.get('mode_name'):
+                        st.write(f"**模式名称:** {metadata['mode_name']}")
+
                 # Parse result properly
                 if isinstance(result, str):
                     try:
@@ -359,6 +423,29 @@ def display_job_card(job: Dict[str, Any], context: str, index: int):
                         result = json.loads(result)
                     except:
                         result = {}
+
+                # UPDATED: Show validation results for completed LLM inference jobs
+                if job_detail.get('status') == 'completed' and job_type == "llm_inference":
+                    if has_validation_data(result):
+                        st.markdown("---")
+                        st.markdown("### 🛡️ 验证结果")
+
+                        # Quick validation summary
+                        display_job_validation_summary(result)
+
+                        # Option to view full validation details
+                        if st.button(f"查看完整验证报告", key=f"full_validation_{context}_{index}_{job_short_id}"):
+                            st.session_state[f"show_full_validation_{job_id}"] = True
+                            st.rerun()
+
+                        # Show full validation if requested
+                        if st.session_state.get(f"show_full_validation_{job_id}", False):
+                            st.markdown("#### 完整验证报告")
+                            render_unified_validation_display(result)
+
+                            if st.button(f"隐藏验证报告", key=f"hide_validation_{context}_{index}_{job_short_id}"):
+                                st.session_state[f"show_full_validation_{job_id}"] = False
+                                st.rerun()
 
                 # Enhanced Results Display for Video Processing
                 if job_detail.get('status') == 'completed':
@@ -666,4 +753,4 @@ processing_count = len([j for j in jobs if j.get("status") in ["pending", "proce
 if processing_count > 0:
     st.info(f"ℹ️ 当前有 {processing_count} 个任务正在处理中")
 
-st.caption("后台任务 - 跟踪您的处理任务进度")
+st.caption("后台任务 - 跟踪您的处理任务进度，包括验证结果查看")

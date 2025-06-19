@@ -5,9 +5,13 @@ from typing import Dict, Any, Optional
 from src.ui.api_client import api_request
 from src.ui.session_init import initialize_session_state
 
-# Import the new components (these would be in separate files)
-from src.ui.components.fact_checker_display import render_fact_checking_display, render_real_time_validation_feedback
-from src.ui.components.trust_indicators import render_trust_indicators, render_quick_trust_badge
+# UPDATED: Import unified validation display instead of separate components
+from src.ui.components.validation_display import (
+    render_unified_validation_display,
+    render_quick_validation_badge,
+    render_validation_help,
+    render_real_time_validation_feedback
+)
 
 initialize_session_state()
 
@@ -24,7 +28,7 @@ QUERY_MODES = {
             "特斯拉Model 3的刹车性能怎么样？",
             "奔驰E级有哪些安全配置？"
         ],
-        "fact_check_priority": "high"  # High priority for fact-checking
+        "validation_priority": "high"  # High priority for validation display
     },
     "features": {
         "icon": "💡",
@@ -36,7 +40,7 @@ QUERY_MODES = {
             "增加模拟引擎声音对用户体验的影响",
             "AR抬头显示器值得投资吗？"
         ],
-        "fact_check_priority": "medium"
+        "validation_priority": "medium"
     },
     "tradeoffs": {
         "icon": "⚖️",
@@ -48,7 +52,7 @@ QUERY_MODES = {
             "移除物理按键的优缺点分析",
             "大屏幕 vs 传统仪表盘的对比"
         ],
-        "fact_check_priority": "medium"
+        "validation_priority": "medium"
     },
     "scenarios": {
         "icon": "🧩",
@@ -60,7 +64,7 @@ QUERY_MODES = {
             "家庭用户在日常通勤中的体验如何？",
             "寒冷气候下的性能表现分析"
         ],
-        "fact_check_priority": "medium"
+        "validation_priority": "medium"
     },
     "debate": {
         "icon": "🗣️",
@@ -72,7 +76,7 @@ QUERY_MODES = {
             "不同团队对电池技术路线的观点",
             "关于车内空间设计的多方讨论"
         ],
-        "fact_check_priority": "low"
+        "validation_priority": "low"
     },
     "quotes": {
         "icon": "🔍",
@@ -84,7 +88,7 @@ QUERY_MODES = {
             "关于内饰质量的用户反馈",
             "充电体验的用户评论摘录"
         ],
-        "fact_check_priority": "low"
+        "validation_priority": "low"
     }
 }
 
@@ -127,7 +131,7 @@ def get_query_result(job_id: str) -> Optional[Dict]:
 
 
 def display_enhanced_results(result: Dict[str, Any], mode: str):
-    """Display results with comprehensive fact-checking and trust indicators."""
+    """Display results with unified validation system."""
 
     answer = result.get("answer", "")
     if not answer:
@@ -137,9 +141,9 @@ def display_enhanced_results(result: Dict[str, Any], mode: str):
     # Main answer display
     st.markdown("### 📋 分析结果")
 
-    # Quick trust badge at the top
-    trust_badge = render_quick_trust_badge(result)
-    st.markdown(f"**可信度评估**: {trust_badge}")
+    # UPDATED: Quick validation badge at the top using unified system
+    validation_badge = render_quick_validation_badge(result)
+    st.markdown(f"**验证状态**: {validation_badge}")
 
     # Display the answer based on mode
     mode_info = QUERY_MODES.get(mode, {})
@@ -153,16 +157,12 @@ def display_enhanced_results(result: Dict[str, Any], mode: str):
     else:
         st.markdown(answer)
 
-    # Enhanced fact-checking display (high priority for facts mode)
-    fact_check_priority = mode_info.get("fact_check_priority", "medium")
+    # UPDATED: Unified validation display (replaces both fact-checking and trust indicators)
+    validation_priority = mode_info.get("validation_priority", "medium")
 
-    if fact_check_priority in ["high", "medium"]:
+    if validation_priority in ["high", "medium"]:
         st.markdown("---")
-        render_fact_checking_display(result)
-
-    # Comprehensive trust indicators
-    st.markdown("---")
-    render_trust_indicators(result)
+        render_unified_validation_display(result)
 
     # Enhanced sources display
     display_enhanced_sources(result)
@@ -288,7 +288,7 @@ def display_quotes_result(answer: str):
 
 
 def display_enhanced_sources(result: Dict[str, Any]):
-    """Display sources with enhanced validation and trust indicators."""
+    """Display sources with enhanced validation and unified indicators."""
 
     documents = result.get("documents", [])
     if not documents:
@@ -306,17 +306,20 @@ def display_enhanced_sources(result: Dict[str, Any]):
             title = metadata.get("title", f"文档 {i + 1}")
             source_type = metadata.get("source", "unknown")
 
-            # Source quality indicator
-            if relevance > 0.8 and not metadata.get("automotive_warnings"):
+            # UPDATED: Use unified validation status from backend
+            validation_status = metadata.get("validation_status", "unknown")
+            automotive_warnings = metadata.get("automotive_warnings", [])
+
+            # Source quality indicator based on backend validation
+            if validation_status == "validated" and relevance > 0.8:
                 st.success(f"**来源 {i + 1}** 🟢: {title[:60]}...")
                 st.caption("✅ 高质量来源，已通过验证")
+            elif validation_status == "has_warnings" or automotive_warnings:
+                st.warning(f"**来源 {i + 1}** 🟡: {title[:60]}...")
+                st.caption("⚠️ 包含需注意信息，请参考验证详情")
             elif relevance > 0.6:
-                if metadata.get("automotive_warnings"):
-                    st.warning(f"**来源 {i + 1}** 🟡: {title[:60]}...")
-                    st.caption("⚠️ 中等质量来源，包含需注意信息")
-                else:
-                    st.info(f"**来源 {i + 1}** 🟡: {title[:60]}...")
-                    st.caption("📋 中等质量来源")
+                st.info(f"**来源 {i + 1}** 🟡: {title[:60]}...")
+                st.caption("📋 中等质量来源")
             else:
                 st.error(f"**来源 {i + 1}** 🔴: {title[:60]}...")
                 st.caption("❗ 低相关度来源，请谨慎参考")
@@ -332,14 +335,13 @@ def display_enhanced_sources(result: Dict[str, Any]):
                 if metadata.get("published_date"):
                     st.caption(f"**发布**: {metadata['published_date']}")
 
-            # Show validation warnings if any
-            warnings = metadata.get("automotive_warnings", [])
-            if warnings:
+            # UPDATED: Show validation warnings from backend
+            if automotive_warnings:
                 st.caption("⚠️ **验证提醒**:")
-                for warning in warnings[:2]:  # Show max 2 warnings
+                for warning in automotive_warnings[:2]:  # Show max 2 warnings
                     st.caption(f"  • {warning}")
-                if len(warnings) > 2:
-                    st.caption(f"  • 还有 {len(warnings) - 2} 项提醒...")
+                if len(automotive_warnings) > 2:
+                    st.caption(f"  • 还有 {len(automotive_warnings) - 2} 项提醒...")
 
             # Content preview
             if doc.get("content"):
@@ -357,7 +359,7 @@ def display_enhanced_sources(result: Dict[str, Any]):
 
 # Main interface
 st.title("🧠 智能查询")
-st.markdown("带有事实验证的统一查询平台")
+st.markdown("带有专业验证的统一查询平台")
 
 # System status check
 try:
@@ -378,7 +380,7 @@ if hasattr(st.session_state, 'smart_mode'):
     st.session_state.selected_mode = st.session_state.smart_mode
     del st.session_state.smart_mode
 
-# Display modes in a grid with fact-check indicators
+# Display modes in a grid with validation indicators
 mode_cols = st.columns(3)
 
 for i, (mode_key, mode_info) in enumerate(QUERY_MODES.items()):
@@ -388,14 +390,14 @@ for i, (mode_key, mode_info) in enumerate(QUERY_MODES.items()):
         is_selected = st.session_state.get('selected_mode') == mode_key
         button_type = "primary" if is_selected else "secondary"
 
-        # Add fact-check priority indicator
-        fact_check_indicator = ""
-        if mode_info.get("fact_check_priority") == "high":
-            fact_check_indicator = " 🛡️"
-        elif mode_info.get("fact_check_priority") == "medium":
-            fact_check_indicator = " ✅"
+        # UPDATED: Add validation priority indicator
+        validation_indicator = ""
+        if mode_info.get("validation_priority") == "high":
+            validation_indicator = " 🛡️"
+        elif mode_info.get("validation_priority") == "medium":
+            validation_indicator = " ✅"
 
-        button_text = f"{mode_info['icon']} {mode_info['name']}{fact_check_indicator}"
+        button_text = f"{mode_info['icon']} {mode_info['name']}{validation_indicator}"
         if is_selected:
             button_text = f"✅ {button_text}"
 
@@ -416,12 +418,12 @@ if st.session_state.get('selected_mode'):
 
     st.markdown("---")
 
-    # Mode description with fact-check info
-    fact_check_priority = mode_info.get("fact_check_priority", "medium")
-    if fact_check_priority == "high":
-        st.info(f"🛡️ **{mode_info['name']}** - 此模式包含高级事实验证功能")
-    elif fact_check_priority == "medium":
-        st.info(f"✅ **{mode_info['name']}** - 此模式包含基础事实验证功能")
+    # Mode description with validation info
+    validation_priority = mode_info.get("validation_priority", "medium")
+    if validation_priority == "high":
+        st.info(f"🛡️ **{mode_info['name']}** - 此模式包含高级专业验证功能")
+    elif validation_priority == "medium":
+        st.info(f"✅ **{mode_info['name']}** - 此模式包含基础专业验证功能")
     else:
         st.info(f"📝 **{mode_info['name']}** - {mode_info['description']}")
 
@@ -450,8 +452,8 @@ if st.session_state.get('selected_mode'):
         height=100
     )
 
-    # Real-time validation feedback for high-priority modes
-    if fact_check_priority == "high" and query.strip():
+    # UPDATED: Real-time validation feedback for high-priority modes
+    if validation_priority == "high" and query.strip():
         render_real_time_validation_feedback(query)
 
     # Filters
@@ -503,21 +505,21 @@ if st.session_state.get('selected_mode'):
 else:
     st.info("👆 请选择一个查询模式开始分析")
 
-    # Quick start recommendations with fact-check info
+    # Quick start recommendations with validation info
     st.markdown("### 🚀 快速开始")
     rec_col1, rec_col2 = st.columns(2)
 
     with rec_col1:
         st.markdown("**新用户推荐：**")
         if st.button("📌 开始信息总览 🛡️", type="primary", use_container_width=True,
-                     help="包含高级事实验证功能"):
+                     help="包含高级专业验证功能"):
             st.session_state.selected_mode = "facts"
             st.rerun()
 
     with rec_col2:
         st.markdown("**专业用户推荐：**")
         if st.button("💡 开始功能建议 ✅", use_container_width=True,
-                     help="包含基础事实验证功能"):
+                     help="包含基础专业验证功能"):
             st.session_state.selected_mode = "features"
             st.rerun()
 
@@ -547,7 +549,7 @@ if hasattr(st.session_state, 'current_job_id') and st.session_state.current_job_
         if status == "completed":
             st.success("✅ 分析完成！")
 
-            # Display enhanced results with fact-checking
+            # UPDATED: Display results with unified validation system
             display_enhanced_results(result, query_mode)
 
             # Enhanced action buttons
@@ -595,39 +597,13 @@ if hasattr(st.session_state, 'current_job_id') and st.session_state.current_job_
     else:
         st.error("❌ 无法获取分析状态")
 
-# Validation help modal
+# UPDATED: Validation help modal using unified system
 if st.session_state.get('show_validation_help', False):
-    with st.expander("🛡️ 事实验证系统说明", expanded=True):
-        st.markdown("""
-        ### 汽车领域事实验证系统
+    render_validation_help()
 
-        **我们的AI系统配备了专门的汽车领域事实验证功能：**
-
-        #### 🔍 验证内容
-        - **加速性能**: 检测不合理的0-100km/h加速时间
-        - **技术规格**: 验证功率、扭矩、油耗等参数的合理性
-        - **容量数据**: 确认后备箱容积、燃油箱容量等信息
-        - **速度参数**: 验证最高时速的真实性
-
-        #### 📊 可信度评估
-        - **🟢 高可信**: 多项验证通过，包含具体数据，来源可靠
-        - **🟡 中等可信**: 部分验证通过，建议交叉验证
-        - **🔴 需谨慎**: 检测到可疑信息，请通过权威渠道确认
-
-        #### 💡 使用建议
-        - 对于重要决策，请始终参考多个权威来源
-        - 注意信息的时效性，车型配置可能因年份而异
-        - 直接联系经销商获取最准确的当前信息
-
-        #### 🔬 技术原理
-        - 基于大量汽车数据训练的专业验证模型
-        - 实时检测数值规格的合理性范围
-        - 智能识别中文汽车术语和表达方式
-        """)
-
-        if st.button("关闭说明", key="close_help"):
-            st.session_state.show_validation_help = False
-            st.rerun()
+    if st.button("关闭说明", key="close_help"):
+        st.session_state.show_validation_help = False
+        st.rerun()
 
 # Navigation
 st.markdown("---")
@@ -651,5 +627,5 @@ with nav_cols[3]:
 
 # Footer with validation info
 st.markdown("---")
-st.caption("🛡️ 此查询系统配备汽车领域专业事实验证功能，帮助确保信息准确性")
+st.caption("🛡️ 此查询系统配备汽车领域专业验证功能，帮助确保信息准确性")
 st.caption("💡 对于重要决策，建议结合多个权威来源进行验证")
