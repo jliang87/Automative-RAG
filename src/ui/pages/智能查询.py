@@ -157,15 +157,19 @@ def display_enhanced_results(result: Dict[str, Any], mode: str):
     else:
         st.markdown(answer)
 
-    # UPDATED: Unified validation display (replaces both fact-checking and trust indicators)
     validation_priority = mode_info.get("validation_priority", "medium")
 
     if validation_priority in ["high", "medium"]:
         st.markdown("---")
+        # Check if we're about to enter an expander context
+        # We'll modify the validation display to be aware of the sources display
         render_unified_validation_display(result)
 
-    # Enhanced sources display
-    display_enhanced_sources(result)
+        # Enhanced sources display - pass context that we might be in expander
+        display_enhanced_sources(result, in_expander=False)
+    else:
+        # For low priority modes, just show sources normally
+        display_enhanced_sources(result, in_expander=False)
 
 
 def display_two_layer_result(result: Dict[str, Any], mode: str):
@@ -287,7 +291,70 @@ def display_quotes_result(answer: str):
         st.markdown(answer)
 
 
-def display_enhanced_sources(result: Dict[str, Any]):
+def _render_sources_content(documents):
+    """Render the actual sources content - extracted to avoid nested expanders."""
+    for i, doc in enumerate(documents):
+        metadata = doc.get("metadata", {})
+        relevance = doc.get("relevance_score", 0)
+
+        # Enhanced source display with validation status
+        title = metadata.get("title", f"文档 {i + 1}")
+        source_type = metadata.get("source", "unknown")
+
+        # UPDATED: Use unified validation status from backend
+        validation_status = metadata.get("validation_status", "unknown")
+        automotive_warnings = metadata.get("automotive_warnings", [])
+
+        # Source quality indicator based on backend validation
+        if validation_status == "validated" and relevance > 0.8:
+            st.success(f"**来源 {i + 1}** 🟢: {title[:60]}...")
+            st.caption("✅ 高质量来源，已通过验证")
+        elif validation_status == "has_warnings" or automotive_warnings:
+            st.warning(f"**来源 {i + 1}** 🟡: {title[:60]}...")
+            st.caption("⚠️ 包含需注意信息，请参考验证详情")
+        elif relevance > 0.6:
+            st.info(f"**来源 {i + 1}** 🟡: {title[:60]}...")
+            st.caption("📋 中等质量来源")
+        else:
+            st.error(f"**来源 {i + 1}** 🔴: {title[:60]}...")
+            st.caption("❗ 低相关度来源，请谨慎参考")
+
+        # Source details
+        col1, col2 = st.columns([1, 1])
+        with col1:
+            st.caption(f"**来源类型**: {source_type}")
+            st.caption(f"**相关度**: {relevance:.1%}")
+        with col2:
+            if metadata.get("author"):
+                st.caption(f"**作者**: {metadata['author']}")
+            if metadata.get("published_date"):
+                st.caption(f"**发布**: {metadata['published_date']}")
+
+        # UPDATED: Show validation warnings from backend
+        if automotive_warnings:
+            st.caption("⚠️ **验证提醒**:")
+            for warning in automotive_warnings[:2]:  # Show max 2 warnings
+                st.caption(f"  • {warning}")
+            if len(automotive_warnings) > 2:
+                st.caption(f"  • 还有 {len(automotive_warnings) - 2} 项提醒...")
+
+        # Content preview - Use text_area directly instead of nested expander
+        if doc.get("content"):
+            if st.button(f"查看来源 {i + 1} 内容片段", key=f"show_content_{i}"):
+                st.session_state[f"show_content_{i}"] = not st.session_state.get(f"show_content_{i}", False)
+
+            if st.session_state.get(f"show_content_{i}", False):
+                st.text_area(
+                    f"来源 {i + 1} 内容预览",
+                    doc['content'][:300] + "..." if len(doc['content']) > 300 else doc['content'],
+                    height=100,
+                    disabled=True,
+                    key=f"content_{i}"
+                )
+
+        st.markdown("---")
+
+def display_enhanced_sources(result: Dict[str, Any], in_expander: bool = False):
     """Display sources with enhanced validation and unified indicators."""
 
     documents = result.get("documents", [])
@@ -297,65 +364,12 @@ def display_enhanced_sources(result: Dict[str, Any]):
     st.markdown("---")
     st.subheader(f"📚 参考来源 ({len(documents)} 个)")
 
-    with st.expander("查看所有来源", expanded=False):
-        for i, doc in enumerate(documents):
-            metadata = doc.get("metadata", {})
-            relevance = doc.get("relevance_score", 0)
-
-            # Enhanced source display with validation status
-            title = metadata.get("title", f"文档 {i + 1}")
-            source_type = metadata.get("source", "unknown")
-
-            # UPDATED: Use unified validation status from backend
-            validation_status = metadata.get("validation_status", "unknown")
-            automotive_warnings = metadata.get("automotive_warnings", [])
-
-            # Source quality indicator based on backend validation
-            if validation_status == "validated" and relevance > 0.8:
-                st.success(f"**来源 {i + 1}** 🟢: {title[:60]}...")
-                st.caption("✅ 高质量来源，已通过验证")
-            elif validation_status == "has_warnings" or automotive_warnings:
-                st.warning(f"**来源 {i + 1}** 🟡: {title[:60]}...")
-                st.caption("⚠️ 包含需注意信息，请参考验证详情")
-            elif relevance > 0.6:
-                st.info(f"**来源 {i + 1}** 🟡: {title[:60]}...")
-                st.caption("📋 中等质量来源")
-            else:
-                st.error(f"**来源 {i + 1}** 🔴: {title[:60]}...")
-                st.caption("❗ 低相关度来源，请谨慎参考")
-
-            # Source details
-            col1, col2 = st.columns([1, 1])
-            with col1:
-                st.caption(f"**来源类型**: {source_type}")
-                st.caption(f"**相关度**: {relevance:.1%}")
-            with col2:
-                if metadata.get("author"):
-                    st.caption(f"**作者**: {metadata['author']}")
-                if metadata.get("published_date"):
-                    st.caption(f"**发布**: {metadata['published_date']}")
-
-            # UPDATED: Show validation warnings from backend
-            if automotive_warnings:
-                st.caption("⚠️ **验证提醒**:")
-                for warning in automotive_warnings[:2]:  # Show max 2 warnings
-                    st.caption(f"  • {warning}")
-                if len(automotive_warnings) > 2:
-                    st.caption(f"  • 还有 {len(automotive_warnings) - 2} 项提醒...")
-
-            # Content preview
-            if doc.get("content"):
-                with st.expander("查看内容片段"):
-                    st.text_area(
-                        "内容预览",
-                        doc['content'][:300] + "..." if len(doc['content']) > 300 else doc['content'],
-                        height=100,
-                        disabled=True,
-                        key=f"content_{i}"
-                    )
-
-            st.markdown("---")
-
+    # Only create expander if we're not already inside one
+    if not in_expander:
+        with st.expander("查看所有来源", expanded=False):
+            _render_sources_content(documents)
+    else:
+        _render_sources_content(documents)
 
 # Main interface
 st.title("🧠 智能查询")

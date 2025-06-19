@@ -108,10 +108,40 @@ class ValidationDisplaySystem:
             if doc_validation:
                 self._render_document_validation_summary(doc_validation)
 
-            # Source document details
+            # Source document details - MODIFIED to avoid nested expanders
             documents = result.get("documents", [])
             if documents:
-                self._render_individual_document_status(documents)
+                st.markdown("#### 📄 各文档验证状态")
+                self._render_individual_document_status_inline(documents)
+
+    def _render_individual_document_status_inline(self, documents: List[Dict[str, Any]]) -> None:
+        """Render individual document validation status without nested expanders."""
+
+        for i, doc in enumerate(documents):
+            metadata = doc.get("metadata", {})
+            warnings = metadata.get("automotive_warnings", [])  # Backend-set
+            relevance = doc.get("relevance_score", 0)
+            title = metadata.get("title", f"文档 {i + 1}")
+
+            # Document status line
+            if warnings:
+                status_icon = "⚠️"
+                status_text = f"{len(warnings)} 项提醒"
+            else:
+                status_icon = "✅"
+                status_text = "验证通过"
+
+            relevance_icon = "🔥" if relevance > 0.8 else "⭐" if relevance > 0.6 else "📄"
+
+            st.markdown(
+                f"**{i + 1}.** {status_icon} {title[:40]}... | {relevance_icon} {relevance:.0%} | {status_text}")
+
+            # Show warnings if any
+            if warnings:
+                for warning in warnings[:2]:  # Max 2 per document
+                    st.caption(f"  • {warning}")
+                if len(warnings) > 2:
+                    st.caption(f"  • 还有 {len(warnings) - 2} 项...")
 
     def _render_answer_validation_details(self, answer_validation: Dict[str, Any]) -> None:
         """Render answer-specific validation details from backend."""
@@ -269,23 +299,13 @@ class ValidationDisplaySystem:
             st.caption("• 验证结果仅供参考，重要决策请咨询专业人士")
 
 
-# MAIN RENDERING FUNCTIONS - Replace both old components
-
 def render_unified_validation_display(result: Dict[str, Any]) -> None:
-    """
-    MAIN: Unified validation display replacing both fact-checker and trust components.
-
-    This single function provides:
-    - Main validation summary (replaces trust_indicators main display)
-    - Detailed breakdown (replaces fact_checker detailed display)
-    - User guidance (combines both systems' guidance)
-    """
     validation_system = ValidationDisplaySystem()
 
     # Section 1: Main summary - always visible
     validation_system.render_main_validation_summary(result)
 
-    # Section 2: Detailed breakdown - expandable
+    # Section 2: Detailed breakdown - expandable (but aware of potential sources display)
     validation_system.render_detailed_validation_breakdown(result)
 
     # Section 3: User guidance - expandable
