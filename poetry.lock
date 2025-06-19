@@ -2522,7 +2522,7 @@ version = "0.42.1"
 description = "Chinese Words Segmentation Utilities"
 optional = false
 python-versions = "*"
-groups = ["dev"]
+groups = ["main"]
 files = [
     {file = "jieba-0.42.1.tar.gz", hash = "sha256:055ca12f62674fafed09427f176506079bc135638a14e23e25be909131928db2"},
 ]
@@ -7763,4 +7763,4 @@ cffi = ["cffi (>=1.11)"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.10,<3.11"
-content-hash = "1ae713bb0429aa71bc8cd21d3654d6e67e184a8ee2247b9c4b8ff8f4459eadb4"
+content-hash = "1064ccef76ef180f8f1f3a33d9171e52bad27b3582c558cce32ae0a9ac5b63f8"
