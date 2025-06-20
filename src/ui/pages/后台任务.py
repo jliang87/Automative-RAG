@@ -114,12 +114,12 @@ def render_pagination(total_jobs, current_page, per_page, tab_name):
 
     with col5:
         if current_page < total_pages:
-            if st.button("▶️", key=f"next_{tab_name}", help="下一页", use_container_width=True):
+            if st.button("下一页", key=f"next_{tab_name}", use_container_width=True):
                 return current_page + 1
 
     with col6:
         if current_page < total_pages:
-            if st.button("⏭️", key=f"last_{tab_name}", help="末页", use_container_width=True):
+            if st.button("末页", key=f"last_{tab_name}", use_container_width=True):
                 return total_pages
 
     return current_page
@@ -334,7 +334,7 @@ def display_job_card(job: Dict[str, Any], context: str, index: int):
         with col4:
             # Check current expansion state
             is_expanded = st.session_state.get(expand_key, False)
-            button_text = "🔼收起" if is_expanded else "📄详情"
+            button_text = "🔼 收起" if is_expanded else "📄 详情"
             button_type = "secondary" if is_expanded else "primary"
 
             if st.button(button_text, key=f"detail_{context}_{index}_{job_short_id}",

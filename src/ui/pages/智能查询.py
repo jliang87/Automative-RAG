@@ -420,7 +420,7 @@ for i, (mode_key, mode_info) in enumerate(QUERY_MODES.items()):
         if mode_info.get("validation_priority") == "high":
             validation_indicator = " 🛡️"
         elif mode_info.get("validation_priority") == "medium":
-            validation_indicator = " ✅"
+            validation_indicator = " 🔍"
 
         button_text = f"{mode_info['icon']} {mode_info['name']}{validation_indicator}"
         if is_selected:
@@ -444,13 +444,16 @@ if st.session_state.get('selected_mode'):
     st.markdown("---")
 
     # Mode description with validation info
-    validation_priority = mode_info.get("validation_priority", "medium")
+    selected_mode_info = QUERY_MODES[mode]  # Get the actual selected mode info
+    validation_priority = selected_mode_info.get("validation_priority",
+                                                 "medium")  # Use selected_mode_info instead of mode_info
+
     if validation_priority == "high":
-        st.info(f"🛡️ **{mode_info['name']}** - 此模式包含高级专业验证功能")
+        st.info(f"🛡️ **{selected_mode_info['name']}** - 此模式包含高级专业验证功能")
     elif validation_priority == "medium":
-        st.info(f"✅ **{mode_info['name']}** - 此模式包含基础专业验证功能")
+        st.info(f"🔍 **{selected_mode_info['name']}** - 此模式包含分析验证功能")
     else:
-        st.info(f"📝 **{mode_info['name']}** - {mode_info['description']}")
+        st.info(f"📝 **{selected_mode_info['name']}** - {selected_mode_info['description']}")
 
     # Query input section
     st.subheader("💭 输入您的问题")
