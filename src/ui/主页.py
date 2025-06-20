@@ -28,8 +28,6 @@ if not system_ok:
     if st.button("🔄 重试连接"):
         st.rerun()
     st.stop()
-else:
-    st.success("✅ 系统运行正常")
 
 st.markdown("---")
 
