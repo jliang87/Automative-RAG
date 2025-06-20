@@ -656,4 +656,4 @@ with nav_cols[3]:
 # Footer with validation info
 st.markdown("---")
 st.caption("🛡️ 此查询系统配备汽车领域专业验证功能，帮助确保信息准确性")
-st.caption("💡 对于重要决策，建议结合多个权威来源进行验证")
+st.caption("⚠️ 对于重要决策，建议结合多个权威来源进行验证")
