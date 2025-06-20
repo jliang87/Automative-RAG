@@ -11,13 +11,13 @@ initialize_session_state()
 
 # Page config
 st.set_page_config(
-    page_title="汽车规格查询系统",
+    page_title="智能汽车问答系统",
     page_icon="🚗",
     layout="wide"
 )
 
 # Main interface
-st.title("🚗 汽车规格查询系统")
+st.title("🚗 智能汽车问答系统")
 st.markdown("### 统一智能查询平台")
 
 # Simple system status check
@@ -183,4 +183,4 @@ with quick_cols[3]:
 
 # Footer
 st.markdown("---")
-st.caption("汽车规格查询系统 - 统一智能查询平台")
+st.caption("智能汽车问答系统 - 统一智能查询平台")
