@@ -29,6 +29,8 @@ if not system_ok:
         st.rerun()
     st.stop()
 
+    st.markdown("---")
+
 # Quick stats
 stats = get_job_statistics()
 if any(stats.values()):
