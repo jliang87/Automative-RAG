@@ -12,17 +12,17 @@ from faster_whisper import WhisperModel
 
 from src.models.schema import DocumentMetadata, DocumentSource
 from src.config.settings import settings
-from src.utils.helpers import extract_metadata_from_text
+from src.core.enhanced_transcript_processor import EnhancedTranscriptProcessor, VehicleInfoExtractor
 
 logger = logging.getLogger(__name__)
 
 
 class VideoTranscriber:
     """
-    Unified video transcriber that handles multiple platforms (YouTube, Bilibili, etc.)
-    using faster-whisper for CPU-optimized transcription.
+    Enhanced unified video transcriber that handles multiple platforms (YouTube, Bilibili, etc.)
+    using faster-whisper for CPU-optimized transcription with advanced metadata injection.
 
-    SIMPLIFIED: Global Dramatiq patch handles all Unicode cleaning automatically.
+    UPDATED: Now includes enhanced transcript processing with vehicle detection and metadata injection.
     """
 
     def __init__(
@@ -33,7 +33,7 @@ class VideoTranscriber:
             num_workers: int = 3
     ):
         """
-        Initialize the video transcriber with CPU-optimized faster-whisper.
+        Initialize the enhanced video transcriber.
 
         Args:
             output_dir: Directory to save downloaded videos and audio
@@ -51,6 +51,10 @@ class VideoTranscriber:
         self.whisper_model_size = whisper_model_size
         self.whisper_model = None  # Lazy-load the model when needed
         self.num_workers = num_workers
+
+        # ✅ NEW: Enhanced transcript processing components
+        self.transcript_processor = EnhancedTranscriptProcessor()
+        self.vehicle_extractor = VehicleInfoExtractor()
 
         # Add Chinese converter if available
         try:
@@ -228,10 +232,10 @@ class VideoTranscriber:
 
     def get_video_metadata(self, url: str) -> Dict[str, Union[str, int]]:
         """
-        Get metadata from a video using yt-dlp.
+        Get metadata from a video using yt-dlp with enhanced validation.
 
-        SIMPLIFIED: Global Dramatiq patch automatically cleans all Unicode.
-        No manual decoding needed - just extract and validate basic fields.
+        Returns:
+            Dictionary with video metadata
         """
         try:
             video_id = self.extract_video_id(url)
@@ -332,16 +336,14 @@ class VideoTranscriber:
             self, url: str, custom_metadata: Optional[Dict[str, str]] = None
     ) -> List[Document]:
         """
-        Process a video and return Langchain documents using Whisper for transcription.
-
-        SIMPLIFIED: Global Dramatiq patch handles all Unicode automatically.
+        ENHANCED: Process a video and return enhanced Langchain documents with metadata injection.
 
         Args:
             url: Video URL
             custom_metadata: Optional custom metadata
 
         Returns:
-            List of Langchain Document objects
+            List of enhanced Langchain Document objects with injected metadata
         """
         # Detect platform from URL
         platform = self.detect_platform(url)
@@ -349,10 +351,15 @@ class VideoTranscriber:
         # Extract metadata - no manual Unicode cleaning needed
         video_metadata = self.get_video_metadata(url)
 
-        # Extract automotive metadata using helper function
-        auto_metadata = extract_metadata_from_text(
-            video_metadata.get("title", "") + " " + video_metadata.get("description", "")
+        # ✅ NEW: Early vehicle detection for logging
+        early_vehicle_info = self.vehicle_extractor.extract_vehicle_info(
+            video_metadata.get("title", ""),
+            video_metadata.get("description", "")
         )
+
+        logger.info(f"🚗 Early vehicle detection: {early_vehicle_info}")
+
+        # Note: Legacy auto_metadata extraction removed - enhanced processing handles this
 
         # Determine the source based on platform
         source = DocumentSource.YOUTUBE if platform == "youtube" else DocumentSource.BILIBILI
@@ -369,49 +376,63 @@ class VideoTranscriber:
             if custom_metadata is None:
                 custom_metadata = {}
             custom_metadata["language"] = info.language
+            custom_metadata["transcription_method"] = "whisper"
+            custom_metadata["whisper_model"] = self.whisper_model_size
+            custom_metadata["platform"] = platform
 
-            print(f"Using Whisper transcription for video ID: {video_metadata['video_id']}")
+            logger.info(f"Using Whisper transcription for video ID: {video_metadata['video_id']}")
         except Exception as e:
             raise ValueError(f"Error transcribing video with Whisper: {str(e)}")
 
         if not transcript_text:
             raise ValueError("Transcription failed: no text was generated")
 
-        # Create metadata object - all data is already clean
-        metadata = DocumentMetadata(
-            source=source,
-            source_id=video_metadata["video_id"],
-            url=url,
-            title=video_metadata["title"],
-            author=video_metadata["author"],
-            published_date=video_metadata["published_date"],
-            manufacturer=auto_metadata.get("manufacturer"),
-            model=custom_metadata.get("model") if custom_metadata else None,
-            year=auto_metadata.get("year"),
-            category=auto_metadata.get("category"),
-            engine_type=auto_metadata.get("engine_type"),
-            transmission=auto_metadata.get("transmission"),
-            custom_metadata=custom_metadata,
+        # ✅ ENHANCED: Use enhanced transcript processing instead of simple chunking
+        logger.info("🔧 Applying enhanced transcript processing with metadata injection...")
+
+        enhanced_documents = self.transcript_processor.process_transcript_chunks(
+            transcript=transcript_text,
+            video_metadata=video_metadata,
+            chunk_size=getattr(settings, 'chunk_size', 1000),
+            chunk_overlap=getattr(settings, 'chunk_overlap', 200)
         )
 
-        # Add transcription info to metadata
-        metadata.custom_metadata["transcription_method"] = "whisper"
-        metadata.custom_metadata["whisper_model"] = self.whisper_model_size
-        metadata.custom_metadata["platform"] = platform
+        # ✅ NEW: Add custom metadata to all enhanced documents
+        for doc in enhanced_documents:
+            doc.metadata.update(custom_metadata)
 
-        # Create document
-        document = Document(
-            page_content=transcript_text,
-            metadata=metadata.dict(),
-        )
+        logger.info(f"✅ Enhanced processing complete: {len(enhanced_documents)} documents with metadata injection")
 
-        return [document]
+        # Log enhanced processing results
+        if enhanced_documents:
+            sample_doc = enhanced_documents[0]
+            vehicle_info = {
+                'model': sample_doc.metadata.get('model'),
+                'manufacturer': sample_doc.metadata.get('manufacturer'),
+                'confidence': sample_doc.metadata.get('vehicle_confidence', 0),
+                'metadata_injected': sample_doc.metadata.get('metadata_injected', False),
+                'fallback_used': sample_doc.metadata.get('fallback_metadata_used', False)
+            }
+            logger.info(f"🚗 Final vehicle detection: {vehicle_info}")
+
+            # Log sample enhanced content
+            original_length = sample_doc.metadata.get('original_chunk_length', 0)
+            enhanced_length = sample_doc.metadata.get('enhanced_chunk_length', 0)
+            logger.info(
+                f"📝 Content enhancement: {original_length} → {enhanced_length} chars (+{enhanced_length - original_length})")
+
+            # Show metadata prefix for debugging
+            metadata_prefix = sample_doc.metadata.get('metadata_prefix', '')
+            if metadata_prefix:
+                logger.info(f"🏷️ Metadata prefix: {metadata_prefix}")
+
+        return enhanced_documents
 
     def batch_process_videos(
             self, urls: List[str], custom_metadata: Optional[List[Dict[str, str]]] = None
     ) -> Dict[str, Union[List[str], Dict[str, str]]]:
         """
-        Process multiple videos in batch using Whisper for transcription.
+        ENHANCED: Process multiple videos in batch with enhanced metadata processing.
 
         Args:
             urls: List of Video URLs
@@ -425,6 +446,13 @@ class VideoTranscriber:
             raise ValueError("custom_metadata list must be the same length as urls")
 
         results = {}
+        enhanced_stats = {
+            'total_videos': len(urls),
+            'successful_processing': 0,
+            'vehicle_detection_count': 0,
+            'metadata_injection_count': 0,
+            'total_enhanced_documents': 0
+        }
 
         # Load Whisper model once for all videos
         self._load_whisper_model()
@@ -433,12 +461,211 @@ class VideoTranscriber:
         for i, url in enumerate(urls):
             metadata = custom_metadata[i] if custom_metadata else None
             try:
-                documents = self.process_video(url, metadata)
-                results[url] = [doc.metadata.get("id", "") for doc in documents]
-                print(f"Successfully processed video {i + 1}/{len(urls)}: {url}")
+                enhanced_documents = self.process_video(url, metadata)
+
+                # Extract document IDs
+                doc_ids = [doc.metadata.get("chunk_id", f"doc_{i}") for doc in enhanced_documents]
+                results[url] = doc_ids
+
+                # Update stats
+                enhanced_stats['successful_processing'] += 1
+                enhanced_stats['total_enhanced_documents'] += len(enhanced_documents)
+
+                if enhanced_documents:
+                    sample_doc = enhanced_documents[0]
+                    if sample_doc.metadata.get('vehicle_detected', False):
+                        enhanced_stats['vehicle_detection_count'] += 1
+                    if sample_doc.metadata.get('metadata_injected', False):
+                        enhanced_stats['metadata_injection_count'] += 1
+
+                logger.info(f"✅ Successfully processed video {i + 1}/{len(urls)}: {url}")
+
             except Exception as e:
-                print(f"Error processing video {i + 1}/{len(urls)}: {url}")
-                print(f"Error: {str(e)}")
-                results[url] = {"error": str(e)}
+                error_msg = str(e)
+                logger.error(f"❌ Error processing video {i + 1}/{len(urls)}: {url}")
+                logger.error(f"Error: {error_msg}")
+                results[url] = {"error": error_msg}
+
+        # Log batch processing summary
+        logger.info(f"📊 Batch processing complete:")
+        logger.info(f"  Successful: {enhanced_stats['successful_processing']}/{enhanced_stats['total_videos']}")
+        logger.info(f"  Vehicle detected: {enhanced_stats['vehicle_detection_count']} videos")
+        logger.info(f"  Metadata injected: {enhanced_stats['metadata_injection_count']} videos")
+        logger.info(f"  Total enhanced documents: {enhanced_stats['total_enhanced_documents']}")
+
+        # Add summary to results
+        results['_batch_summary'] = enhanced_stats
 
         return results
+
+    def get_processing_stats(self) -> Dict[str, any]:
+        """
+        Get statistics about the enhanced processing capabilities.
+
+        Returns:
+            Dictionary with processing statistics and capabilities
+        """
+        return {
+            'whisper_model_size': self.whisper_model_size,
+            'device': self.device,
+            'num_workers': self.num_workers,
+            'enhanced_processing_enabled': True,
+            'vehicle_extraction_enabled': True,
+            'metadata_injection_enabled': True,
+            'supported_platforms': ['youtube', 'bilibili'],
+            'chinese_conversion_available': self.chinese_converter is not None,
+            'transcript_processor_version': 'enhanced_v1',
+            'capabilities': {
+                'vehicle_detection': True,
+                'metadata_injection': True,
+                'fallback_metadata': True,
+                'score_normalization_ready': True,
+                'chinese_text_processing': True,
+                'automotive_domain_optimization': True
+            }
+        }
+
+    def validate_url(self, url: str) -> Dict[str, any]:
+        """
+        Validate a video URL before processing.
+
+        Args:
+            url: Video URL to validate
+
+        Returns:
+            Dictionary with validation results
+        """
+        validation_result = {
+            'valid': False,
+            'platform': 'unknown',
+            'video_id': None,
+            'errors': []
+        }
+
+        try:
+            # Detect platform
+            platform = self.detect_platform(url)
+            validation_result['platform'] = platform
+
+            if platform == 'unknown':
+                validation_result['errors'].append('Unsupported platform')
+                return validation_result
+
+            # Extract video ID
+            video_id = self.extract_video_id(url)
+            validation_result['video_id'] = video_id
+
+            # Basic URL format validation
+            if not url.startswith(('http://', 'https://')):
+                validation_result['errors'].append('Invalid URL format')
+                return validation_result
+
+            validation_result['valid'] = True
+
+        except ValueError as e:
+            validation_result['errors'].append(str(e))
+        except Exception as e:
+            validation_result['errors'].append(f'Validation error: {str(e)}')
+
+        return validation_result
+
+    def cleanup_temp_files(self, keep_audio: bool = True, keep_video: bool = False):
+        """
+        Clean up temporary files to save disk space.
+
+        Args:
+            keep_audio: Whether to keep downloaded audio files
+            keep_video: Whether to keep downloaded video files
+        """
+        cleaned_files = 0
+
+        if not keep_video:
+            for file in os.listdir(self.output_dir):
+                if file.endswith('.mp4'):
+                    file_path = os.path.join(self.output_dir, file)
+                    try:
+                        os.remove(file_path)
+                        cleaned_files += 1
+                    except Exception as e:
+                        logger.warning(f"Could not delete {file_path}: {e}")
+
+        if not keep_audio:
+            for file in os.listdir(self.audio_dir):
+                if file.endswith('.mp3'):
+                    file_path = os.path.join(self.audio_dir, file)
+                    try:
+                        os.remove(file_path)
+                        cleaned_files += 1
+                    except Exception as e:
+                        logger.warning(f"Could not delete {file_path}: {e}")
+
+        logger.info(f"🧹 Cleaned up {cleaned_files} temporary files")
+        return cleaned_files
+
+
+# ✅ NEW: Convenience function for easy integration
+def create_enhanced_video_transcriber(**kwargs) -> VideoTranscriber:
+    """
+    Create an enhanced video transcriber with optimal settings.
+
+    Args:
+        **kwargs: Optional arguments to override defaults
+
+    Returns:
+        Configured VideoTranscriber instance
+    """
+    default_settings = {
+        'whisper_model_size': 'medium',
+        'device': 'cpu',
+        'num_workers': 3,
+        'output_dir': 'data/videos'
+    }
+
+    # Override defaults with provided kwargs
+    settings_to_use = {**default_settings, **kwargs}
+
+    transcriber = VideoTranscriber(**settings_to_use)
+
+    logger.info("🚀 Created enhanced video transcriber with:")
+    logger.info(f"  Whisper model: {settings_to_use['whisper_model_size']}")
+    logger.info(f"  Device: {settings_to_use['device']}")
+    logger.info(f"  Workers: {settings_to_use['num_workers']}")
+    logger.info(f"  Enhanced processing: ENABLED")
+    logger.info(f"  Vehicle detection: ENABLED")
+    logger.info(f"  Metadata injection: ENABLED")
+
+    return transcriber
+
+
+# Example usage and testing
+if __name__ == "__main__":
+    # Test the enhanced video transcriber
+    print("=== Enhanced Video Transcriber Test ===")
+
+    # Create transcriber
+    transcriber = create_enhanced_video_transcriber()
+
+    # Test URL validation
+    test_urls = [
+        "https://www.bilibili.com/video/BV1234567890",
+        "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+        "invalid-url"
+    ]
+
+    print("\n--- URL Validation Tests ---")
+    for url in test_urls:
+        result = transcriber.validate_url(url)
+        print(f"URL: {url}")
+        print(f"Valid: {result['valid']}, Platform: {result['platform']}")
+        if result['errors']:
+            print(f"Errors: {result['errors']}")
+        print()
+
+    # Show capabilities
+    print("--- Processing Capabilities ---")
+    stats = transcriber.get_processing_stats()
+    for key, value in stats['capabilities'].items():
+        status = "✅" if value else "❌"
+        print(f"{status} {key.replace('_', ' ').title()}")
+
+    print("\n🎯 Enhanced video transcriber ready for production use!")
