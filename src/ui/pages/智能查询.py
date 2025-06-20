@@ -12,6 +12,12 @@ from src.ui.components.validation_display import (
     render_validation_help,
     render_real_time_validation_feedback
 )
+from src.ui.components.metadata_display import (
+    render_embedded_metadata_display,
+    render_metadata_summary_card,
+    add_metadata_display_to_sources,
+    EmbeddedMetadataExtractor
+)
 
 initialize_session_state()
 
@@ -292,7 +298,7 @@ def display_quotes_result(answer: str):
 
 
 def display_enhanced_sources(result: Dict[str, Any], in_expander: bool = False):
-    """Display sources with enhanced validation and unified indicators."""
+    """Display sources with enhanced validation and metadata analysis."""
 
     documents = result.get("documents", [])
     if not documents:
@@ -301,16 +307,60 @@ def display_enhanced_sources(result: Dict[str, Any], in_expander: bool = False):
     st.markdown("---")
     st.subheader(f"📚 参考来源 ({len(documents)} 个)")
 
+    # Add metadata quality overview
+    st.markdown("#### 🔍 元数据质量概览")
+    quality_col1, quality_col2, quality_col3, quality_col4 = st.columns(4)
+
+    # Analyze metadata quality across all documents
+    extractor = EmbeddedMetadataExtractor()
+    total_docs = len(documents)
+    docs_with_embedded = 0
+    docs_with_vehicle = 0
+    avg_metadata_injection = 0
+
+    for doc in documents:
+        content = doc.get("content", "")
+        metadata = doc.get("metadata", {})
+
+        embedded_metadata, _ = extractor.extract_embedded_metadata(content)
+        if embedded_metadata:
+            docs_with_embedded += 1
+
+        if metadata.get('has_vehicle_info'):
+            docs_with_vehicle += 1
+
+        if metadata.get('metadata_injected'):
+            avg_metadata_injection += 1
+
+    with quality_col1:
+        st.metric("含嵌入元数据", f"{docs_with_embedded}/{total_docs}")
+
+    with quality_col2:
+        st.metric("车辆信息检测", f"{docs_with_vehicle}/{total_docs}")
+
+    with quality_col3:
+        injection_rate = (avg_metadata_injection / total_docs * 100) if total_docs > 0 else 0
+        st.metric("注入成功率", f"{injection_rate:.0f}%")
+
+    with quality_col4:
+        if docs_with_embedded > total_docs * 0.8:
+            st.success("质量优秀")
+        elif docs_with_embedded > total_docs * 0.5:
+            st.warning("质量良好")
+        else:
+            st.error("质量待改进")
+
     # Only create expander if we're not already inside one
     if not in_expander:
-        with st.expander("查看所有来源", expanded=False):
-            _render_sources_content(documents)
+        with st.expander("查看所有来源及元数据", expanded=False):
+            _render_sources_content_with_metadata(documents)
     else:
-        _render_sources_content(documents)
+        _render_sources_content_with_metadata(documents)
 
 
-def _render_sources_content(documents):
-    """Render the actual sources content - extracted to avoid nested expanders."""
+def _render_sources_content_with_metadata(documents):
+    """Render the actual sources content with metadata display."""
+
     for i, doc in enumerate(documents):
         metadata = doc.get("metadata", {})
         relevance = doc.get("relevance_score", 0)
@@ -319,25 +369,32 @@ def _render_sources_content(documents):
         title = metadata.get("title", f"文档 {i + 1}")
         source_type = metadata.get("source", "unknown")
 
-        # UPDATED: Use unified validation status from backend
+        # Source quality indicator with metadata awareness
+        extractor = EmbeddedMetadataExtractor()
+        embedded_metadata, _ = extractor.extract_embedded_metadata(doc.get("content", ""))
+        has_good_metadata = len(embedded_metadata) > 2  # Has substantial metadata
+
         validation_status = metadata.get("validation_status", "unknown")
         automotive_warnings = metadata.get("automotive_warnings", [])
 
-        # Source quality indicator based on backend validation
-        if validation_status == "validated" and relevance > 0.8:
+        # Enhanced quality assessment
+        if validation_status == "validated" and relevance > 0.8 and has_good_metadata:
             st.success(f"**来源 {i + 1}** 🟢: {title[:60]}...")
-            st.caption("✅ 高质量来源，已通过验证")
+            st.caption("✅ 高质量来源，已通过验证，元数据完整")
         elif validation_status == "has_warnings" or automotive_warnings:
             st.warning(f"**来源 {i + 1}** 🟡: {title[:60]}...")
             st.caption("⚠️ 包含需注意信息，请参考验证详情")
-        elif relevance > 0.6:
+        elif relevance > 0.6 and has_good_metadata:
             st.info(f"**来源 {i + 1}** 🟡: {title[:60]}...")
-            st.caption("📋 中等质量来源")
+            st.caption("📋 中等质量来源，元数据较好")
+        elif has_good_metadata:
+            st.info(f"**来源 {i + 1}** 🔵: {title[:60]}...")
+            st.caption("📊 元数据丰富，但相关度一般")
         else:
             st.error(f"**来源 {i + 1}** 🔴: {title[:60]}...")
-            st.caption("❗ 低相关度来源，请谨慎参考")
+            st.caption("❗ 低质量来源，元数据缺失")
 
-        # Source details
+        # Basic source details
         col1, col2 = st.columns([1, 1])
         with col1:
             st.caption(f"**来源类型**: {source_type}")
@@ -348,36 +405,55 @@ def _render_sources_content(documents):
             if metadata.get("published_date"):
                 st.caption(f"**发布**: {metadata['published_date']}")
 
-        # UPDATED: Show validation warnings from backend
+        # Show validation warnings
         if automotive_warnings:
             st.caption("⚠️ **验证提醒**:")
-            for warning in automotive_warnings[:2]:  # Show max 2 warnings
+            for warning in automotive_warnings[:2]:
                 st.caption(f"  • {warning}")
             if len(automotive_warnings) > 2:
                 st.caption(f"  • 还有 {len(automotive_warnings) - 2} 项提醒...")
 
-        # Content preview - Use text_area directly instead of nested expander
-        if doc.get("content"):
-            # Use separate keys for button and session state
-            button_key = f"btn_show_content_{i}"
-            state_key = f"content_visible_{i}"
+        # NEW: Add metadata summary card
+        st.markdown("**🏷️ 元数据摘要:**")
+        render_metadata_summary_card(doc, compact=True)
 
-            # Check if button was clicked
-            if st.button(f"查看来源 {i + 1} 内容片段", key=button_key):
-                # Toggle the visibility state
-                current_state = st.session_state.get(state_key, False)
-                st.session_state[state_key] = not current_state
-                st.rerun()
+        # Content and detailed metadata display
+        if doc.get("content"):
+            button_key = f"btn_show_content_{i}"
+            metadata_key = f"btn_show_metadata_{i}"
+            state_key = f"content_visible_{i}"
+            metadata_state_key = f"metadata_visible_{i}"
+
+            # Buttons for content and metadata
+            btn_col1, btn_col2 = st.columns(2)
+
+            with btn_col1:
+                if st.button(f"查看来源 {i + 1} 内容", key=button_key):
+                    current_state = st.session_state.get(state_key, False)
+                    st.session_state[state_key] = not current_state
+                    st.rerun()
+
+            with btn_col2:
+                if st.button(f"查看来源 {i + 1} 详细元数据", key=metadata_key):
+                    current_state = st.session_state.get(metadata_state_key, False)
+                    st.session_state[metadata_state_key] = not current_state
+                    st.rerun()
 
             # Show content if state is True
             if st.session_state.get(state_key, False):
+                content_preview = doc['content'][:300] + "..." if len(doc['content']) > 300 else doc['content']
                 st.text_area(
                     f"来源 {i + 1} 内容预览",
-                    doc['content'][:300] + "..." if len(doc['content']) > 300 else doc['content'],
+                    content_preview,
                     height=100,
                     disabled=True,
                     key=f"content_display_{i}"
                 )
+
+            # Show detailed metadata if state is True
+            if st.session_state.get(metadata_state_key, False):
+                with st.container():
+                    render_embedded_metadata_display(doc, show_full_content=False)
 
         st.markdown("---")
         

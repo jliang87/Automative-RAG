@@ -351,6 +351,9 @@ async def get_query_result(job_id: str) -> Optional[EnhancedQueryResponse]:
         documents = result.get("documents", [])
         cleaned_documents = []
 
+        # NEW: Calculate processing statistics
+        processing_stats = calculate_processing_statistics(documents)
+
         for doc_data in documents:
             if isinstance(doc_data, dict):
                 doc_metadata = doc_data.get("metadata", {})
@@ -368,8 +371,8 @@ async def get_query_result(job_id: str) -> Optional[EnhancedQueryResponse]:
 
                 cleaned_doc = {
                     "id": doc_data.get("id", ""),
-                    "content": doc_data.get("content", ""),
-                    "metadata": cleaned_metadata,
+                    "content": doc_data.get("content", ""),  # CRITICAL: Must include embedded metadata
+                    "metadata": cleaned_metadata,  # CRITICAL: Must include all processing metadata
                     "relevance_score": float(doc_data.get("relevance_score", 0.0))
                 }
                 cleaned_documents.append(cleaned_doc)
@@ -387,7 +390,8 @@ async def get_query_result(job_id: str) -> Optional[EnhancedQueryResponse]:
             "processing_mode": query_mode,
             "complexity_level": metadata.get("complexity_level", "simple"),
             "mode_name": metadata.get("mode_name", ""),
-            "unified_system": True
+            "unified_system": True,
+            "processing_stats": processing_stats  # NEW: Add processing statistics
         }
 
         mode_config = QUERY_MODE_CONFIGS.get(query_mode_enum)
@@ -444,6 +448,55 @@ async def get_query_result(job_id: str) -> Optional[EnhancedQueryResponse]:
             job_id=job_id
         )
 
+def calculate_processing_statistics(documents: List[Dict]) -> Dict[str, Any]:
+    """Calculate processing statistics for UI display."""
+    if not documents:
+        return {}
+
+    total_docs = len(documents)
+    docs_with_embedded = 0
+    docs_with_vehicle = 0
+    unique_vehicles = set()
+    unique_sources = set()
+    total_metadata_fields = 0
+
+    for doc in documents:
+        metadata = doc.get("metadata", {})
+        content = doc.get("content", "")
+
+        # Check for embedded metadata using regex pattern
+        import re
+        embedded_metadata_pattern = r'【[^】]+】'
+        embedded_matches = re.findall(embedded_metadata_pattern, content)
+
+        if embedded_matches:
+            docs_with_embedded += 1
+            total_metadata_fields += len(embedded_matches)
+
+        # Check vehicle info
+        if metadata.get('has_vehicle_info') or metadata.get('model'):
+            docs_with_vehicle += 1
+
+            # Track unique vehicles
+            if metadata.get('model'):
+                manufacturer = metadata.get('manufacturer', '')
+                vehicle_name = f"{manufacturer} {metadata['model']}".strip()
+                unique_vehicles.add(vehicle_name)
+
+        # Track sources
+        if metadata.get('source'):
+            unique_sources.add(metadata['source'])
+
+    return {
+        "total_documents": total_docs,
+        "documents_with_metadata": docs_with_embedded,
+        "documents_with_vehicle_info": docs_with_vehicle,
+        "unique_vehicles_detected": list(unique_vehicles),
+        "unique_sources": list(unique_sources),
+        "metadata_injection_rate": docs_with_embedded / total_docs if total_docs > 0 else 0,
+        "vehicle_detection_rate": docs_with_vehicle / total_docs if total_docs > 0 else 0,
+        "avg_metadata_fields_per_doc": total_metadata_fields / max(docs_with_embedded, 1)
+    }
 
 def parse_structured_answer(answer: str, query_mode: str) -> Optional[Dict[str, str]]:
     """Parse structured answer into sections based on query mode"""
@@ -614,7 +667,7 @@ async def debug_document_retrieval(request: Dict[str, str]) -> Dict[str, Any]:
             metadata_filter=None
         )
 
-        # Format results for UI consumption
+        # Format results for UI consumption with enhanced metadata
         documents = []
         for doc, score in results:
             # Clean metadata to ensure JSON serialization
@@ -630,17 +683,21 @@ async def debug_document_retrieval(request: Dict[str, str]) -> Dict[str, Any]:
                     cleaned_metadata[key] = value
 
             documents.append({
-                "content": doc.page_content,
-                "metadata": cleaned_metadata,
+                "content": doc.page_content,  # CRITICAL: Must include full content with embedded metadata
+                "metadata": cleaned_metadata,  # CRITICAL: Must include all metadata fields
                 "relevance_score": float(score) if isinstance(score, (np.floating, np.float32, np.float64)) else score
             })
+
+        # NEW: Calculate metadata statistics for the document browser
+        processing_stats = calculate_processing_statistics(documents)
 
         logger.info(f"Debug retrieval returned {len(documents)} documents")
 
         return {
             "documents": documents,
             "total_found": len(documents),
-            "query_used": query
+            "query_used": query,
+            "processing_stats": processing_stats  # NEW: Add processing statistics
         }
 
     except Exception as e:

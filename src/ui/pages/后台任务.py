@@ -9,6 +9,11 @@ from src.ui.api_client import (
     get_job_statistics,
     api_request
 )
+from src.ui.components.metadata_display import (
+    add_metadata_display_to_sources,
+    render_embedded_metadata_display,
+    EmbeddedMetadataExtractor
+)
 from src.ui.session_init import initialize_session_state
 
 # UPDATED: Import unified validation display
@@ -181,6 +186,111 @@ def has_validation_data(result: Dict[str, Any]) -> bool:
 
     return False
 
+def display_enhanced_job_metadata_analysis(job_details: Dict[str, Any]):
+    """Display enhanced metadata analysis for completed jobs."""
+
+    # Check if this is a video processing job with documents
+    if job_details.get('result') and job_details.get('status') == 'completed':
+        result = job_details['result']
+
+        # Parse result if it's a string
+        if isinstance(result, str):
+            try:
+                result = json.loads(result)
+            except:
+                result = {}
+
+        if 'documents' in result or 'processed_documents' in result:
+            documents = result.get('documents', result.get('processed_documents', []))
+
+            if documents:
+                st.markdown("---")
+                st.subheader("📊 处理结果元数据分析")
+
+                # Metadata quality analysis
+                extractor = EmbeddedMetadataExtractor()
+                total_docs = len(documents)
+                metadata_stats = {
+                    'docs_with_embedded': 0,
+                    'docs_with_vehicle': 0,
+                    'total_metadata_fields': 0,
+                    'unique_vehicles': set(),
+                    'unique_sources': set()
+                }
+
+                for doc in documents:
+                    if isinstance(doc, dict):
+                        content = doc.get('content', doc.get('page_content', ''))
+                        metadata = doc.get('metadata', {})
+
+                        # Extract embedded metadata
+                        embedded_metadata, _ = extractor.extract_embedded_metadata(content)
+                        if embedded_metadata:
+                            metadata_stats['docs_with_embedded'] += 1
+                            metadata_stats['total_metadata_fields'] += len(embedded_metadata)
+
+                            # Track unique vehicles and sources
+                            if 'model' in embedded_metadata:
+                                vehicle_name = embedded_metadata['model']
+                                manufacturer = metadata.get('manufacturer', '')
+                                full_vehicle = f"{manufacturer} {vehicle_name}".strip()
+                                metadata_stats['unique_vehicles'].add(full_vehicle)
+
+                        if metadata.get('has_vehicle_info'):
+                            metadata_stats['docs_with_vehicle'] += 1
+
+                        if metadata.get('source'):
+                            metadata_stats['unique_sources'].add(metadata['source'])
+
+                # Display metadata statistics
+                stats_col1, stats_col2, stats_col3, stats_col4 = st.columns(4)
+
+                with stats_col1:
+                    embedded_rate = (metadata_stats['docs_with_embedded'] / total_docs * 100) if total_docs > 0 else 0
+                    st.metric("元数据注入率", f"{embedded_rate:.1f}%")
+
+                with stats_col2:
+                    vehicle_rate = (metadata_stats['docs_with_vehicle'] / total_docs * 100) if total_docs > 0 else 0
+                    st.metric("车辆检测率", f"{vehicle_rate:.1f}%")
+
+                with stats_col3:
+                    avg_fields = (
+                                metadata_stats['total_metadata_fields'] / max(metadata_stats['docs_with_embedded'], 1))
+                    st.metric("平均元数据字段", f"{avg_fields:.1f}")
+
+                with stats_col4:
+                    st.metric("检测到的车型", len(metadata_stats['unique_vehicles']))
+
+                # Show detected vehicles and sources
+                if metadata_stats['unique_vehicles']:
+                    st.markdown("**🚗 检测到的车型:**")
+                    vehicles_list = list(metadata_stats['unique_vehicles'])[:5]  # Show first 5
+                    st.write(", ".join(vehicles_list))
+                    if len(metadata_stats['unique_vehicles']) > 5:
+                        st.caption(f"... 还有 {len(metadata_stats['unique_vehicles']) - 5} 个车型")
+
+                if metadata_stats['unique_sources']:
+                    st.markdown("**📺 来源平台:**")
+                    st.write(", ".join(metadata_stats['unique_sources']))
+
+                # Document sample with metadata details
+                st.markdown("---")
+                st.subheader("📄 文档样本及元数据")
+
+                # Show first few documents with detailed metadata
+                sample_docs = documents[:3] if len(documents) > 3 else documents
+
+                for i, doc in enumerate(sample_docs):
+                    with st.expander(f"查看文档 {i + 1} 元数据详情", expanded=False):
+                        if isinstance(doc, dict):
+                            # Convert to expected format
+                            doc_format = {
+                                'content': doc.get('content', doc.get('page_content', '')),
+                                'metadata': doc.get('metadata', {})
+                            }
+                            render_embedded_metadata_display(doc_format, show_full_content=False)
+                        else:
+                            st.warning("文档格式不支持元数据显示")
 
 def display_job_validation_summary(result: Dict[str, Any]) -> None:
     """Display a summary of validation results for completed jobs"""
@@ -423,6 +533,8 @@ def display_job_card(job: Dict[str, Any], context: str, index: int):
                         result = json.loads(result)
                     except:
                         result = {}
+
+                display_enhanced_job_metadata_analysis(job_detail)
 
                 # UPDATED: Show validation results for completed LLM inference jobs
                 if job_detail.get('status') == 'completed' and job_type == "llm_inference":

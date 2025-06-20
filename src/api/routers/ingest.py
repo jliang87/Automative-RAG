@@ -5,6 +5,7 @@ from typing import Dict, List, Optional, Union, Any
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, Query
 from pydantic import HttpUrl, BaseModel
 import logging
+import json
 
 from src.core.background.job_chain import job_chain, JobType
 from src.core.background.job_tracker import job_tracker
@@ -335,32 +336,164 @@ async def delete_job(job_id: str) -> Dict[str, str]:
     return {"message": f"Successfully deleted job: {job_id}"}
 
 
-@router.get("/status", response_model=Dict[str, Any])
-async def get_ingest_status() -> Dict[str, Any]:
+@router.get("/jobs/{job_id}", response_model=Dict[str, Any])
+async def get_job_status(job_id: str) -> Dict[str, Any]:
     """
-    Get ingestion system status including job chain queue information.
+    Get the status of a background job, including enhanced metadata analysis.
     """
-    try:
-        # Get job stats
-        job_stats = job_tracker.count_jobs_by_status()
-
-        # Get queue status from job chain
-        queue_status = job_chain.get_queue_status()
-
-        return {
-            "status": "healthy",
-            "mode": "job_chain",
-            "job_stats": job_stats,
-            "queue_status": queue_status,
-            "total_jobs": job_stats.get("total", 0)
-        }
-    except Exception as e:
-        logger.error(f"Error getting ingest status: {str(e)}")
+    # Get basic job data
+    job_data = job_tracker.get_job(job_id)
+    if not job_data:
         raise HTTPException(
-            status_code=500,
-            detail=f"Error getting status: {str(e)}",
+            status_code=404,
+            detail=f"Job with ID {job_id} not found"
         )
 
+    # Get job chain status if available
+    chain_status = job_chain.get_job_chain_status(job_id)
+    if chain_status:
+        job_data["job_chain"] = chain_status
+
+    # NEW: Add enhanced processing analysis for completed jobs
+    if job_data.get("status") == "completed" and job_data.get("result"):
+        result = job_data["result"]
+        if isinstance(result, str):
+            try:
+                result = json.loads(result)
+            except:
+                result = {}
+
+        # Check if result contains documents
+        if "documents" in result or "processed_documents" in result:
+            documents = result.get("documents", result.get("processed_documents", []))
+
+            if documents:
+                # Calculate enhanced processing analysis
+                processing_analysis = calculate_job_processing_analysis(documents, job_data)
+                job_data["processing_analysis"] = processing_analysis
+
+    return job_data
+
+
+def calculate_job_processing_analysis(documents: List[Dict], job_data: Dict) -> Dict[str, Any]:
+    """Calculate detailed processing analysis for a completed job."""
+
+    total_docs = len(documents)
+    metadata_injection_stats = {
+        "successful_injections": 0,
+        "failed_injections": 0,
+        "injection_rate": 0.0
+    }
+
+    vehicle_detection_stats = {
+        "documents_with_vehicles": 0,
+        "detection_rate": 0.0,
+        "detected_vehicles": []
+    }
+
+    content_enhancement_stats = {
+        "total_original_length": 0,
+        "total_enhanced_length": 0,
+        "enhancement_ratio": 0.0,
+        "avg_metadata_per_chunk": 0.0
+    }
+
+    source_analysis = {
+        "platform": "unknown",
+        "video_metadata_quality": "unknown",
+        "transcription_language": "unknown",
+        "transcription_method": "unknown"
+    }
+
+    # Analyze each document
+    unique_vehicles = {}
+    total_metadata_fields = 0
+
+    for doc in documents:
+        if isinstance(doc, dict):
+            content = doc.get('content', doc.get('page_content', ''))
+            metadata = doc.get('metadata', {})
+
+            # Check metadata injection
+            import re
+            embedded_metadata_pattern = r'【[^】]+】'
+            embedded_matches = re.findall(embedded_metadata_pattern, content)
+
+            if embedded_matches or metadata.get('metadata_injected'):
+                metadata_injection_stats["successful_injections"] += 1
+                total_metadata_fields += len(embedded_matches)
+            else:
+                metadata_injection_stats["failed_injections"] += 1
+
+            # Check vehicle detection
+            if metadata.get('has_vehicle_info') or metadata.get('model'):
+                vehicle_detection_stats["documents_with_vehicles"] += 1
+
+                # Track unique vehicles with confidence
+                if metadata.get('model'):
+                    vehicle_key = metadata['model']
+                    if vehicle_key not in unique_vehicles:
+                        unique_vehicles[vehicle_key] = {
+                            "name": metadata['model'],
+                            "manufacturer": metadata.get('manufacturer', ''),
+                            "confidence": metadata.get('vehicle_confidence', 0.0),
+                            "documents_count": 0
+                        }
+                    unique_vehicles[vehicle_key]["documents_count"] += 1
+
+            # Content enhancement analysis
+            original_length = metadata.get('original_chunk_length', 0)
+            enhanced_length = metadata.get('enhanced_chunk_length', len(content))
+
+            content_enhancement_stats["total_original_length"] += original_length
+            content_enhancement_stats["total_enhanced_length"] += enhanced_length
+
+            # Source analysis (get from first document with source info)
+            if source_analysis["platform"] == "unknown" and metadata.get('source'):
+                source_analysis["platform"] = metadata['source']
+                source_analysis["transcription_language"] = metadata.get('language', 'unknown')
+                source_analysis["transcription_method"] = metadata.get('transcription_method', 'unknown')
+
+                # Assess video metadata quality
+                quality_indicators = [
+                    metadata.get('title'),
+                    metadata.get('author'),
+                    metadata.get('published_date'),
+                    metadata.get('duration')
+                ]
+                quality_score = sum(1 for indicator in quality_indicators if indicator)
+                if quality_score >= 3:
+                    source_analysis["video_metadata_quality"] = "high"
+                elif quality_score >= 2:
+                    source_analysis["video_metadata_quality"] = "medium"
+                else:
+                    source_analysis["video_metadata_quality"] = "low"
+
+    # Calculate rates and ratios
+    if total_docs > 0:
+        metadata_injection_stats["injection_rate"] = metadata_injection_stats["successful_injections"] / total_docs
+        vehicle_detection_stats["detection_rate"] = vehicle_detection_stats["documents_with_vehicles"] / total_docs
+
+    if content_enhancement_stats["total_original_length"] > 0:
+        content_enhancement_stats["enhancement_ratio"] = (
+                                                                 content_enhancement_stats["total_enhanced_length"] -
+                                                                 content_enhancement_stats["total_original_length"]
+                                                         ) / content_enhancement_stats["total_original_length"]
+
+    if metadata_injection_stats["successful_injections"] > 0:
+        content_enhancement_stats["avg_metadata_per_chunk"] = total_metadata_fields / metadata_injection_stats[
+            "successful_injections"]
+
+    # Format detected vehicles
+    vehicle_detection_stats["detected_vehicles"] = list(unique_vehicles.values())
+
+    return {
+        "total_documents_created": total_docs,
+        "metadata_injection_stats": metadata_injection_stats,
+        "vehicle_detection_stats": vehicle_detection_stats,
+        "content_enhancement_stats": content_enhancement_stats,
+        "source_analysis": source_analysis
+    }
 
 @router.post("/reset", response_model=Dict[str, str])
 async def reset_vector_store() -> Dict[str, str]:
