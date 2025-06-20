@@ -29,6 +29,8 @@ if not system_ok:
         st.rerun()
     st.stop()
 
+    st.markdown("---")
+
 # Quick stats
 stats = get_job_statistics()
 if any(stats.values()):
@@ -40,7 +42,7 @@ if any(stats.values()):
     with col3:
         st.metric("等待任务", stats.get("pending", 0))
 
-st.markdown("---")
+    st.markdown("---")
 
 # Main action
 st.subheader("🔍 开始查询")
