@@ -413,9 +413,11 @@ def _render_sources_content_with_metadata(documents):
             if len(automotive_warnings) > 2:
                 st.caption(f"  • 还有 {len(automotive_warnings) - 2} 项提醒...")
 
-        # NEW: Add metadata summary card
-        st.markdown("**🏷️ 元数据摘要:**")
-        render_metadata_summary_card(doc, compact=True)
+            # NEW: Add metadata summary card
+            st.markdown("**🏷️ 元数据摘要:**")
+            # FIXED: Add unique_id to prevent key conflicts
+            unique_id = f"query_source_{i}"
+            render_metadata_summary_card(doc, compact=True, unique_id=unique_id)
 
         # Content and detailed metadata display
         if doc.get("content"):
@@ -450,10 +452,12 @@ def _render_sources_content_with_metadata(documents):
                     key=f"content_display_{i}"
                 )
 
-            # Show detailed metadata if state is True
-            if st.session_state.get(metadata_state_key, False):
-                with st.container():
-                    render_embedded_metadata_display(doc, show_full_content=False)
+                # Show detailed metadata if state is True
+                if st.session_state.get(metadata_state_key, False):
+                    with st.container():
+                        # FIXED: Add unique_id to prevent key conflicts
+                        unique_id = f"query_metadata_{i}"
+                        render_embedded_metadata_display(doc, show_full_content=False, unique_id=unique_id)
 
         st.markdown("---")
         

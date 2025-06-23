@@ -109,7 +109,9 @@ def display_enhanced_document_card(doc: Dict, index: int):
 
         # Enhanced metadata summary card
         st.markdown("**🏷️ 元数据摘要:**")
-        render_metadata_summary_card(doc, compact=True)
+        # FIXED: Add unique_id to prevent key conflicts
+        unique_id = f"doc_browser_{index}"
+        render_metadata_summary_card(doc, compact=True, unique_id=unique_id)
 
         # Control buttons
         expand_key = f"expand_doc_{index}"
@@ -208,7 +210,9 @@ def display_enhanced_document_card(doc: Dict, index: int):
         if st.session_state.get(metadata_key, False):
             st.markdown("---")
             st.markdown("**🔍 详细元数据分析:**")
-            render_embedded_metadata_display(doc, show_full_content=True)
+            # FIXED: Add unique_id to prevent key conflicts
+            unique_id = f"doc_detailed_{index}"
+            render_embedded_metadata_display(doc, show_full_content=True, unique_id=unique_id)
 
         st.divider()
 

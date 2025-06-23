@@ -273,24 +273,30 @@ def display_enhanced_job_metadata_analysis(job_details: Dict[str, Any]):
                     st.markdown("**📺 来源平台:**")
                     st.write(", ".join(metadata_stats['unique_sources']))
 
-                # Document sample with metadata details
-                st.markdown("---")
-                st.subheader("📄 文档样本及元数据")
+                    # Document sample with metadata details
+                    st.markdown("---")
+                    st.subheader("📄 文档样本及元数据")
 
-                # Show first few documents with detailed metadata
-                sample_docs = documents[:3] if len(documents) > 3 else documents
+                    # Show first few documents with detailed metadata
+                    sample_docs = documents[:3] if len(documents) > 3 else documents
 
-                for i, doc in enumerate(sample_docs):
-                    with st.expander(f"查看文档 {i + 1} 元数据详情", expanded=False):
-                        if isinstance(doc, dict):
-                            # Convert to expected format
-                            doc_format = {
-                                'content': doc.get('content', doc.get('page_content', '')),
-                                'metadata': doc.get('metadata', {})
-                            }
-                            render_embedded_metadata_display(doc_format, show_full_content=False)
-                        else:
-                            st.warning("文档格式不支持元数据显示")
+                    for i, doc in enumerate(sample_docs):
+                        # FIXED: Add unique_id parameter to prevent key conflicts
+                        job_id = job_details.get('job_id', 'unknown')
+                        unique_id = f"job_{job_id[:8]}_doc_{i}"
+
+                        with st.expander(f"查看文档 {i + 1} 元数据详情", expanded=False):
+                            if isinstance(doc, dict):
+                                # Convert to expected format
+                                doc_format = {
+                                    'content': doc.get('content', doc.get('page_content', '')),
+                                    'metadata': doc.get('metadata', {})
+                                }
+                                # FIXED: Pass unique_id to prevent duplicate keys
+                                render_embedded_metadata_display(doc_format, show_full_content=False,
+                                                                 unique_id=unique_id)
+                            else:
+                                st.warning("文档格式不支持元数据显示")
 
 def display_job_validation_summary(result: Dict[str, Any]) -> None:
     """Display a summary of validation results for completed jobs"""

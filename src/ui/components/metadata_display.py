@@ -1,4 +1,5 @@
 import re
+import uuid
 import streamlit as st
 from typing import Dict, List, Optional, Any, Tuple
 
@@ -52,14 +53,20 @@ class EmbeddedMetadataExtractor:
         return "", content
 
 
-def render_embedded_metadata_display(document: Dict[str, Any], show_full_content: bool = False) -> None:
+def render_embedded_metadata_display(document: Dict[str, Any], show_full_content: bool = False,
+                                     unique_id: str = None) -> None:
     """
     Render embedded metadata display for a document/chunk.
 
     Args:
         document: Document dictionary with 'content' and 'metadata' keys
         show_full_content: Whether to show full content or just preview
+        unique_id: Unique identifier to prevent key conflicts
     """
+    # Generate unique ID if not provided
+    if unique_id is None:
+        unique_id = str(uuid.uuid4())[:8]
+
     content = document.get('content', '')
     structured_metadata = document.get('metadata', {})
 
@@ -72,16 +79,17 @@ def render_embedded_metadata_display(document: Dict[str, Any], show_full_content
     tab1, tab2, tab3 = st.tabs(["📊 元数据概览", "🏷️ 嵌入元数据", "📝 内容预览"])
 
     with tab1:
-        render_metadata_overview(structured_metadata, embedded_metadata)
+        render_metadata_overview(structured_metadata, embedded_metadata, unique_id)
 
     with tab2:
-        render_embedded_metadata_details(embedded_metadata, metadata_prefix, content)
+        render_embedded_metadata_details(embedded_metadata, metadata_prefix, content, unique_id)
 
     with tab3:
-        render_content_preview(clean_content, content, show_full_content)
+        render_content_preview(clean_content, content, show_full_content, unique_id)
 
 
-def render_metadata_overview(structured_metadata: Dict[str, Any], embedded_metadata: Dict[str, str]) -> None:
+def render_metadata_overview(structured_metadata: Dict[str, Any], embedded_metadata: Dict[str, str],
+                             unique_id: str) -> None:
     """Render metadata overview comparing structured vs embedded metadata."""
 
     st.subheader("📊 元数据对比")
@@ -166,8 +174,8 @@ def render_metadata_quality_indicators(structured_metadata: Dict[str, Any], embe
             st.warning("📈 内容增强: 无增强")
 
 
-def render_embedded_metadata_details(embedded_metadata: Dict[str, str], metadata_prefix: str,
-                                     full_content: str) -> None:
+def render_embedded_metadata_details(embedded_metadata: Dict[str, str], metadata_prefix: str, full_content: str,
+                                     unique_id: str) -> None:
     """Render detailed embedded metadata information."""
 
     if not embedded_metadata:
@@ -212,8 +220,13 @@ def render_embedded_metadata_details(embedded_metadata: Dict[str, str], metadata
             st.metric("元数据占比", f"{analysis_value:.1%}")
 
 
-def render_content_preview(clean_content: str, full_content: str, show_full: bool = False) -> None:
+def render_content_preview(clean_content: str, full_content: str, show_full: bool = False,
+                           unique_id: str = None) -> None:
     """Render content preview with metadata highlighting."""
+
+    # Generate unique ID if not provided
+    if unique_id is None:
+        unique_id = str(uuid.uuid4())[:8]
 
     st.subheader("📝 内容预览")
 
@@ -223,12 +236,12 @@ def render_content_preview(clean_content: str, full_content: str, show_full: boo
     with col1:
         st.markdown("**🧹 清理后内容 (无元数据):**")
         preview_clean = clean_content[:300] + "..." if len(clean_content) > 300 and not show_full else clean_content
-        st.text_area("清理后内容", preview_clean, height=150, disabled=True, key="clean_content")
+        st.text_area("清理后内容", preview_clean, height=150, disabled=True, key=f"clean_content_{unique_id}")
 
     with col2:
         st.markdown("**📄 原始内容 (含元数据):**")
         preview_full = full_content[:300] + "..." if len(full_content) > 300 and not show_full else full_content
-        st.text_area("原始内容", preview_full, height=150, disabled=True, key="full_content")
+        st.text_area("原始内容", preview_full, height=150, disabled=True, key=f"full_content_{unique_id}")
 
     # Content statistics
     st.markdown("**📊 内容统计:**")
@@ -245,14 +258,19 @@ def render_content_preview(clean_content: str, full_content: str, show_full: boo
         st.metric("元数据开销", f"{metadata_overhead} 字符")
 
 
-def render_metadata_summary_card(document: Dict[str, Any], compact: bool = True) -> None:
+def render_metadata_summary_card(document: Dict[str, Any], compact: bool = True, unique_id: str = None) -> None:
     """
     Render a compact metadata summary card for lists/grids.
 
     Args:
         document: Document with content and metadata
         compact: Whether to show compact view
+        unique_id: Unique identifier to prevent key conflicts
     """
+    # Generate unique ID if not provided
+    if unique_id is None:
+        unique_id = str(uuid.uuid4())[:8]
+
     structured_metadata = document.get('metadata', {})
     content = document.get('content', '')
 
@@ -293,7 +311,7 @@ def render_metadata_summary_card(document: Dict[str, Any], compact: bool = True)
 
     else:
         # Full card view
-        render_embedded_metadata_display(document, show_full_content=False)
+        render_embedded_metadata_display(document, show_full_content=False, unique_id=unique_id)
 
 
 def _determine_metadata_type(key: str) -> str:
