@@ -511,295 +511,123 @@ def render_bottom_modal():
     if not st.session_state.modal_job_id:
         return
 
+    # Debug: Show that the modal is being called
+    st.write(f"DEBUG: Modal triggered for job {st.session_state.modal_job_id}")
+
     job_id = st.session_state.modal_job_id
     job_detail = get_job_details(job_id)
 
     if not job_detail:
         st.error("无法获取任务详情")
         st.session_state.modal_job_id = None
+        st.rerun()
         return
 
-    # Create a visual separator
-    st.markdown("---")
-
-    # Modal header with background color
+    # Make the modal very visible with a distinct background
     st.markdown("""
-    <div style="background-color: var(--secondary-background-color); 
-                padding: 1rem; margin: -1rem -1rem 1rem -1rem; 
-                border-left: 4px solid #007bff;">
-        <h3 style="margin: 0; color: var(--text-color);">📋 任务详情面板</h3>
-        <p style="margin: 0.5rem 0 0 0; color: var(--text-color); opacity: 0.8;">
-            查看详细任务信息 | 点击"关闭详情"返回任务列表
-        </p>
+    <div style="background-color: #f0f8ff; border: 3px solid #007bff; 
+                padding: 2rem; margin: 2rem 0; border-radius: 10px;">
+        <h2 style="color: #007bff; text-align: center;">📋 任务详情面板</h2>
+        <hr>
     </div>
     """, unsafe_allow_html=True)
 
-    # Close button prominently displayed at the top
-    col1, col2, col3 = st.columns([1, 2, 1])
+    # Very prominent close button
+    st.markdown("### 🔴 关闭选项")
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        if st.button("❌ 关闭详情", key="close_modal_1", type="primary", use_container_width=True):
+            st.session_state.modal_job_id = None
+            st.rerun()
+
     with col2:
-        if st.button("❌ 关闭详情", key="close_modal", type="primary", use_container_width=True):
+        if st.button("🚪 关闭面板", key="close_modal_2", type="secondary", use_container_width=True):
+            st.session_state.modal_job_id = None
+            st.rerun()
+
+    with col3:
+        if st.button("🔙 返回列表", key="close_modal_3", use_container_width=True):
             st.session_state.modal_job_id = None
             st.rerun()
 
     st.markdown("---")
 
-    # Create columns for organized layout
-    basic_col, details_col = st.columns([1, 1])
+    # Basic job information - very simple display first
+    st.markdown("### 📋 任务基本信息")
 
-    with basic_col:
-        st.subheader("📋 基本信息")
+    job_type = job_detail.get('job_type', 'Unknown')
+    status = job_detail.get('status', 'Unknown')
+    created = job_detail.get('created_at', 0)
 
-        job_type = job_detail.get('job_type', '')
-        status = job_detail.get('status', '')
-        created = job_detail.get('created_at', 0)
-        updated = job_detail.get('updated_at', 0)
+    st.info(f"**任务ID:** {job_id}")
+    st.info(f"**任务类型:** {format_job_type(job_type)}")
+    st.info(f"**当前状态:** {status}")
 
-        st.write(f"**任务ID:** `{job_id}`")
-        st.write(f"**类型:** {format_job_type(job_type)}")
-        st.write(f"**状态:** {status}")
+    if created:
+        created_time = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(created))
+        st.info(f"**创建时间:** {created_time}")
 
-        if created:
-            st.write(f"**创建时间:** {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(created))}")
-        if updated:
-            st.write(f"**更新时间:** {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(updated))}")
+    # Show metadata if available
+    metadata = job_detail.get('metadata', {})
+    if metadata:
+        st.markdown("### 🔧 任务元数据")
+        st.json(metadata)
 
-        # Progress information
-        progress_info = job_detail.get('progress_info', {})
-        if progress_info:
-            progress = progress_info.get('progress')
-            message = progress_info.get('message', '')
-
-            st.write("**当前进度:**")
-            if progress is not None:
-                st.progress(progress / 100.0)
-                st.caption(f"{progress}% - {message}")
-            else:
-                st.caption(message or "处理中...")
-
-    with details_col:
-        st.subheader("🔧 任务元数据")
-
-        metadata = job_detail.get('metadata', {})
-
-        if metadata and isinstance(metadata, dict):
-            if metadata.get('url'):
-                st.write(f"**URL:** {metadata['url'][:60]}...")
-                if st.button("🔗 打开链接", key=f"open_url_{job_id}"):
-                    st.markdown(f"[打开原始链接]({metadata['url']})")
-
-            if metadata.get('query'):
-                st.write(f"**查询内容:**")
-                st.info(metadata['query'])
-
-            if metadata.get('platform'):
-                st.write(f"**平台:** {metadata['platform']}")
-
-            if metadata.get('query_mode'):
-                st.write(f"**查询模式:** {metadata['query_mode']}")
-
-            if metadata.get('mode_name'):
-                st.write(f"**模式名称:** {metadata['mode_name']}")
-        else:
-            st.info("此任务暂无元数据信息")
-
-    # Parse result properly
+    # Show results if available
     result = job_detail.get('result', {})
-    if isinstance(result, str):
-        try:
-            result = json.loads(result)
-        except:
-            result = {}
+    if result:
+        st.markdown("### 📊 处理结果")
+        if isinstance(result, str):
+            try:
+                result = json.loads(result)
+                st.json(result)
+            except:
+                st.text(result[:500] + "..." if len(result) > 500 else result)
+        else:
+            st.json(result)
 
-    # Results section - full width
-    if job_detail.get('status') == 'completed' and result:
-        st.markdown("---")
-        st.subheader("📊 处理结果")
-
-        # Create tabs for different result types
-        result_tabs = []
-        tab_contents = []
-
-        # Video metadata tab
-        video_metadata = result.get('video_metadata', {})
-        if video_metadata and isinstance(video_metadata, dict):
-            result_tabs.append("🎬 视频信息")
-            tab_contents.append(('video', video_metadata))
-
-        # Transcript tab
-        transcript = result.get('transcript', '')
-        if transcript:
-            result_tabs.append("🎤 转录内容")
-            tab_contents.append(('transcript', transcript))
-
-        # Query answer tab
-        if result.get('answer'):
-            result_tabs.append("❓ 查询答案")
-            tab_contents.append(('answer', result.get('answer')))
-
-        # Document processing tab
-        if result.get('document_count'):
-            result_tabs.append("📄 文档处理")
-            tab_contents.append(('documents', result.get('document_count')))
-
-        # Validation tab
-        if job_type == "llm_inference" and has_validation_data(result):
-            result_tabs.append("🛡️ 验证结果")
-            tab_contents.append(('validation', result))
-
-        if result_tabs:
-            tabs = st.tabs(result_tabs)
-
-            for i, (tab_type, content) in enumerate(tab_contents):
-                with tabs[i]:
-                    if tab_type == 'video':
-                        # Video metadata display
-                        video_col1, video_col2 = st.columns(2)
-
-                        with video_col1:
-                            if content.get('title'):
-                                st.write(f"**标题:** {content['title']}")
-                            if content.get('author'):
-                                st.write(f"**作者:** {content['author']}")
-                            if content.get('published_date'):
-                                pub_date = content['published_date']
-                                if isinstance(pub_date, str) and len(pub_date) == 8:
-                                    formatted_date = f"{pub_date[:4]}-{pub_date[4:6]}-{pub_date[6:8]}"
-                                    st.write(f"**发布日期:** {formatted_date}")
-                                else:
-                                    st.write(f"**发布日期:** {pub_date}")
-
-                        with video_col2:
-                            if content.get('length'):
-                                duration_mins = content['length'] // 60
-                                duration_secs = content['length'] % 60
-                                st.write(f"**时长:** {duration_mins}分{duration_secs}秒")
-                            if content.get('views'):
-                                st.write(f"**观看次数:** {content['views']:,}")
-                            if content.get('video_id'):
-                                st.write(f"**视频ID:** {content['video_id']}")
-
-                        if content.get('url'):
-                            st.markdown(f"[🔗 观看视频]({content['url']})")
-
-                    elif tab_type == 'transcript':
-                        # Transcript display
-                        word_count = len(content.split())
-                        char_count = len(content)
-
-                        stats_col1, stats_col2, stats_col3 = st.columns(3)
-                        with stats_col1:
-                            st.metric("字数", f"{word_count:,}")
-                        with stats_col2:
-                            st.metric("字符数", f"{char_count:,}")
-                        with stats_col3:
-                            language = result.get('language', '未知')
-                            lang_display = {"zh": "中文", "en": "英文"}.get(language, language)
-                            st.metric("语言", lang_display)
-
-                        st.text_area(
-                            "完整转录内容",
-                            content,
-                            height=300,
-                            disabled=True,
-                            key=f"modal_transcript_{job_id}"
-                        )
-
-                    elif tab_type == 'answer':
-                        # Query answer display
-                        answer = content
-                        # Clean up LLM thinking artifacts
-                        if "</think>" in answer:
-                            answer = answer.split("</think>")[-1].strip()
-                        if answer.startswith("<think>"):
-                            lines = answer.split('\n')
-                            clean_lines = []
-                            thinking_section = True
-                            for line in lines:
-                                if thinking_section and (not line.strip().startswith('<') and line.strip()):
-                                    thinking_section = False
-                                if not thinking_section:
-                                    clean_lines.append(line)
-                            answer = '\n'.join(clean_lines).strip()
-                        answer = answer.replace("<think>", "").replace("</think>", "").strip()
-
-                        if answer:
-                            st.markdown("**查询回答:**")
-                            st.info(answer)
-                        else:
-                            st.warning("答案为空或无法解析")
-
-                    elif tab_type == 'documents':
-                        # Document processing results
-                        st.success(f"✅ 成功生成 {content} 个文档片段")
-                        st.info("文档已成功处理并存储到向量数据库中，可以进行智能查询。")
-
-                    elif tab_type == 'validation':
-                        # Validation results
-                        display_job_validation_summary(content)
-
-                        if st.button("查看完整验证报告", key=f"modal_full_validation_{job_id}"):
-                            st.session_state[f"modal_show_full_validation_{job_id}"] = True
-                            st.rerun()
-
-                        if st.session_state.get(f"modal_show_full_validation_{job_id}", False):
-                            render_unified_validation_display(content)
-
-                            if st.button("隐藏验证报告", key=f"modal_hide_validation_{job_id}"):
-                                st.session_state[f"modal_show_full_validation_{job_id}"] = False
-                                st.rerun()
-
-    # Error information for failed jobs
-    elif job_detail.get('status') == 'failed':
-        st.markdown("---")
-        st.subheader("❌ 错误信息")
+    # Show error if failed
+    if status == 'failed':
         error = job_detail.get('error', '')
         if error:
-            st.error(f"**错误详情:** {error}")
-        else:
-            st.error("任务失败，但未获取到具体错误信息")
+            st.markdown("### ❌ 错误信息")
+            st.error(error)
 
-    # Action buttons section
+    # Bottom close buttons
     st.markdown("---")
-    st.subheader("🚀 操作选项")
+    st.markdown("### 🚀 操作选项")
 
-    action_col1, action_col2, action_col3, action_col4 = st.columns(4)
+    bottom_col1, bottom_col2, bottom_col3 = st.columns(3)
 
-    with action_col1:
-        if st.button("🔄 刷新详情", key=f"modal_refresh_{job_id}", use_container_width=True):
+    with bottom_col1:
+        if st.button("🔄 刷新数据", key="refresh_modal", use_container_width=True):
             st.rerun()
 
-    with action_col2:
-        if st.button("❌ 关闭面板", key=f"modal_close_{job_id}", use_container_width=True):
+    with bottom_col2:
+        if st.button("❌ 关闭详情", key="close_modal_bottom", type="primary", use_container_width=True):
             st.session_state.modal_job_id = None
             st.rerun()
 
-    with action_col3:
+    with bottom_col3:
         if job_detail.get('status') in ['completed', 'failed']:
-            if st.button("🗑️ 删除任务", key=f"modal_delete_{job_id}", use_container_width=True):
-                if st.session_state.get(f"confirm_delete_{job_id}", False):
-                    try:
-                        result = api_request(f"/ingest/jobs/{job_id}", method="DELETE")
-                        if result:
-                            st.success("任务已删除")
-                            st.session_state.modal_job_id = None
-                            time.sleep(1)
-                            st.rerun()
-                        else:
-                            st.error("删除失败")
-                    except:
-                        st.error("删除操作失败")
-                else:
-                    st.session_state[f"confirm_delete_{job_id}"] = True
-                    st.warning("再次点击确认删除")
-                    st.rerun()
+            if st.button("🗑️ 删除任务", key="delete_modal", use_container_width=True):
+                try:
+                    delete_result = api_request(f"/ingest/jobs/{job_id}", method="DELETE")
+                    if delete_result:
+                        st.success("任务已删除")
+                        st.session_state.modal_job_id = None
+                        time.sleep(1)
+                        st.rerun()
+                    else:
+                        st.error("删除失败")
+                except:
+                    st.error("删除操作失败")
 
-    with action_col4:
-        if st.button("📋 查看所有任务", key=f"modal_view_all_{job_id}", use_container_width=True):
-            st.session_state.modal_job_id = None
-            st.rerun()
-
-    # Add some spacing at the bottom
-    st.markdown("<br><br>", unsafe_allow_html=True)
+    # Add some spacing and a clear end marker
+    st.markdown("---")
+    st.markdown("**🔚 详情面板结束**")
+    st.markdown("<br><br><br>", unsafe_allow_html=True)
     st.markdown("### 📋 任务详情")
 
     # Close button
