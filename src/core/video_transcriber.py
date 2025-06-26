@@ -12,7 +12,8 @@ from faster_whisper import WhisperModel
 
 from src.models.schema import DocumentMetadata, DocumentSource
 from src.config.settings import settings
-from src.core.enhanced_transcript_processor import EnhancedTranscriptProcessor, VehicleInfoExtractor
+# ✅ FIXED IMPORT - Only import what exists
+from src.core.enhanced_transcript_processor import EnhancedTranscriptProcessor
 
 logger = logging.getLogger(__name__)
 
@@ -52,9 +53,8 @@ class VideoTranscriber:
         self.whisper_model = None  # Lazy-load the model when needed
         self.num_workers = num_workers
 
-        # ✅ NEW: Enhanced transcript processing components
+        # ✅ FIXED: Only initialize what exists
         self.transcript_processor = EnhancedTranscriptProcessor()
-        self.vehicle_extractor = VehicleInfoExtractor()
 
         # Add Chinese converter if available
         try:
@@ -261,12 +261,12 @@ class VideoTranscriber:
             # Extract metadata - no manual Unicode cleaning needed
             metadata = {
                 "title": data.get("title", ""),
-                "author": data.get("uploader", ""),
+                "uploader": data.get("uploader", ""),  # ✅ Use 'uploader' consistently
                 "published_date": data.get("upload_date"),
                 "video_id": data.get("id", video_id),
                 "url": url,
-                "length": int(data.get("duration", 0)),
-                "views": data.get("view_count", 0),
+                "duration": int(data.get("duration", 0)),
+                "view_count": data.get("view_count", 0),
                 "description": data.get("description", ""),
             }
 
@@ -274,12 +274,12 @@ class VideoTranscriber:
             if not metadata["title"] or metadata["title"] in ["", "Unknown Video"]:
                 raise ValueError(f"Invalid title for {url}")
 
-            if not metadata["author"] or metadata["author"] in ["", "Unknown", "Unknown Author"]:
-                raise ValueError(f"Invalid author for {url}")
+            if not metadata["uploader"] or metadata["uploader"] in ["", "Unknown", "Unknown Author"]:
+                raise ValueError(f"Invalid uploader for {url}")
 
             logger.info(f"Successfully extracted metadata for {video_id}")
             logger.info(f"Title: {metadata['title']}")
-            logger.info(f"Author: {metadata['author']}")
+            logger.info(f"Uploader: {metadata['uploader']}")
 
             return metadata
 
@@ -351,15 +351,8 @@ class VideoTranscriber:
         # Extract metadata - no manual Unicode cleaning needed
         video_metadata = self.get_video_metadata(url)
 
-        # ✅ NEW: Early vehicle detection for logging
-        early_vehicle_info = self.vehicle_extractor.extract_vehicle_info(
-            video_metadata.get("title", ""),
-            video_metadata.get("description", "")
-        )
-
-        logger.info(f"🚗 Early vehicle detection: {early_vehicle_info}")
-
-        # Note: Legacy auto_metadata extraction removed - enhanced processing handles this
+        # ✅ REMOVED: Early vehicle detection (now handled internally by enhanced processor)
+        logger.info(f"🔧 Processing video with enhanced transcript processor")
 
         # Determine the source based on platform
         source = DocumentSource.YOUTUBE if platform == "youtube" else DocumentSource.BILIBILI
@@ -387,7 +380,7 @@ class VideoTranscriber:
         if not transcript_text:
             raise ValueError("Transcription failed: no text was generated")
 
-        # ✅ ENHANCED: Use enhanced transcript processing instead of simple chunking
+        # ✅ ENHANCED: Use enhanced transcript processing with metadata injection
         logger.info("🔧 Applying enhanced transcript processing with metadata injection...")
 
         enhanced_documents = self.transcript_processor.process_transcript_chunks(
@@ -406,25 +399,29 @@ class VideoTranscriber:
         # Log enhanced processing results
         if enhanced_documents:
             sample_doc = enhanced_documents[0]
+
+            # Check for embedded metadata in content
+            import re
+            embedded_patterns = re.findall(r'【[^】]+】', sample_doc.page_content)
+
             vehicle_info = {
-                'model': sample_doc.metadata.get('model'),
                 'manufacturer': sample_doc.metadata.get('manufacturer'),
-                'confidence': sample_doc.metadata.get('vehicle_confidence', 0),
-                'metadata_injected': sample_doc.metadata.get('metadata_injected', False),
-                'fallback_used': sample_doc.metadata.get('fallback_metadata_used', False)
+                'vehicleModel': sample_doc.metadata.get('vehicleModel'),
+                'vehicleDetected': sample_doc.metadata.get('vehicleDetected', False),
+                'metadataInjected': sample_doc.metadata.get('metadataInjected', False),
+                'embedded_patterns_count': len(embedded_patterns)
             }
             logger.info(f"🚗 Final vehicle detection: {vehicle_info}")
 
             # Log sample enhanced content
-            original_length = sample_doc.metadata.get('original_chunk_length', 0)
-            enhanced_length = sample_doc.metadata.get('enhanced_chunk_length', 0)
+            original_length = sample_doc.metadata.get('originalChunkLength', 0)
+            enhanced_length = sample_doc.metadata.get('enhancedChunkLength', len(sample_doc.page_content))
             logger.info(
                 f"📝 Content enhancement: {original_length} → {enhanced_length} chars (+{enhanced_length - original_length})")
 
-            # Show metadata prefix for debugging
-            metadata_prefix = sample_doc.metadata.get('metadata_prefix', '')
-            if metadata_prefix:
-                logger.info(f"🏷️ Metadata prefix: {metadata_prefix}")
+            # Show embedded patterns for debugging
+            if embedded_patterns:
+                logger.info(f"🏷️ Embedded patterns: {embedded_patterns[:3]}...")
 
         return enhanced_documents
 
@@ -464,7 +461,7 @@ class VideoTranscriber:
                 enhanced_documents = self.process_video(url, metadata)
 
                 # Extract document IDs
-                doc_ids = [doc.metadata.get("chunk_id", f"doc_{i}") for doc in enhanced_documents]
+                doc_ids = [doc.metadata.get("chunkId", f"doc_{i}") for doc in enhanced_documents]
                 results[url] = doc_ids
 
                 # Update stats
@@ -473,9 +470,9 @@ class VideoTranscriber:
 
                 if enhanced_documents:
                     sample_doc = enhanced_documents[0]
-                    if sample_doc.metadata.get('vehicle_detected', False):
+                    if sample_doc.metadata.get('vehicleDetected', False):
                         enhanced_stats['vehicle_detection_count'] += 1
-                    if sample_doc.metadata.get('metadata_injected', False):
+                    if sample_doc.metadata.get('metadataInjected', False):
                         enhanced_stats['metadata_injection_count'] += 1
 
                 logger.info(f"✅ Successfully processed video {i + 1}/{len(urls)}: {url}")
@@ -514,7 +511,7 @@ class VideoTranscriber:
             'metadata_injection_enabled': True,
             'supported_platforms': ['youtube', 'bilibili'],
             'chinese_conversion_available': self.chinese_converter is not None,
-            'transcript_processor_version': 'enhanced_v1',
+            'transcript_processor_version': 'enhanced_v2_fixed',
             'capabilities': {
                 'vehicle_detection': True,
                 'metadata_injection': True,
@@ -603,7 +600,7 @@ class VideoTranscriber:
         return cleaned_files
 
 
-# ✅ NEW: Convenience function for easy integration
+# ✅ FIXED: Convenience function for easy integration
 def create_enhanced_video_transcriber(**kwargs) -> VideoTranscriber:
     """
     Create an enhanced video transcriber with optimal settings.
@@ -635,37 +632,3 @@ def create_enhanced_video_transcriber(**kwargs) -> VideoTranscriber:
     logger.info(f"  Metadata injection: ENABLED")
 
     return transcriber
-
-
-# Example usage and testing
-if __name__ == "__main__":
-    # Test the enhanced video transcriber
-    print("=== Enhanced Video Transcriber Test ===")
-
-    # Create transcriber
-    transcriber = create_enhanced_video_transcriber()
-
-    # Test URL validation
-    test_urls = [
-        "https://www.bilibili.com/video/BV1234567890",
-        "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
-        "invalid-url"
-    ]
-
-    print("\n--- URL Validation Tests ---")
-    for url in test_urls:
-        result = transcriber.validate_url(url)
-        print(f"URL: {url}")
-        print(f"Valid: {result['valid']}, Platform: {result['platform']}")
-        if result['errors']:
-            print(f"Errors: {result['errors']}")
-        print()
-
-    # Show capabilities
-    print("--- Processing Capabilities ---")
-    stats = transcriber.get_processing_stats()
-    for key, value in stats['capabilities'].items():
-        status = "✅" if value else "❌"
-        print(f"{status} {key.replace('_', ' ').title()}")
-
-    print("\n🎯 Enhanced video transcriber ready for production use!")
