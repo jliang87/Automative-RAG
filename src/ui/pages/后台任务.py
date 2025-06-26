@@ -370,9 +370,9 @@ def display_job_card(job: Dict[str, Any], context: str, index: int):
             query = metadata.get("query") or result.get("query", "")
 
             if mode_name and query:
-                return f"**{mode_name}** - {query[:60]}{'...' if len(query) > 60 else ''}"
+                return f'<span style="color: #FF6B35; font-weight: bold;">{mode_name}</span> - {query[:60]}{"..." if len(query) > 60 else ""}'
             elif mode_name:
-                return f"**{mode_name}** 查询"
+                return f'<span style="color: #FF6B35; font-weight: bold;">{mode_name}</span> 查询'
             elif query:
                 return f"查询: {query[:80]}{'...' if len(query) > 80 else ''}"
             return "查询处理"
@@ -447,7 +447,11 @@ def display_job_card(job: Dict[str, Any], context: str, index: int):
             st.markdown(f"**{format_job_type(job_type)}**")
             if display_info:
                 # CLEANED UP: No more emoji spam, just clear text
-                st.caption(display_info)
+                # Check if display_info contains HTML (for colored mode names)
+                if '<span style=' in display_info:
+                    st.markdown(display_info, unsafe_allow_html=True)
+                else:
+                    st.caption(display_info)
             else:
                 st.caption(f"任务ID: {job_id[:12]}...")
 
