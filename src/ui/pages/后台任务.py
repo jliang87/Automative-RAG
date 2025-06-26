@@ -190,6 +190,7 @@ def has_validation_data(result: Dict[str, Any]) -> bool:
 
     return False
 
+
 def display_enhanced_job_metadata_analysis(job_details: Dict[str, Any]):
     """Display enhanced metadata analysis for completed jobs."""
 
@@ -259,7 +260,7 @@ def display_enhanced_job_metadata_analysis(job_details: Dict[str, Any]):
 
                 with stats_col3:
                     avg_fields = (
-                                metadata_stats['total_metadata_fields'] / max(metadata_stats['docs_with_embedded'], 1))
+                            metadata_stats['total_metadata_fields'] / max(metadata_stats['docs_with_embedded'], 1))
                     st.metric("平均元数据字段", f"{avg_fields:.1f}")
 
                 with stats_col4:
@@ -301,6 +302,7 @@ def display_enhanced_job_metadata_analysis(job_details: Dict[str, Any]):
                                                                  unique_id=unique_id)
                             else:
                                 st.warning("文档格式不支持元数据显示")
+
 
 def display_job_validation_summary(result: Dict[str, Any]) -> None:
     """Display a summary of validation results for completed jobs"""
@@ -363,9 +365,15 @@ def display_job_card(job: Dict[str, Any], context: str, index: int):
                 result = {}
 
         if job_type == "llm_inference":
-            # For queries, show the user's query
+            # For queries, show the mode name and query
+            mode_name = metadata.get("mode_name", "")
             query = metadata.get("query") or result.get("query", "")
-            if query:
+
+            if mode_name and query:
+                return f"**{mode_name}** - {query[:60]}{'...' if len(query) > 60 else ''}"
+            elif mode_name:
+                return f"**{mode_name}** 查询"
+            elif query:
                 return f"查询: {query[:80]}{'...' if len(query) > 80 else ''}"
             return "查询处理"
 
@@ -529,9 +537,6 @@ def display_job_card(job: Dict[str, Any], context: str, index: int):
                     if metadata.get('platform'):
                         st.write(f"**平台:** {metadata['platform']}")
 
-                    # UPDATED: Show query mode information
-                    if metadata.get('query_mode'):
-                        st.write(f"**查询模式:** {metadata['query_mode']}")
                     if metadata.get('mode_name'):
                         st.write(f"**模式名称:** {metadata['mode_name']}")
 
