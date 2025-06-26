@@ -26,155 +26,38 @@ logger = logging.getLogger(__name__)
 
 initialize_session_state()
 
-# Add CSS for the right-side blade modal
+# Add simple modal CSS - just basic styling, no complex positioning
 st.markdown("""
 <style>
-/* Right-side blade modal styles */
-.blade-backdrop {
+/* Simple modal overlay - bottom positioned */
+.bottom-modal {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background-color: var(--background-color);
+    border-top: 2px solid var(--border-color);
+    box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.15);
+    z-index: 1000;
+    max-height: 70vh;
+    overflow-y: auto;
+    animation: slideInUp 0.3s ease-in-out;
+}
+
+@keyframes slideInUp {
+    from { transform: translateY(100%); }
+    to { transform: translateY(0); }
+}
+
+/* Simple backdrop */
+.simple-backdrop {
     position: fixed;
     top: 0;
     left: 0;
-    width: 100vw;
-    height: 100vh;
-    background-color: rgba(0, 0, 0, 0.4);
+    right: 0;
+    bottom: 0;
+    background-color: rgba(0, 0, 0, 0.3);
     z-index: 999;
-    animation: fadeIn 0.3s ease-in-out;
-}
-
-.blade-modal {
-    position: fixed;
-    top: 0;
-    right: 0;
-    width: 650px;
-    max-width: 45vw;
-    height: 100vh;
-    background-color: var(--background-color);
-    box-shadow: -6px 0 25px rgba(0, 0, 0, 0.2);
-    z-index: 1000;
-    overflow-y: auto;
-    padding: 1rem;
-    animation: slideInRight 0.3s ease-in-out;
-    border-left: 2px solid var(--border-color);
-}
-
-/* Force blade to cover all buttons on the right side */
-.blade-overlay {
-    position: fixed;
-    top: 0;
-    right: 0;
-    width: 650px;
-    max-width: 45vw;
-    height: 100vh;
-    z-index: 998;
-    pointer-events: none;
-}
-
-.blade-header {
-    position: sticky;
-    top: 0;
-    background-color: var(--background-color);
-    padding: 1rem 0;
-    border-bottom: 1px solid var(--border-color);
-    margin-bottom: 1rem;
-    z-index: 1002;
-}
-
-.blade-content {
-    padding-bottom: 2rem;
-}
-
-.blade-close-btn {
-    position: absolute;
-    top: 1rem;
-    right: 1rem;
-    background: none;
-    border: none;
-    font-size: 1.5rem;
-    cursor: pointer;
-    color: var(--text-color);
-    z-index: 1003;
-}
-
-@keyframes fadeIn {
-    from { opacity: 0; }
-    to { opacity: 1; }
-}
-
-@keyframes slideInRight {
-    from { transform: translateX(100%); }
-    to { transform: translateX(0); }
-}
-
-/* Responsive design - ensure proper coverage */
-@media (max-width: 1400px) {
-    .blade-modal, .blade-overlay {
-        width: 550px;
-        max-width: 50vw;
-    }
-}
-
-@media (max-width: 1200px) {
-    .blade-modal, .blade-overlay {
-        width: 500px;
-        max-width: 55vw;
-    }
-}
-
-@media (max-width: 768px) {
-    .blade-modal, .blade-overlay {
-        width: 100vw;
-        max-width: 100vw;
-    }
-}
-
-/* Streamlit specific adjustments */
-.stApp > div:first-child {
-    position: relative;
-}
-
-/* When blade is open, disable interaction with underlying content */
-.blade-active .stButton {
-    pointer-events: none !important;
-    opacity: 0.6 !important;
-}
-
-.blade-active .stSelectbox {
-    pointer-events: none !important;
-    opacity: 0.6 !important;
-}
-
-/* Hide scrollbar in blade for cleaner look */
-.blade-modal::-webkit-scrollbar {
-    width: 6px;
-}
-
-.blade-modal::-webkit-scrollbar-track {
-    background: transparent;
-}
-
-.blade-modal::-webkit-scrollbar-thumb {
-    background: var(--border-color);
-    border-radius: 3px;
-}
-
-.blade-modal::-webkit-scrollbar-thumb:hover {
-    background: var(--text-color);
-}
-
-/* Ensure blade content is fully interactive */
-.blade-modal .stButton {
-    pointer-events: auto !important;
-    opacity: 1 !important;
-}
-
-.blade-modal .stSelectbox {
-    pointer-events: auto !important;
-    opacity: 1 !important;
-}
-
-.blade-modal .stTextArea {
-    pointer-events: auto !important;
-    opacity: 1 !important;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -292,8 +175,8 @@ if "all_jobs_page" not in st.session_state:
     st.session_state.all_jobs_page = 1
 
 # === BLADE MODAL STATE ===
-if "blade_job_id" not in st.session_state:
-    st.session_state.blade_job_id = None
+if "modal_job_id" not in st.session_state:
+    st.session_state.modal_job_id = None
 
 
 def format_job_type(job_type: str) -> str:
@@ -623,111 +506,103 @@ def display_job_card(job: Dict[str, Any], context: str, index: int):
                 st.caption("处理中...")
 
 
-def render_blade_modal():
-    """Render the right-side blade modal for job details."""
-    if not st.session_state.blade_job_id:
+def render_bottom_modal():
+    """Render the bottom modal for job details using pure Streamlit components."""
+    if not st.session_state.modal_job_id:
         return
 
-    job_id = st.session_state.blade_job_id
+    job_id = st.session_state.modal_job_id
     job_detail = get_job_details(job_id)
 
     if not job_detail:
         st.error("无法获取任务详情")
-        st.session_state.blade_job_id = None
+        st.session_state.modal_job_id = None
         return
 
-    # Create the backdrop and blade structure
+    # Create a visual separator
+    st.markdown("---")
+
+    # Modal header with background color
     st.markdown("""
-    <div class="blade-backdrop"></div>
-    <div class="blade-modal">
-        <div class="blade-header">
-            <h3 style="margin: 0; color: var(--text-color);">📋 任务详情</h3>
-        </div>
+    <div style="background-color: var(--secondary-background-color); 
+                padding: 1rem; margin: -1rem -1rem 1rem -1rem; 
+                border-left: 4px solid #007bff;">
+        <h3 style="margin: 0; color: var(--text-color);">📋 任务详情面板</h3>
+        <p style="margin: 0.5rem 0 0 0; color: var(--text-color); opacity: 0.8;">
+            查看详细任务信息 | 点击"关闭详情"返回任务列表
+        </p>
     </div>
     """, unsafe_allow_html=True)
 
-    # Use an empty container that we'll position as our blade content area
-    # We need to use Streamlit's built-in container for reactivity
+    # Close button prominently displayed at the top
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        if st.button("❌ 关闭详情", key="close_modal", type="primary", use_container_width=True):
+            st.session_state.modal_job_id = None
+            st.rerun()
 
-    # Create a hidden close button that can be triggered by JavaScript
-    if st.button("关闭详情面板", key="blade_close_trigger", help="关闭", type="secondary"):
-        st.session_state.blade_job_id = None
-        st.rerun()
+    st.markdown("---")
 
-    # JavaScript to handle the blade interactions and DOM manipulation
-    blade_js = f"""
-    <script>
-    // Remove any existing blade content
-    const existingBlade = document.querySelector('.blade-content-streamlit');
-    if (existingBlade) existingBlade.remove();
+    # Create columns for organized layout
+    basic_col, details_col = st.columns([1, 1])
 
-    // Create the blade content container
-    const bladeContent = document.createElement('div');
-    bladeContent.className = 'blade-content-streamlit';
-    bladeContent.innerHTML = `
-        <div style="position: fixed; top: 0; right: 0; width: 500px; max-width: 40vw; height: 100vh; 
-                    background-color: var(--background-color, white); z-index: 1001; 
-                    box-shadow: -6px 0 25px rgba(0, 0, 0, 0.2); overflow-y: auto; padding: 1rem;
-                    border-left: 2px solid var(--border-color, #ddd);
-                    animation: slideInRight 0.3s ease-in-out;">
+    with basic_col:
+        st.subheader("📋 基本信息")
 
-            <div style="position: sticky; top: 0; background-color: var(--background-color, white); 
-                        padding-bottom: 1rem; border-bottom: 1px solid var(--border-color, #ddd); margin-bottom: 1rem;">
-                <div style="display: flex; justify-content: space-between; align-items: center;">
-                    <h3 style="margin: 0; color: var(--text-color, black);">📋 任务详情</h3>
-                    <button onclick="closeBlade()" style="background: none; border: none; font-size: 1.2rem; 
-                            cursor: pointer; color: var(--text-color, black); padding: 5px;">❌</button>
-                </div>
-            </div>
+        job_type = job_detail.get('job_type', '')
+        status = job_detail.get('status', '')
+        created = job_detail.get('created_at', 0)
+        updated = job_detail.get('updated_at', 0)
 
-            <div style="padding-bottom: 2rem;">
-                <p><strong>任务ID:</strong> {job_id[:12]}...</p>
-                <p><strong>类型:</strong> {format_job_type(job_detail.get('job_type', ''))}</p>
-                <p><strong>状态:</strong> {job_detail.get('status', '')}</p>
-    """
+        st.write(f"**任务ID:** `{job_id}`")
+        st.write(f"**类型:** {format_job_type(job_type)}")
+        st.write(f"**状态:** {status}")
 
-    # Add creation and update times
-    if job_detail.get('created_at'):
-        created_time = time.strftime('%m-%d %H:%M:%S', time.localtime(job_detail['created_at']))
-        blade_js += f"<p><strong>创建时间:</strong> {created_time}</p>"
+        if created:
+            st.write(f"**创建时间:** {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(created))}")
+        if updated:
+            st.write(f"**更新时间:** {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(updated))}")
 
-    if job_detail.get('updated_at'):
-        updated_time = time.strftime('%m-%d %H:%M:%S', time.localtime(job_detail['updated_at']))
-        blade_js += f"<p><strong>更新时间:</strong> {updated_time}</p>"
+        # Progress information
+        progress_info = job_detail.get('progress_info', {})
+        if progress_info:
+            progress = progress_info.get('progress')
+            message = progress_info.get('message', '')
 
-    # Add progress information if available
-    progress_info = job_detail.get('progress_info', {})
-    if progress_info:
-        progress = progress_info.get('progress')
-        message = progress_info.get('message', '')
-        if progress is not None:
-            blade_js += f"""
-                <div style="margin: 1rem 0;">
-                    <p><strong>进度:</strong> {progress}%</p>
-                    <div style="background-color: #f0f0f0; border-radius: 10px; overflow: hidden;">
-                        <div style="height: 20px; background-color: #4CAF50; width: {progress}%; transition: width 0.3s;"></div>
-                    </div>
-                    <p style="font-size: 0.9em; color: #666;">{message}</p>
-                </div>
-            """
+            st.write("**当前进度:**")
+            if progress is not None:
+                st.progress(progress / 100.0)
+                st.caption(f"{progress}% - {message}")
+            else:
+                st.caption(message or "处理中...")
 
-    # Add metadata
-    metadata = job_detail.get('metadata', {})
-    if metadata:
-        blade_js += "<hr><h4>📋 任务元数据</h4>"
+    with details_col:
+        st.subheader("🔧 任务元数据")
 
-        if metadata.get('url'):
-            url = metadata['url'][:60] + "..." if len(metadata['url']) > 60 else metadata['url']
-            blade_js += f"<p><strong>URL:</strong> <a href='{metadata['url']}' target='_blank'>{url}</a></p>"
-        if metadata.get('query'):
-            query = metadata['query'][:100] + "..." if len(metadata['query']) > 100 else metadata['query']
-            blade_js += f"<p><strong>查询:</strong> {query}</p>"
-        if metadata.get('platform'):
-            blade_js += f"<p><strong>平台:</strong> {metadata['platform']}</p>"
-        if metadata.get('query_mode'):
-            blade_js += f"<p><strong>查询模式:</strong> {metadata['query_mode']}</p>"
+        metadata = job_detail.get('metadata', {})
 
-    # Add results if completed
+        if metadata and isinstance(metadata, dict):
+            if metadata.get('url'):
+                st.write(f"**URL:** {metadata['url'][:60]}...")
+                if st.button("🔗 打开链接", key=f"open_url_{job_id}"):
+                    st.markdown(f"[打开原始链接]({metadata['url']})")
+
+            if metadata.get('query'):
+                st.write(f"**查询内容:**")
+                st.info(metadata['query'])
+
+            if metadata.get('platform'):
+                st.write(f"**平台:** {metadata['platform']}")
+
+            if metadata.get('query_mode'):
+                st.write(f"**查询模式:** {metadata['query_mode']}")
+
+            if metadata.get('mode_name'):
+                st.write(f"**模式名称:** {metadata['mode_name']}")
+        else:
+            st.info("此任务暂无元数据信息")
+
+    # Parse result properly
     result = job_detail.get('result', {})
     if isinstance(result, str):
         try:
@@ -735,131 +610,196 @@ def render_blade_modal():
         except:
             result = {}
 
+    # Results section - full width
     if job_detail.get('status') == 'completed' and result:
-        blade_js += "<hr><h4>📊 处理结果</h4>"
+        st.markdown("---")
+        st.subheader("📊 处理结果")
 
-        # Video metadata
+        # Create tabs for different result types
+        result_tabs = []
+        tab_contents = []
+
+        # Video metadata tab
         video_metadata = result.get('video_metadata', {})
-        if video_metadata:
-            blade_js += "<h5>🎬 视频信息</h5>"
-            if video_metadata.get('title'):
-                title = video_metadata['title'][:80] + "..." if len(video_metadata['title']) > 80 else video_metadata[
-                    'title']
-                blade_js += f"<p><strong>标题:</strong> {title}</p>"
-            if video_metadata.get('author'):
-                blade_js += f"<p><strong>作者:</strong> {video_metadata['author']}</p>"
-            if video_metadata.get('length'):
-                duration_mins = video_metadata['length'] // 60
-                duration_secs = video_metadata['length'] % 60
-                blade_js += f"<p><strong>时长:</strong> {duration_mins}分{duration_secs}秒</p>"
-            if video_metadata.get('views'):
-                blade_js += f"<p><strong>观看次数:</strong> {video_metadata['views']:,}</p>"
+        if video_metadata and isinstance(video_metadata, dict):
+            result_tabs.append("🎬 视频信息")
+            tab_contents.append(('video', video_metadata))
 
-        # Document count
-        if result.get('document_count'):
-            blade_js += f"<div style='background-color: #e8f5e8; padding: 10px; border-radius: 5px; margin: 10px 0;'>✅ 成功生成 {result['document_count']} 个文档片段</div>"
-
-        # Query answer
-        if result.get('answer'):
-            answer = result['answer']
-            # Clean up answer
-            if "</think>" in answer:
-                answer = answer.split("</think>")[-1].strip()
-            answer = answer.replace("<think>", "").replace("</think>", "").strip()
-
-            if len(answer) > 300:
-                answer = answer[:300] + "..."
-
-            blade_js += f"""
-                <h5>❓ 查询答案</h5>
-                <div style='background-color: #f8f9fa; padding: 15px; border-radius: 8px; 
-                            border-left: 4px solid #007bff; font-size: 0.95em; line-height: 1.4;'>
-                    {answer}
-                </div>
-            """
-
-        # Transcript info
+        # Transcript tab
         transcript = result.get('transcript', '')
         if transcript:
-            word_count = len(transcript.split())
-            char_count = len(transcript)
-            blade_js += f"""
-                <h5>🎤 转录统计</h5>
-                <p><strong>字数:</strong> {word_count:,}</p>
-                <p><strong>字符数:</strong> {char_count:,}</p>
-            """
+            result_tabs.append("🎤 转录内容")
+            tab_contents.append(('transcript', transcript))
+
+        # Query answer tab
+        if result.get('answer'):
+            result_tabs.append("❓ 查询答案")
+            tab_contents.append(('answer', result.get('answer')))
+
+        # Document processing tab
+        if result.get('document_count'):
+            result_tabs.append("📄 文档处理")
+            tab_contents.append(('documents', result.get('document_count')))
+
+        # Validation tab
+        if job_type == "llm_inference" and has_validation_data(result):
+            result_tabs.append("🛡️ 验证结果")
+            tab_contents.append(('validation', result))
+
+        if result_tabs:
+            tabs = st.tabs(result_tabs)
+
+            for i, (tab_type, content) in enumerate(tab_contents):
+                with tabs[i]:
+                    if tab_type == 'video':
+                        # Video metadata display
+                        video_col1, video_col2 = st.columns(2)
+
+                        with video_col1:
+                            if content.get('title'):
+                                st.write(f"**标题:** {content['title']}")
+                            if content.get('author'):
+                                st.write(f"**作者:** {content['author']}")
+                            if content.get('published_date'):
+                                pub_date = content['published_date']
+                                if isinstance(pub_date, str) and len(pub_date) == 8:
+                                    formatted_date = f"{pub_date[:4]}-{pub_date[4:6]}-{pub_date[6:8]}"
+                                    st.write(f"**发布日期:** {formatted_date}")
+                                else:
+                                    st.write(f"**发布日期:** {pub_date}")
+
+                        with video_col2:
+                            if content.get('length'):
+                                duration_mins = content['length'] // 60
+                                duration_secs = content['length'] % 60
+                                st.write(f"**时长:** {duration_mins}分{duration_secs}秒")
+                            if content.get('views'):
+                                st.write(f"**观看次数:** {content['views']:,}")
+                            if content.get('video_id'):
+                                st.write(f"**视频ID:** {content['video_id']}")
+
+                        if content.get('url'):
+                            st.markdown(f"[🔗 观看视频]({content['url']})")
+
+                    elif tab_type == 'transcript':
+                        # Transcript display
+                        word_count = len(content.split())
+                        char_count = len(content)
+
+                        stats_col1, stats_col2, stats_col3 = st.columns(3)
+                        with stats_col1:
+                            st.metric("字数", f"{word_count:,}")
+                        with stats_col2:
+                            st.metric("字符数", f"{char_count:,}")
+                        with stats_col3:
+                            language = result.get('language', '未知')
+                            lang_display = {"zh": "中文", "en": "英文"}.get(language, language)
+                            st.metric("语言", lang_display)
+
+                        st.text_area(
+                            "完整转录内容",
+                            content,
+                            height=300,
+                            disabled=True,
+                            key=f"modal_transcript_{job_id}"
+                        )
+
+                    elif tab_type == 'answer':
+                        # Query answer display
+                        answer = content
+                        # Clean up LLM thinking artifacts
+                        if "</think>" in answer:
+                            answer = answer.split("</think>")[-1].strip()
+                        if answer.startswith("<think>"):
+                            lines = answer.split('\n')
+                            clean_lines = []
+                            thinking_section = True
+                            for line in lines:
+                                if thinking_section and (not line.strip().startswith('<') and line.strip()):
+                                    thinking_section = False
+                                if not thinking_section:
+                                    clean_lines.append(line)
+                            answer = '\n'.join(clean_lines).strip()
+                        answer = answer.replace("<think>", "").replace("</think>", "").strip()
+
+                        if answer:
+                            st.markdown("**查询回答:**")
+                            st.info(answer)
+                        else:
+                            st.warning("答案为空或无法解析")
+
+                    elif tab_type == 'documents':
+                        # Document processing results
+                        st.success(f"✅ 成功生成 {content} 个文档片段")
+                        st.info("文档已成功处理并存储到向量数据库中，可以进行智能查询。")
+
+                    elif tab_type == 'validation':
+                        # Validation results
+                        display_job_validation_summary(content)
+
+                        if st.button("查看完整验证报告", key=f"modal_full_validation_{job_id}"):
+                            st.session_state[f"modal_show_full_validation_{job_id}"] = True
+                            st.rerun()
+
+                        if st.session_state.get(f"modal_show_full_validation_{job_id}", False):
+                            render_unified_validation_display(content)
+
+                            if st.button("隐藏验证报告", key=f"modal_hide_validation_{job_id}"):
+                                st.session_state[f"modal_show_full_validation_{job_id}"] = False
+                                st.rerun()
 
     # Error information for failed jobs
     elif job_detail.get('status') == 'failed':
+        st.markdown("---")
+        st.subheader("❌ 错误信息")
         error = job_detail.get('error', '')
         if error:
-            blade_js += f"""
-                <hr>
-                <div style='background-color: #ffe6e6; padding: 15px; border-radius: 8px; 
-                            border-left: 4px solid #dc3545; color: #721c24;'>
-                    <strong>❌ 错误信息:</strong><br>{error}
-                </div>
-            """
+            st.error(f"**错误详情:** {error}")
+        else:
+            st.error("任务失败，但未获取到具体错误信息")
 
-    # Add action buttons
-    blade_js += """
-                <hr>
-                <div style="margin-top: 2rem;">
-                    <button onclick="refreshPage()" 
-                            style="width: 100%; padding: 12px; margin-bottom: 10px; 
-                                   background-color: #007bff; color: white; border: none; 
-                                   border-radius: 6px; cursor: pointer; font-size: 1rem;">
-                        🔄 刷新详情
-                    </button>
-                    <button onclick="closeBlade()" 
-                            style="width: 100%; padding: 12px; 
-                                   background-color: #6c757d; color: white; border: none; 
-                                   border-radius: 6px; cursor: pointer; font-size: 1rem;">
-                        ❌ 关闭详情
-                    </button>
-                </div>
-            </div>
-        </div>
-    `;
+    # Action buttons section
+    st.markdown("---")
+    st.subheader("🚀 操作选项")
 
-    // Add backdrop click handler
-    const backdrop = document.querySelector('.blade-backdrop');
-    if (backdrop) {
-        backdrop.onclick = closeBlade;
-    }
+    action_col1, action_col2, action_col3, action_col4 = st.columns(4)
 
-    // Append to body
-    document.body.appendChild(bladeContent);
+    with action_col1:
+        if st.button("🔄 刷新详情", key=f"modal_refresh_{job_id}", use_container_width=True):
+            st.rerun()
 
-    // Functions for blade interactions
-    function closeBlade() {
-        const blade = document.querySelector('.blade-content-streamlit');
-        const backdrop = document.querySelector('.blade-backdrop');
-        if (blade) blade.remove();
-        if (backdrop) backdrop.remove();
+    with action_col2:
+        if st.button("❌ 关闭面板", key=f"modal_close_{job_id}", use_container_width=True):
+            st.session_state.modal_job_id = None
+            st.rerun()
 
-        // Trigger the hidden close button
-        const closeBtn = document.querySelector('button[data-testid*="blade_close_trigger"]');
-        if (closeBtn) closeBtn.click();
-    }
+    with action_col3:
+        if job_detail.get('status') in ['completed', 'failed']:
+            if st.button("🗑️ 删除任务", key=f"modal_delete_{job_id}", use_container_width=True):
+                if st.session_state.get(f"confirm_delete_{job_id}", False):
+                    try:
+                        result = api_request(f"/ingest/jobs/{job_id}", method="DELETE")
+                        if result:
+                            st.success("任务已删除")
+                            st.session_state.modal_job_id = None
+                            time.sleep(1)
+                            st.rerun()
+                        else:
+                            st.error("删除失败")
+                    except:
+                        st.error("删除操作失败")
+                else:
+                    st.session_state[f"confirm_delete_{job_id}"] = True
+                    st.warning("再次点击确认删除")
+                    st.rerun()
 
-    function refreshPage() {
-        window.location.reload();
-    }
+    with action_col4:
+        if st.button("📋 查看所有任务", key=f"modal_view_all_{job_id}", use_container_width=True):
+            st.session_state.modal_job_id = None
+            st.rerun()
 
-    // Prevent main page scroll when blade is open
-    document.body.style.overflow = 'hidden';
-
-    // Cleanup function
-    window.addEventListener('beforeunload', function() {
-        document.body.style.overflow = 'auto';
-    });
-
-    </script>
-    """
-
-    # Render the JavaScript
-    st.markdown(blade_js, unsafe_allow_html=True)
+    # Add some spacing at the bottom
+    st.markdown("<br><br>", unsafe_allow_html=True)
     st.markdown("### 📋 任务详情")
 
     # Close button
