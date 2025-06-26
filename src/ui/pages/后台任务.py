@@ -138,6 +138,10 @@ if "completed_page" not in st.session_state:
 if "all_jobs_page" not in st.session_state:
     st.session_state.all_jobs_page = 1
 
+# === INITIALIZE SINGLE DETAIL VIEW STATE ===
+if "active_job_detail" not in st.session_state:
+    st.session_state.active_job_detail = None
+
 
 def format_job_type(job_type: str) -> str:
     """Format job type for display - CLEANED UP VERSION"""
@@ -345,10 +349,6 @@ def display_job_card(job: Dict[str, Any], context: str, index: int):
 
     config = status_config.get(status, {"icon": "❓", "color": "#808080"})
 
-    # Create unique keys with context and index
-    job_short_id = job_id[:8]
-    expand_key = f"expand_{context}_{index}_{job_short_id}"
-
     # Extract key metadata to display directly
     def get_display_metadata(job_data):
         """Extract key metadata for direct display - CLEANED UP VERSION"""
@@ -448,17 +448,20 @@ def display_job_card(job: Dict[str, Any], context: str, index: int):
             st.caption(f"创建: {format_time(created_at)}")
 
         with col4:
-            # Check current expansion state
-            is_expanded = st.session_state.get(expand_key, False)
+            # UPDATED: Check if this job is currently active
+            is_expanded = st.session_state.active_job_detail == job_id
             button_text = "🔼 收起" if is_expanded else "📄 详情"
             button_type = "secondary" if is_expanded else "primary"
 
-            if st.button(button_text, key=f"detail_{context}_{index}_{job_short_id}",
+            if st.button(button_text, key=f"detail_{context}_{index}_{job_id[:8]}",
                          type=button_type, use_container_width=True):
-                # Toggle the expansion state for this specific job
-                if expand_key not in st.session_state:
-                    st.session_state[expand_key] = False
-                st.session_state[expand_key] = not st.session_state[expand_key]
+                # UPDATED: Toggle logic for single detail view
+                if st.session_state.active_job_detail == job_id:
+                    # Close current detail if it's already open
+                    st.session_state.active_job_detail = None
+                else:
+                    # Open this job's detail (automatically closes any other open detail)
+                    st.session_state.active_job_detail = job_id
                 st.rerun()
 
         # Progress bar for processing jobs
@@ -474,8 +477,8 @@ def display_job_card(job: Dict[str, Any], context: str, index: int):
                 st.progress(0.0)
                 st.caption("处理中...")
 
-        # Show details inline with unique keys
-        if st.session_state.get(expand_key, False):
+        # UPDATED: Show details only if this job is the active one
+        if st.session_state.active_job_detail == job_id:
             st.markdown("---")
             st.markdown("### 📋 任务详情")
 
@@ -552,7 +555,7 @@ def display_job_card(job: Dict[str, Any], context: str, index: int):
                         display_job_validation_summary(result)
 
                         # Option to view full validation details
-                        if st.button(f"查看完整验证报告", key=f"full_validation_{context}_{index}_{job_short_id}"):
+                        if st.button(f"查看完整验证报告", key=f"full_validation_{job_id[:8]}"):
                             st.session_state[f"show_full_validation_{job_id}"] = True
                             st.rerun()
 
@@ -561,7 +564,7 @@ def display_job_card(job: Dict[str, Any], context: str, index: int):
                             st.markdown("#### 完整验证报告")
                             render_unified_validation_display(result)
 
-                            if st.button(f"隐藏验证报告", key=f"hide_validation_{context}_{index}_{job_short_id}"):
+                            if st.button(f"隐藏验证报告", key=f"hide_validation_{job_id[:8]}"):
                                 st.session_state[f"show_full_validation_{job_id}"] = False
                                 st.rerun()
 
@@ -613,7 +616,7 @@ def display_job_card(job: Dict[str, Any], context: str, index: int):
                         if transcript:
                             st.markdown("**🎤 转录内容:**")
 
-                            transcript_key = f"show_transcript_{context}_{index}_{job_short_id}"
+                            transcript_key = f"show_transcript_{job_id}"
                             if transcript_key not in st.session_state:
                                 st.session_state[transcript_key] = False
 
@@ -637,7 +640,7 @@ def display_job_card(job: Dict[str, Any], context: str, index: int):
 
                             # Toggle transcript display
                             if st.button(f"{'隐藏' if st.session_state[transcript_key] else '显示'} 转录内容",
-                                         key=f"toggle_transcript_{context}_{index}_{job_short_id}"):
+                                         key=f"toggle_transcript_{job_id[:8]}"):
                                 st.session_state[transcript_key] = not st.session_state[transcript_key]
                                 st.rerun()
 
@@ -647,7 +650,7 @@ def display_job_card(job: Dict[str, Any], context: str, index: int):
                                     transcript,
                                     height=300,
                                     disabled=True,
-                                    key=f"transcript_{context}_{index}_{job_short_id}"
+                                    key=f"transcript_{job_id[:8]}"
                                 )
 
                         # Document processing results
@@ -688,15 +691,18 @@ def display_job_card(job: Dict[str, Any], context: str, index: int):
                 # Quick actions with unique keys
                 action_col1, action_col2 = st.columns(2)
                 with action_col1:
-                    if st.button("🔄 刷新", key=f"refresh_{context}_{index}_{job_short_id}"):
+                    if st.button("🔄 刷新", key=f"refresh_{job_id[:8]}"):
                         st.rerun()
                 with action_col2:
                     if job_detail.get('status') in ['completed', 'failed']:
-                        if st.button("🗑️ 删除", key=f"delete_{context}_{index}_{job_short_id}"):
+                        if st.button("🗑️ 删除", key=f"delete_{job_id[:8]}"):
                             try:
                                 result = api_request(f"/ingest/jobs/{job_id}", method="DELETE")
                                 if result:
                                     st.success("任务已删除")
+                                    # Clear the active detail if this job was deleted
+                                    if st.session_state.active_job_detail == job_id:
+                                        st.session_state.active_job_detail = None
                                     time.sleep(1)
                                     st.rerun()
                                 else:
@@ -705,9 +711,6 @@ def display_job_card(job: Dict[str, Any], context: str, index: int):
                                 st.error("删除操作失败")
             else:
                 st.error("无法获取任务详情")
-
-        # FIXED: Only add divider if this is NOT the last job in the list
-        # This prevents the extra empty row before navigation
 
 
 # === FILTER JOBS BY STATUS ===
@@ -728,6 +731,8 @@ with tab_col1:
                  use_container_width=True,
                  type="primary" if st.session_state.current_tab == 0 else "secondary"):
         st.session_state.current_tab = 0
+        # Clear active detail when switching tabs
+        st.session_state.active_job_detail = None
         st.rerun()
 
 with tab_col2:
@@ -736,6 +741,8 @@ with tab_col2:
                  use_container_width=True,
                  type="primary" if st.session_state.current_tab == 1 else "secondary"):
         st.session_state.current_tab = 1
+        # Clear active detail when switching tabs
+        st.session_state.active_job_detail = None
         st.rerun()
 
 with tab_col3:
@@ -744,6 +751,8 @@ with tab_col3:
                  use_container_width=True,
                  type="primary" if st.session_state.current_tab == 2 else "secondary"):
         st.session_state.current_tab = 2
+        # Clear active detail when switching tabs
+        st.session_state.active_job_detail = None
         st.rerun()
 
 st.markdown("---")
@@ -776,6 +785,8 @@ if st.session_state.current_tab == 0:  # Processing jobs
             # Only update and rerun if page actually changed
             if new_page != st.session_state.processing_page:
                 st.session_state.processing_page = new_page
+                # Clear active detail when changing pages
+                st.session_state.active_job_detail = None
                 st.rerun()
 
         # Auto-refresh option for processing jobs
@@ -813,6 +824,8 @@ elif st.session_state.current_tab == 1:  # Completed jobs
             # Only update and rerun if page actually changed
             if new_page != st.session_state.completed_page:
                 st.session_state.completed_page = new_page
+                # Clear active detail when changing pages
+                st.session_state.active_job_detail = None
                 st.rerun()
     else:
         st.info("📭 暂无已完成的任务")
@@ -843,6 +856,8 @@ elif st.session_state.current_tab == 2:  # All jobs
         # Only update and rerun if page actually changed
         if new_page != st.session_state.all_jobs_page:
             st.session_state.all_jobs_page = new_page
+            # Clear active detail when changing pages
+            st.session_state.active_job_detail = None
             st.rerun()
 
 # === PAGE ACTIONS ===
