@@ -22,6 +22,9 @@ from src.ui.components.validation_display import (
     render_quick_validation_badge
 )
 
+# UPDATED: Import query mode configurations from the source
+from src.api.routers.query import QUERY_MODE_CONFIGS
+
 logger = logging.getLogger(__name__)
 
 initialize_session_state()
@@ -365,14 +368,36 @@ def display_job_card(job: Dict[str, Any], context: str, index: int):
                 result = {}
 
         if job_type == "llm_inference":
-            # For queries, show the mode name and query
+            # For queries, show the mode name and query with different colors for each mode
             mode_name = metadata.get("mode_name", "")
             query = metadata.get("query") or result.get("query", "")
 
+            # UPDATED: Create color mapping based on imported mode configurations
+            mode_colors = {}
+            for mode_config in QUERY_MODE_CONFIGS.values():
+                mode_name_key = mode_config.name
+                # Assign colors based on mode characteristics
+                if "规格查询" in mode_name_key:
+                    mode_colors[mode_name_key] = "blue"  # Facts - blue for factual info
+                elif "功能建议" in mode_name_key:
+                    mode_colors[mode_name_key] = "green"  # Features - green for new/positive
+                elif "权衡利弊" in mode_name_key:
+                    mode_colors[mode_name_key] = "orange"  # Tradeoffs - orange for analysis
+                elif "场景分析" in mode_name_key:
+                    mode_colors[mode_name_key] = "violet"  # Scenarios - violet for scenarios
+                elif "多角色讨论" in mode_name_key:
+                    mode_colors[mode_name_key] = "red"  # Debate - red for discussion/debate
+                elif "用户评论" in mode_name_key:
+                    mode_colors[mode_name_key] = "rainbow"  # Quotes - rainbow for user content
+                else:
+                    mode_colors[mode_name_key] = "gray"  # Fallback
+
             if mode_name and query:
-                return f":orange[**{mode_name}**] - {query[:60]}{'...' if len(query) > 60 else ''}"
+                color = mode_colors.get(mode_name, "gray")
+                return f":{color}[**{mode_name}**] - {query[:60]}{'...' if len(query) > 60 else ''}"
             elif mode_name:
-                return f":orange[**{mode_name}**] 查询"
+                color = mode_colors.get(mode_name, "gray")
+                return f":{color}[**{mode_name}**] 查询"
             elif query:
                 return f"查询: {query[:80]}{'...' if len(query) > 80 else ''}"
             return "查询处理"
