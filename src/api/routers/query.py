@@ -449,7 +449,7 @@ async def get_query_result(job_id: str) -> Optional[EnhancedQueryResponse]:
         )
 
 def calculate_processing_statistics(documents: List[Dict]) -> Dict[str, Any]:
-    """Calculate processing statistics for UI display."""
+    """Calculate processing statistics for UI display with ENHANCED PROCESSOR support."""
     if not documents:
         return {}
 
@@ -464,7 +464,7 @@ def calculate_processing_statistics(documents: List[Dict]) -> Dict[str, Any]:
         metadata = doc.get("metadata", {})
         content = doc.get("content", "")
 
-        # Check for embedded metadata using regex pattern
+        # ✅ CHECK FOR EMBEDDED METADATA (ENHANCED PROCESSOR PATTERNS)
         import re
         embedded_metadata_pattern = r'【[^】]+】'
         embedded_matches = re.findall(embedded_metadata_pattern, content)
@@ -472,20 +472,35 @@ def calculate_processing_statistics(documents: List[Dict]) -> Dict[str, Any]:
         if embedded_matches:
             docs_with_embedded += 1
             total_metadata_fields += len(embedded_matches)
+            logger.info(f"✅ Found {len(embedded_matches)} embedded metadata patterns in document")
+        else:
+            # ✅ ALSO CHECK METADATA FLAGS
+            if metadata.get('metadataInjected') or metadata.get('metadata_injected'):
+                docs_with_embedded += 1
+                logger.info(f"✅ Document marked as having metadata injection")
 
-        # Check vehicle info
-        if metadata.get('has_vehicle_info') or metadata.get('model'):
+        # ✅ CHECK VEHICLE INFO (ENHANCED PROCESSOR FIELDS)
+        if (metadata.get('vehicleDetected') or
+                metadata.get('has_vehicle_info') or
+                metadata.get('vehicleModel') or
+                metadata.get('model')):
             docs_with_vehicle += 1
 
             # Track unique vehicles
-            if metadata.get('model'):
-                manufacturer = metadata.get('manufacturer', '')
-                vehicle_name = f"{manufacturer} {metadata['model']}".strip()
+            manufacturer = metadata.get('manufacturer', '')
+            model = metadata.get('vehicleModel') or metadata.get('model', '')
+
+            if model:
+                if manufacturer:
+                    vehicle_name = f"{manufacturer} {model}"
+                else:
+                    vehicle_name = model
                 unique_vehicles.add(vehicle_name)
 
-        # Track sources
-        if metadata.get('source'):
-            unique_sources.add(metadata['source'])
+        # Track sources (enhanced processor uses 'source' field)
+        source = metadata.get('source') or metadata.get('sourcePlatform')
+        if source:
+            unique_sources.add(source)
 
     return {
         "total_documents": total_docs,
@@ -495,7 +510,13 @@ def calculate_processing_statistics(documents: List[Dict]) -> Dict[str, Any]:
         "unique_sources": list(unique_sources),
         "metadata_injection_rate": docs_with_embedded / total_docs if total_docs > 0 else 0,
         "vehicle_detection_rate": docs_with_vehicle / total_docs if total_docs > 0 else 0,
-        "avg_metadata_fields_per_doc": total_metadata_fields / max(docs_with_embedded, 1)
+        "avg_metadata_fields_per_doc": total_metadata_fields / max(docs_with_embedded, 1),
+        # ✅ ADD ENHANCED PROCESSING INDICATORS
+        "enhanced_processing_detected": any(
+            doc.get("metadata", {}).get("enhanced_processing_used") or
+            doc.get("metadata", {}).get("processing_method") == "enhanced_transcript_processor"
+            for doc in documents
+        )
     }
 
 def parse_structured_answer(answer: str, query_mode: str) -> Optional[Dict[str, str]]:

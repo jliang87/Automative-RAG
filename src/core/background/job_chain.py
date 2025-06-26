@@ -703,13 +703,13 @@ def download_video_task(job_id: str, url: str, metadata: Optional[Dict] = None):
 
 @dramatiq.actor(queue_name="transcription_tasks", store_results=True, max_retries=2)
 def transcribe_video_task(job_id: str, media_path: str):
-    """Transcribe video - Unicode cleaning happens automatically!"""
+    """Transcribe video - NOW USING ENHANCED PROCESSOR WITH METADATA INJECTION!"""
     try:
         logger.info(f"Transcribing video for job {job_id}: {media_path}")
 
         from .models import get_whisper_model
-        from langchain_core.documents import Document
-        from langchain_text_splitters import RecursiveCharacterTextSplitter
+        # ✅ IMPORT ENHANCED PROCESSOR
+        from src.core.enhanced_transcript_processor import EnhancedTranscriptProcessor
 
         # Get the preloaded Whisper model
         whisper_model = get_whisper_model()
@@ -742,12 +742,9 @@ def transcribe_video_task(job_id: str, media_path: str):
             except ImportError:
                 logger.warning("opencc not found. Chinese conversion skipped.")
 
-        # Split transcript into chunks
-        text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=settings.chunk_size,
-            chunk_overlap=settings.chunk_overlap,
-        )
-        chunks = text_splitter.split_text(transcript)
+        # ❌ REMOVE OLD BASIC TEXT SPLITTING:
+        # text_splitter = RecursiveCharacterTextSplitter(...)
+        # chunks = text_splitter.split_text(transcript)
 
         # Get existing job data and validate video_metadata exists
         current_job = job_tracker.get_job(job_id, include_progress=False)
@@ -774,16 +771,10 @@ def transcribe_video_task(job_id: str, media_path: str):
 
         # Validate essential fields exist
         title = video_metadata.get("title", "")
-        author = video_metadata.get("author", "")
+        author = video_metadata.get("uploader", "")
 
         if not title or title in ["Unknown Video", ""]:
             error_msg = f"Title is empty or invalid for job {job_id}"
-            logger.error(error_msg)
-            job_chain.task_failed(job_id, error_msg)
-            return
-
-        if not author or author in ["Unknown", "Unknown Author", ""]:
-            error_msg = f"Author is empty or invalid for job {job_id}"
             logger.error(error_msg)
             job_chain.task_failed(job_id, error_msg)
             return
@@ -792,78 +783,64 @@ def transcribe_video_task(job_id: str, media_path: str):
         logger.info(f"  Title: {title}")
         logger.info(f"  Author: {author}")
 
-        # Get other required fields
-        original_url = video_metadata.get("url")
-        video_id = video_metadata.get("video_id")
+        # ✅ NEW: USE ENHANCED TRANSCRIPT PROCESSOR
+        logger.info(f"🔧 Using enhanced transcript processor for job {job_id}")
 
-        if not original_url or not video_id:
-            error_msg = f"Missing URL or video_id in video_metadata for job {job_id}"
-            logger.error(error_msg)
-            job_chain.task_failed(job_id, error_msg)
-            return
+        processor = EnhancedTranscriptProcessor()
 
-        # Determine source type
-        source_type = "video"
-        job_metadata = current_job.get("metadata", {})
-        if isinstance(job_metadata, str):
-            try:
-                job_metadata = json.loads(job_metadata)
-            except:
-                job_metadata = {}
+        # Process transcript with enhanced metadata injection
+        enhanced_documents = processor.process_transcript_chunks(
+            transcript=transcript,
+            video_metadata=video_metadata,
+            chunk_size=settings.chunk_size,
+            chunk_overlap=settings.chunk_overlap
+        )
 
-        platform = job_metadata.get("platform", "").lower()
-        if platform == "youtube":
-            source_type = "youtube"
-        elif platform == "bilibili":
-            source_type = "bilibili"
-        elif "youtube.com" in original_url or "youtu.be" in original_url:
-            source_type = "youtube"
-        elif "bilibili.com" in original_url:
-            source_type = "bilibili"
+        logger.info(f"✅ Enhanced processing completed for job {job_id}: {len(enhanced_documents)} documents")
 
-        logger.info(f"Detected source type: {source_type} for job {job_id}")
+        # ✅ VERIFY METADATA INJECTION WORKED
+        if enhanced_documents:
+            sample_doc = enhanced_documents[0]
+            sample_content = sample_doc.page_content
 
-        # Create documents with validated metadata
-        documents = []
-        for i, chunk in enumerate(chunks):
-            doc_metadata = {
-                "chunk_id": i,
-                "source": source_type,
-                "source_id": video_id,
-                "language": info.language,
-                "total_chunks": len(chunks),
-                "title": title,
-                "author": author,
-                "url": original_url,
-                "video_id": video_id,
-                "published_date": video_metadata.get("published_date"),
-                "description": video_metadata.get("description", ""),
-                "length": video_metadata.get("length", 0),
-                "views": video_metadata.get("views", 0),
-                "custom_metadata": job_metadata.get("custom_metadata", {})
-            }
+            # Check for embedded metadata patterns
+            import re
+            embedded_patterns = re.findall(r'【[^】]+】', sample_content)
 
-            doc = Document(
-                page_content=chunk,
-                metadata=doc_metadata
-            )
-            documents.append(doc)
+            logger.info(f"🏷️ Metadata injection verification for job {job_id}:")
+            logger.info(f"  Embedded patterns found: {len(embedded_patterns)}")
+            logger.info(f"  Sample patterns: {embedded_patterns[:3] if embedded_patterns else 'NONE'}")
+            logger.info(f"  Vehicle detected: {sample_doc.metadata.get('vehicleDetected', False)}")
+            logger.info(f"  Metadata injected: {sample_doc.metadata.get('metadataInjected', False)}")
 
-        logger.info(f"Transcription completed for job {job_id}: {len(chunks)} chunks, language: {info.language}")
+        # Convert enhanced documents to format for next task
+        document_dicts = []
+        for doc in enhanced_documents:
+            document_dicts.append({
+                "content": doc.page_content,  # ✅ NOW CONTAINS EMBEDDED METADATA!
+                "metadata": doc.metadata  # ✅ NOW CONTAINS ENHANCED METADATA!
+            })
+
+        logger.info(
+            f"Transcription completed for job {job_id}: {len(enhanced_documents)} enhanced chunks, language: {info.language}")
 
         # Create transcription result while preserving ALL existing data
         transcription_result = {}
         transcription_result.update(existing_result)
 
-        # Add new transcription data
+        # Add new transcription data with enhanced processing
         transcription_result.update({
-            "documents": [{"content": doc.page_content, "metadata": doc.metadata} for doc in documents],
+            "documents": document_dicts,  # ✅ NOW WITH EMBEDDED METADATA
             "transcript": transcript,
             "language": info.language,
             "duration": info.duration,
-            "chunk_count": len(chunks),
+            "chunk_count": len(enhanced_documents),
             "transcription_completed_at": time.time(),
-            "detected_source": source_type,
+            "detected_source": "bilibili" if 'bilibili.com' in video_metadata.get('url', '') else 'youtube',
+            # ✅ ADD ENHANCED PROCESSING MARKERS
+            "enhanced_processing_used": True,
+            "metadata_injection_applied": True,
+            "processing_method": "enhanced_transcript_processor"
         })
 
         logger.info(f"Transcription completed for job {job_id}")
