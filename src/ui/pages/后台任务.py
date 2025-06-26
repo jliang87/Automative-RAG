@@ -636,236 +636,446 @@ def render_blade_modal():
         st.session_state.blade_job_id = None
         return
 
-    # Add blade-active class to main app to disable interactions
+    # Create the backdrop and blade structure
     st.markdown("""
+    <div class="blade-backdrop"></div>
+    <div class="blade-modal">
+        <div class="blade-header">
+            <h3 style="margin: 0; color: var(--text-color);">📋 任务详情</h3>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # Use an empty container that we'll position as our blade content area
+    # We need to use Streamlit's built-in container for reactivity
+
+    # Create a hidden close button that can be triggered by JavaScript
+    if st.button("关闭详情面板", key="blade_close_trigger", help="关闭", type="secondary"):
+        st.session_state.blade_job_id = None
+        st.rerun()
+
+    # JavaScript to handle the blade interactions and DOM manipulation
+    blade_js = f"""
     <script>
-    document.querySelector('.stApp').classList.add('blade-active');
+    // Remove any existing blade content
+    const existingBlade = document.querySelector('.blade-content-streamlit');
+    if (existingBlade) existingBlade.remove();
+
+    // Create the blade content container
+    const bladeContent = document.createElement('div');
+    bladeContent.className = 'blade-content-streamlit';
+    bladeContent.innerHTML = `
+        <div style="position: fixed; top: 0; right: 0; width: 500px; max-width: 40vw; height: 100vh; 
+                    background-color: var(--background-color, white); z-index: 1001; 
+                    box-shadow: -6px 0 25px rgba(0, 0, 0, 0.2); overflow-y: auto; padding: 1rem;
+                    border-left: 2px solid var(--border-color, #ddd);
+                    animation: slideInRight 0.3s ease-in-out;">
+
+            <div style="position: sticky; top: 0; background-color: var(--background-color, white); 
+                        padding-bottom: 1rem; border-bottom: 1px solid var(--border-color, #ddd); margin-bottom: 1rem;">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <h3 style="margin: 0; color: var(--text-color, black);">📋 任务详情</h3>
+                    <button onclick="closeBlade()" style="background: none; border: none; font-size: 1.2rem; 
+                            cursor: pointer; color: var(--text-color, black); padding: 5px;">❌</button>
+                </div>
+            </div>
+
+            <div style="padding-bottom: 2rem;">
+                <p><strong>任务ID:</strong> {job_id[:12]}...</p>
+                <p><strong>类型:</strong> {format_job_type(job_detail.get('job_type', ''))}</p>
+                <p><strong>状态:</strong> {job_detail.get('status', '')}</p>
+    """
+
+    # Add creation and update times
+    if job_detail.get('created_at'):
+        created_time = time.strftime('%m-%d %H:%M:%S', time.localtime(job_detail['created_at']))
+        blade_js += f"<p><strong>创建时间:</strong> {created_time}</p>"
+
+    if job_detail.get('updated_at'):
+        updated_time = time.strftime('%m-%d %H:%M:%S', time.localtime(job_detail['updated_at']))
+        blade_js += f"<p><strong>更新时间:</strong> {updated_time}</p>"
+
+    # Add progress information if available
+    progress_info = job_detail.get('progress_info', {})
+    if progress_info:
+        progress = progress_info.get('progress')
+        message = progress_info.get('message', '')
+        if progress is not None:
+            blade_js += f"""
+                <div style="margin: 1rem 0;">
+                    <p><strong>进度:</strong> {progress}%</p>
+                    <div style="background-color: #f0f0f0; border-radius: 10px; overflow: hidden;">
+                        <div style="height: 20px; background-color: #4CAF50; width: {progress}%; transition: width 0.3s;"></div>
+                    </div>
+                    <p style="font-size: 0.9em; color: #666;">{message}</p>
+                </div>
+            """
+
+    # Add metadata
+    metadata = job_detail.get('metadata', {})
+    if metadata:
+        blade_js += "<hr><h4>📋 任务元数据</h4>"
+
+        if metadata.get('url'):
+            url = metadata['url'][:60] + "..." if len(metadata['url']) > 60 else metadata['url']
+            blade_js += f"<p><strong>URL:</strong> <a href='{metadata['url']}' target='_blank'>{url}</a></p>"
+        if metadata.get('query'):
+            query = metadata['query'][:100] + "..." if len(metadata['query']) > 100 else metadata['query']
+            blade_js += f"<p><strong>查询:</strong> {query}</p>"
+        if metadata.get('platform'):
+            blade_js += f"<p><strong>平台:</strong> {metadata['platform']}</p>"
+        if metadata.get('query_mode'):
+            blade_js += f"<p><strong>查询模式:</strong> {metadata['query_mode']}</p>"
+
+    # Add results if completed
+    result = job_detail.get('result', {})
+    if isinstance(result, str):
+        try:
+            result = json.loads(result)
+        except:
+            result = {}
+
+    if job_detail.get('status') == 'completed' and result:
+        blade_js += "<hr><h4>📊 处理结果</h4>"
+
+        # Video metadata
+        video_metadata = result.get('video_metadata', {})
+        if video_metadata:
+            blade_js += "<h5>🎬 视频信息</h5>"
+            if video_metadata.get('title'):
+                title = video_metadata['title'][:80] + "..." if len(video_metadata['title']) > 80 else video_metadata[
+                    'title']
+                blade_js += f"<p><strong>标题:</strong> {title}</p>"
+            if video_metadata.get('author'):
+                blade_js += f"<p><strong>作者:</strong> {video_metadata['author']}</p>"
+            if video_metadata.get('length'):
+                duration_mins = video_metadata['length'] // 60
+                duration_secs = video_metadata['length'] % 60
+                blade_js += f"<p><strong>时长:</strong> {duration_mins}分{duration_secs}秒</p>"
+            if video_metadata.get('views'):
+                blade_js += f"<p><strong>观看次数:</strong> {video_metadata['views']:,}</p>"
+
+        # Document count
+        if result.get('document_count'):
+            blade_js += f"<div style='background-color: #e8f5e8; padding: 10px; border-radius: 5px; margin: 10px 0;'>✅ 成功生成 {result['document_count']} 个文档片段</div>"
+
+        # Query answer
+        if result.get('answer'):
+            answer = result['answer']
+            # Clean up answer
+            if "</think>" in answer:
+                answer = answer.split("</think>")[-1].strip()
+            answer = answer.replace("<think>", "").replace("</think>", "").strip()
+
+            if len(answer) > 300:
+                answer = answer[:300] + "..."
+
+            blade_js += f"""
+                <h5>❓ 查询答案</h5>
+                <div style='background-color: #f8f9fa; padding: 15px; border-radius: 8px; 
+                            border-left: 4px solid #007bff; font-size: 0.95em; line-height: 1.4;'>
+                    {answer}
+                </div>
+            """
+
+        # Transcript info
+        transcript = result.get('transcript', '')
+        if transcript:
+            word_count = len(transcript.split())
+            char_count = len(transcript)
+            blade_js += f"""
+                <h5>🎤 转录统计</h5>
+                <p><strong>字数:</strong> {word_count:,}</p>
+                <p><strong>字符数:</strong> {char_count:,}</p>
+            """
+
+    # Error information for failed jobs
+    elif job_detail.get('status') == 'failed':
+        error = job_detail.get('error', '')
+        if error:
+            blade_js += f"""
+                <hr>
+                <div style='background-color: #ffe6e6; padding: 15px; border-radius: 8px; 
+                            border-left: 4px solid #dc3545; color: #721c24;'>
+                    <strong>❌ 错误信息:</strong><br>{error}
+                </div>
+            """
+
+    # Add action buttons
+    blade_js += """
+                <hr>
+                <div style="margin-top: 2rem;">
+                    <button onclick="refreshPage()" 
+                            style="width: 100%; padding: 12px; margin-bottom: 10px; 
+                                   background-color: #007bff; color: white; border: none; 
+                                   border-radius: 6px; cursor: pointer; font-size: 1rem;">
+                        🔄 刷新详情
+                    </button>
+                    <button onclick="closeBlade()" 
+                            style="width: 100%; padding: 12px; 
+                                   background-color: #6c757d; color: white; border: none; 
+                                   border-radius: 6px; cursor: pointer; font-size: 1rem;">
+                        ❌ 关闭详情
+                    </button>
+                </div>
+            </div>
+        </div>
+    `;
+
+    // Add backdrop click handler
+    const backdrop = document.querySelector('.blade-backdrop');
+    if (backdrop) {
+        backdrop.onclick = closeBlade;
+    }
+
+    // Append to body
+    document.body.appendChild(bladeContent);
+
+    // Functions for blade interactions
+    function closeBlade() {
+        const blade = document.querySelector('.blade-content-streamlit');
+        const backdrop = document.querySelector('.blade-backdrop');
+        if (blade) blade.remove();
+        if (backdrop) backdrop.remove();
+
+        // Trigger the hidden close button
+        const closeBtn = document.querySelector('button[data-testid*="blade_close_trigger"]');
+        if (closeBtn) closeBtn.click();
+    }
+
+    function refreshPage() {
+        window.location.reload();
+    }
+
+    // Prevent main page scroll when blade is open
+    document.body.style.overflow = 'hidden';
+
+    // Cleanup function
+    window.addEventListener('beforeunload', function() {
+        document.body.style.overflow = 'auto';
+    });
+
     </script>
-    """, unsafe_allow_html=True)
+    """
 
-    # Create backdrop overlay with proper z-index
-    st.markdown("""
-    <div class="blade-backdrop" onclick="window.parent.postMessage({type: 'streamlit:closeModal'}, '*')"></div>
-    <div class="blade-overlay"></div>
-    """, unsafe_allow_html=True)
+    # Render the JavaScript
+    st.markdown(blade_js, unsafe_allow_html=True)
+    st.markdown("### 📋 任务详情")
 
-    # The actual modal content will be rendered in the sidebar
-    with st.sidebar:
-        st.markdown("### 📋 任务详情")
-
-        # Close button
-        col1, col2 = st.columns([3, 1])
-        with col1:
-            st.markdown(f"**任务ID:** {job_id[:12]}...")
-        with col2:
-            if st.button("❌", key="close_blade", help="关闭"):
-                st.session_state.blade_job_id = None
-                st.rerun()
-
-        st.markdown("---")
-
-        # Basic information
-        job_type = job_detail.get('job_type', '')
-        status = job_detail.get('status', '')
-        created = job_detail.get('created_at', 0)
-        updated = job_detail.get('updated_at', 0)
-
-        st.write(f"**类型:** {format_job_type(job_type)}")
-        st.write(f"**状态:** {status}")
-
-        if created:
-            st.write(f"**创建:** {time.strftime('%m-%d %H:%M:%S', time.localtime(created))}")
-        if updated:
-            st.write(f"**更新:** {time.strftime('%m-%d %H:%M:%S', time.localtime(updated))}")
-
-        # Progress information
-        progress_info = job_detail.get('progress_info', {})
-        if progress_info:
-            progress = progress_info.get('progress')
-            message = progress_info.get('message', '')
-
-            st.write("**当前进度:**")
-            if progress is not None:
-                st.progress(progress / 100.0)
-                st.caption(f"{progress}% - {message}")
-            else:
-                st.caption(message or "处理中...")
-
-        # Enhanced Metadata Display
-        st.markdown("**📋 任务元数据:**")
-        metadata = job_detail.get('metadata', {})
-        result = job_detail.get('result', {})
-
-        if metadata and isinstance(metadata, dict):
-            if metadata.get('url'):
-                st.write(f"**URL:** {metadata['url']}")
-            if metadata.get('query'):
-                st.write(f"**查询:** {metadata['query']}")
-            if metadata.get('platform'):
-                st.write(f"**平台:** {metadata['platform']}")
-
-            # UPDATED: Show query mode information
-            if metadata.get('query_mode'):
-                st.write(f"**查询模式:** {metadata['query_mode']}")
-            if metadata.get('mode_name'):
-                st.write(f"**模式名称:** {metadata['mode_name']}")
-
-        # Parse result properly
-        if isinstance(result, str):
-            try:
-                import json
-                result = json.loads(result)
-            except:
-                result = {}
-
-        # Enhanced Results Display
-        if job_detail.get('status') == 'completed':
-            if result and isinstance(result, dict):
-
-                # Show video metadata
-                video_metadata = result.get('video_metadata', {})
-
-                if video_metadata and isinstance(video_metadata, dict):
-                    st.markdown("**🎬 视频信息:**")
-
-                    if video_metadata.get('title'):
-                        st.write(f"**标题:** {video_metadata['title']}")
-                    if video_metadata.get('author'):
-                        st.write(f"**作者:** {video_metadata['author']}")
-                    if video_metadata.get('published_date'):
-                        pub_date = video_metadata['published_date']
-                        if isinstance(pub_date, str) and len(pub_date) == 8:
-                            formatted_date = f"{pub_date[:4]}-{pub_date[4:6]}-{pub_date[6:8]}"
-                            st.write(f"**发布日期:** {formatted_date}")
-                        else:
-                            st.write(f"**发布日期:** {pub_date}")
-
-                    if video_metadata.get('url'):
-                        st.write(f"**链接:** [观看视频]({video_metadata['url']})")
-
-                    if video_metadata.get('length'):
-                        duration_mins = video_metadata['length'] // 60
-                        duration_secs = video_metadata['length'] % 60
-                        st.write(f"**时长:** {duration_mins}分{duration_secs}秒")
-                    if video_metadata.get('views'):
-                        views = video_metadata['views']
-                        st.write(f"**观看次数:** {views:,}")
-                    if video_metadata.get('video_id'):
-                        st.write(f"**视频ID:** {video_metadata['video_id']}")
-
-                    language = result.get('language') or video_metadata.get('language')
-                    if language:
-                        lang_display = {"zh": "中文", "en": "英文"}.get(language, language)
-                        st.write(f"**语言:** {lang_display}")
-
-                # Show transcription with better formatting
-                transcript = result.get('transcript', '')
-                if transcript:
-                    st.markdown("**🎤 转录内容:**")
-
-                    # Show transcript stats
-                    word_count = len(transcript.split())
-                    char_count = len(transcript)
-                    language = result.get('language', '未知')
-                    duration = result.get('duration', 0)
-
-                    st.metric("字数", f"{word_count:,}")
-                    st.metric("字符数", f"{char_count:,}")
-                    lang_display = {"zh": "中文", "en": "英文"}.get(language, language)
-                    st.metric("语言", lang_display)
-                    if duration > 0:
-                        st.metric("时长", f"{duration:.1f}秒")
-
-                    # Show transcript in expandable area
-                    with st.expander("查看完整转录内容"):
-                        st.text_area(
-                            "完整转录内容",
-                            transcript,
-                            height=300,
-                            disabled=True,
-                            key=f"blade_transcript_{job_id}"
-                        )
-
-                # Document processing results
-                if 'document_count' in result:
-                    st.success(f"✅ 成功生成 {result['document_count']} 个文档片段")
-
-                # Query results with validation
-                if 'answer' in result:
-                    st.write("**❓ 查询答案:**")
-                    answer = result['answer']
-
-                    # Clean up LLM thinking artifacts
-                    if "</think>" in answer:
-                        answer = answer.split("</think>")[-1].strip()
-                    if answer.startswith("<think>"):
-                        lines = answer.split('\n')
-                        clean_lines = []
-                        thinking_section = True
-                        for line in lines:
-                            if thinking_section and (not line.strip().startswith('<') and line.strip()):
-                                thinking_section = False
-                            if not thinking_section:
-                                clean_lines.append(line)
-                        answer = '\n'.join(clean_lines).strip()
-                    answer = answer.replace("<think>", "").replace("</think>", "").strip()
-
-                    if answer:
-                        st.info(answer)
-                    else:
-                        st.warning("答案为空或无法解析")
-
-                    # UPDATED: Show validation results for completed LLM inference jobs
-                    if job_type == "llm_inference" and has_validation_data(result):
-                        st.markdown("---")
-                        st.markdown("### 🛡️ 验证结果")
-
-                        # Quick validation summary
-                        display_job_validation_summary(result)
-
-                        # Option to view full validation details
-                        if st.button(f"查看完整验证报告", key=f"blade_full_validation_{job_id}"):
-                            st.session_state[f"blade_show_full_validation_{job_id}"] = True
-                            st.rerun()
-
-                        # Show full validation if requested
-                        if st.session_state.get(f"blade_show_full_validation_{job_id}", False):
-                            st.markdown("#### 完整验证报告")
-                            render_unified_validation_display(result)
-
-                            if st.button(f"隐藏验证报告", key=f"blade_hide_validation_{job_id}"):
-                                st.session_state[f"blade_show_full_validation_{job_id}"] = False
-                                st.rerun()
-
-        # Error information (for failed jobs)
-        elif job_detail.get('status') == 'failed':
-            error = job_detail.get('error', '')
-            if error:
-                st.error(f"❌ **错误:** {error}")
-
-        # Enhanced action buttons that remain functional
-        st.markdown("---")
-        st.markdown("**🚀 操作:**")
-
-        if st.button("🔄 刷新", key=f"blade_refresh_{job_id}", use_container_width=True):
+    # Close button
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        st.markdown(f"**任务ID:** {job_id[:12]}...")
+    with col2:
+        if st.button("❌", key="close_blade", help="关闭"):
+            st.session_state.blade_job_id = None
             st.rerun()
 
-        if job_detail.get('status') in ['completed', 'failed']:
-            if st.button("🗑️ 删除", key=f"blade_delete_{job_id}", use_container_width=True):
-                try:
-                    result = api_request(f"/ingest/jobs/{job_id}", method="DELETE")
-                    if result:
-                        st.success("任务已删除")
-                        st.session_state.blade_job_id = None
-                        time.sleep(1)
-                        st.rerun()
-                    else:
-                        st.error("删除失败")
-                except:
-                    st.error("删除操作失败")
+    st.markdown("---")
 
-    # JavaScript to handle backdrop clicks and ensure proper modal behavior
-    st.markdown("""
+    # Basic information
+    job_type = job_detail.get('job_type', '')
+    status = job_detail.get('status', '')
+    created = job_detail.get('created_at', 0)
+    updated = job_detail.get('updated_at', 0)
+
+    st.write(f"**类型:** {format_job_type(job_type)}")
+    st.write(f"**状态:** {status}")
+
+    if created:
+        st.write(f"**创建:** {time.strftime('%m-%d %H:%M:%S', time.localtime(created))}")
+    if updated:
+        st.write(f"**更新:** {time.strftime('%m-%d %H:%M:%S', time.localtime(updated))}")
+
+    # Progress information
+    progress_info = job_detail.get('progress_info', {})
+    if progress_info:
+        progress = progress_info.get('progress')
+        message = progress_info.get('message', '')
+
+        st.write("**当前进度:**")
+        if progress is not None:
+            st.progress(progress / 100.0)
+            st.caption(f"{progress}% - {message}")
+        else:
+            st.caption(message or "处理中...")
+
+    # Enhanced Metadata Display
+    st.markdown("**📋 任务元数据:**")
+    metadata = job_detail.get('metadata', {})
+    result = job_detail.get('result', {})
+
+    if metadata and isinstance(metadata, dict):
+        if metadata.get('url'):
+            st.write(f"**URL:** {metadata['url']}")
+        if metadata.get('query'):
+            st.write(f"**查询:** {metadata['query']}")
+        if metadata.get('platform'):
+            st.write(f"**平台:** {metadata['platform']}")
+
+        # UPDATED: Show query mode information
+        if metadata.get('query_mode'):
+            st.write(f"**查询模式:** {metadata['query_mode']}")
+        if metadata.get('mode_name'):
+            st.write(f"**模式名称:** {metadata['mode_name']}")
+
+    # Parse result properly
+    if isinstance(result, str):
+        try:
+            import json
+            result = json.loads(result)
+        except:
+            result = {}
+
+    # Enhanced Results Display
+    if job_detail.get('status') == 'completed':
+        if result and isinstance(result, dict):
+
+            # Show video metadata
+            video_metadata = result.get('video_metadata', {})
+
+            if video_metadata and isinstance(video_metadata, dict):
+                st.markdown("**🎬 视频信息:**")
+
+                if video_metadata.get('title'):
+                    st.write(f"**标题:** {video_metadata['title']}")
+                if video_metadata.get('author'):
+                    st.write(f"**作者:** {video_metadata['author']}")
+                if video_metadata.get('published_date'):
+                    pub_date = video_metadata['published_date']
+                    if isinstance(pub_date, str) and len(pub_date) == 8:
+                        formatted_date = f"{pub_date[:4]}-{pub_date[4:6]}-{pub_date[6:8]}"
+                        st.write(f"**发布日期:** {formatted_date}")
+                    else:
+                        st.write(f"**发布日期:** {pub_date}")
+
+                if video_metadata.get('url'):
+                    st.write(f"**链接:** [观看视频]({video_metadata['url']})")
+
+                if video_metadata.get('length'):
+                    duration_mins = video_metadata['length'] // 60
+                    duration_secs = video_metadata['length'] % 60
+                    st.write(f"**时长:** {duration_mins}分{duration_secs}秒")
+                if video_metadata.get('views'):
+                    views = video_metadata['views']
+                    st.write(f"**观看次数:** {views:,}")
+                if video_metadata.get('video_id'):
+                    st.write(f"**视频ID:** {video_metadata['video_id']}")
+
+                language = result.get('language') or video_metadata.get('language')
+                if language:
+                    lang_display = {"zh": "中文", "en": "英文"}.get(language, language)
+                    st.write(f"**语言:** {lang_display}")
+
+            # Show transcription with better formatting
+            transcript = result.get('transcript', '')
+            if transcript:
+                st.markdown("**🎤 转录内容:**")
+
+                # Show transcript stats
+                word_count = len(transcript.split())
+                char_count = len(transcript)
+                language = result.get('language', '未知')
+                duration = result.get('duration', 0)
+
+                st.metric("字数", f"{word_count:,}")
+                st.metric("字符数", f"{char_count:,}")
+                lang_display = {"zh": "中文", "en": "英文"}.get(language, language)
+                st.metric("语言", lang_display)
+                if duration > 0:
+                    st.metric("时长", f"{duration:.1f}秒")
+
+                # Show transcript in expandable area
+                with st.expander("查看完整转录内容"):
+                    st.text_area(
+                        "完整转录内容",
+                        transcript,
+                        height=300,
+                        disabled=True,
+                        key=f"blade_transcript_{job_id}"
+                    )
+
+            # Document processing results
+            if 'document_count' in result:
+                st.success(f"✅ 成功生成 {result['document_count']} 个文档片段")
+
+            # Query results with validation
+            if 'answer' in result:
+                st.write("**❓ 查询答案:**")
+                answer = result['answer']
+
+                # Clean up LLM thinking artifacts
+                if "</think>" in answer:
+                    answer = answer.split("</think>")[-1].strip()
+                if answer.startswith("<think>"):
+                    lines = answer.split('\n')
+                    clean_lines = []
+                    thinking_section = True
+                    for line in lines:
+                        if thinking_section and (not line.strip().startswith('<') and line.strip()):
+                            thinking_section = False
+                        if not thinking_section:
+                            clean_lines.append(line)
+                    answer = '\n'.join(clean_lines).strip()
+                answer = answer.replace("<think>", "").replace("</think>", "").strip()
+
+                if answer:
+                    st.info(answer)
+                else:
+                    st.warning("答案为空或无法解析")
+
+                # UPDATED: Show validation results for completed LLM inference jobs
+                if job_type == "llm_inference" and has_validation_data(result):
+                    st.markdown("---")
+                    st.markdown("### 🛡️ 验证结果")
+
+                    # Quick validation summary
+                    display_job_validation_summary(result)
+
+                    # Option to view full validation details
+                    if st.button(f"查看完整验证报告", key=f"blade_full_validation_{job_id}"):
+                        st.session_state[f"blade_show_full_validation_{job_id}"] = True
+                        st.rerun()
+
+                    # Show full validation if requested
+                    if st.session_state.get(f"blade_show_full_validation_{job_id}", False):
+                        st.markdown("#### 完整验证报告")
+                        render_unified_validation_display(result)
+
+                        if st.button(f"隐藏验证报告", key=f"blade_hide_validation_{job_id}"):
+                            st.session_state[f"blade_show_full_validation_{job_id}"] = False
+                            st.rerun()
+
+    # Error information (for failed jobs)
+    elif job_detail.get('status') == 'failed':
+        error = job_detail.get('error', '')
+        if error:
+            st.error(f"❌ **错误:** {error}")
+
+    # Enhanced action buttons that remain functional
+    st.markdown("---")
+    st.markdown("**🚀 操作:**")
+
+    if st.button("🔄 刷新", key=f"blade_refresh_{job_id}", use_container_width=True):
+        st.rerun()
+
+    if job_detail.get('status') in ['completed', 'failed']:
+        if st.button("🗑️ 删除", key=f"blade_delete_{job_id}", use_container_width=True):
+            try:
+                result = api_request(f"/ingest/jobs/{job_id}", method="DELETE")
+                if result:
+                    st.success("任务已删除")
+                    st.session_state.blade_job_id = None
+                    time.sleep(1)
+                    st.rerun()
+                else:
+                    st.error("删除失败")
+            except:
+                st.error("删除操作失败")
+
+
+# JavaScript to handle backdrop clicks and ensure proper modal behavior
+st.markdown("""
     <script>
     // Handle backdrop clicks to close modal
     document.addEventListener('click', function(event) {
@@ -889,7 +1099,6 @@ def render_blade_modal():
     }
     </script>
     """, unsafe_allow_html=True)
-
 
 # === FILTER JOBS BY STATUS ===
 processing_jobs = [j for j in jobs if j.get("status") in ["pending", "processing"]]
