@@ -65,6 +65,9 @@ st.markdown("""
 st.title("📋 后台任务")
 st.markdown("查看和管理您的处理任务，包括验证结果")
 
+# Debug: Show current modal state
+st.write(f"🔍 DEBUG - Current modal_job_id: {st.session_state.get('modal_job_id', 'None')}")
+
 # === JOB STATISTICS OVERVIEW ===
 job_stats = get_job_statistics()
 
@@ -489,7 +492,10 @@ def display_job_card(job: Dict[str, Any], context: str, index: int):
             # Replace blade trigger with modal trigger
             if st.button("📄 详情", key=f"detail_{context}_{index}_{job_id[:8]}",
                          type="primary", use_container_width=True):
+                # Debug: Show that button was clicked
+                st.write(f"🔍 Button clicked for job: {job_id}")
                 st.session_state.modal_job_id = job_id
+                st.write(f"🔍 Session state set to: {st.session_state.modal_job_id}")
                 st.rerun()
 
         # Progress bar for processing jobs
