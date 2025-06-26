@@ -486,10 +486,10 @@ def display_job_card(job: Dict[str, Any], context: str, index: int):
             st.caption(f"创建: {format_time(created_at)}")
 
         with col4:
-            # Replace expansion with blade modal trigger
+            # Replace blade trigger with modal trigger
             if st.button("📄 详情", key=f"detail_{context}_{index}_{job_id[:8]}",
                          type="primary", use_container_width=True):
-                st.session_state.blade_job_id = job_id
+                st.session_state.modal_job_id = job_id
                 st.rerun()
 
         # Progress bar for processing jobs
@@ -1175,8 +1175,9 @@ elif st.session_state.current_tab == 2:  # All jobs
             st.session_state.all_jobs_page = new_page
             st.rerun()
 
-# Render the blade modal if a job is selected
-render_blade_modal()
+# Render the bottom modal if a job is selected
+if st.session_state.modal_job_id:
+    render_bottom_modal()
 
 # === PAGE ACTIONS ===
 st.markdown("---")
