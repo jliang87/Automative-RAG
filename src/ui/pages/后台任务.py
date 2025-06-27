@@ -603,48 +603,12 @@ def display_job_card(job: Dict[str, Any], context: str, index: int):
                     with st.expander("📊 **处理结果元数据分析**", expanded=False):
                         display_enhanced_job_metadata_analysis(job_detail)
 
-                # UPDATED: Show validation results for completed LLM inference jobs (direct display to avoid nested expanders)
+                # UPDATED: Add separate collapsed section for full validation report
                 if job_detail.get('status') == 'completed' and job_type == "llm_inference":
                     if has_validation_data(result):
-                        st.markdown("---")
-                        st.markdown("### 🛡️ 验证结果")
-
-                        # Quick validation summary with better styling
-                        st.markdown("##### 验证概览")
-                        validation_badge = render_quick_validation_badge(result)
-                        st.markdown(f"**验证状态:** {validation_badge}")
-
-                        # Enhanced validation summary
-                        automotive_validation = result.get("automotive_validation", {})
-                        if automotive_validation:
-                            confidence_level = automotive_validation.get("confidence_level", "unknown")
-                            has_warnings = automotive_validation.get("has_warnings", False)
-
-                            if confidence_level == "high" and not has_warnings:
-                                st.success("✅ 高质量回答，已通过专业验证")
-                            elif confidence_level == "medium":
-                                st.info("📋 中等质量回答，建议参考多个来源")
-                            elif confidence_level == "low" or has_warnings:
-                                st.warning("⚠️ 包含需注意信息，请查看验证详情")
-                            else:
-                                st.error("❓ 验证状态未知")
-
-                        # Option to view full validation details
-                        if st.button(f"📋 查看完整验证报告", key=f"full_validation_{job_id[:8]}",
-                                     use_container_width=True):
-                            st.session_state[f"show_full_validation_{job_id}"] = True
-                            st.rerun()
-
-                        # Show full validation if requested
-                        if st.session_state.get(f"show_full_validation_{job_id}", False):
-                            st.markdown("---")
-                            st.markdown("##### 完整验证报告")
+                        with st.expander("🛡️ **完整验证报告**", expanded=False):
+                            st.markdown("##### 详细验证分析")
                             render_unified_validation_display(result)
-
-                            if st.button(f"🔼 隐藏验证报告", key=f"hide_validation_{job_id[:8]}",
-                                         use_container_width=True):
-                                st.session_state[f"show_full_validation_{job_id}"] = False
-                                st.rerun()
 
                 # Enhanced Results Display for Video Processing
                 if job_detail.get('status') == 'completed':
@@ -757,6 +721,30 @@ def display_job_card(job: Dict[str, Any], context: str, index: int):
 
                             if answer:
                                 st.info(answer)
+
+                                # UPDATED: Add validation info as footer under the answer
+                                if job_type == "llm_inference" and has_validation_data(result):
+                                    st.markdown("---")
+                                    st.caption("**🛡️ 验证信息**")
+
+                                    # Quick validation badge and summary
+                                    validation_badge = render_quick_validation_badge(result)
+                                    st.caption(f"**验证状态:** {validation_badge}")
+
+                                    # Brief validation summary
+                                    automotive_validation = result.get("automotive_validation", {})
+                                    if automotive_validation:
+                                        confidence_level = automotive_validation.get("confidence_level", "unknown")
+                                        has_warnings = automotive_validation.get("has_warnings", False)
+
+                                        if confidence_level == "high" and not has_warnings:
+                                            st.caption("✅ 高质量回答，已通过专业验证")
+                                        elif confidence_level == "medium":
+                                            st.caption("📋 中等质量回答，建议参考多个来源")
+                                        elif confidence_level == "low" or has_warnings:
+                                            st.caption("⚠️ 包含需注意信息，请查看详细验证报告")
+                                        else:
+                                            st.caption("❓ 验证状态未知")
                             else:
                                 st.warning("答案为空或无法解析")
 
