@@ -209,10 +209,8 @@ def display_enhanced_job_metadata_analysis(job_details: Dict[str, Any]):
             documents = result.get('documents', result.get('processed_documents', []))
 
             if documents:
-                st.markdown("---")
-                st.subheader("📊 处理结果元数据分析")
-
-                # Metadata quality analysis
+                # REMOVED: st.markdown("---") and st.subheader() since this is now in an expander
+                # Metadata quality analysis with better visual styling
                 extractor = EmbeddedMetadataExtractor()
                 total_docs = len(documents)
                 metadata_stats = {
@@ -247,41 +245,42 @@ def display_enhanced_job_metadata_analysis(job_details: Dict[str, Any]):
                         if metadata.get('source'):
                             metadata_stats['unique_sources'].add(metadata['source'])
 
-                # Display metadata statistics
+                # Display metadata statistics with enhanced styling
+                st.markdown("##### 📈 元数据统计")
                 stats_col1, stats_col2, stats_col3, stats_col4 = st.columns(4)
 
                 with stats_col1:
                     embedded_rate = (metadata_stats['docs_with_embedded'] / total_docs * 100) if total_docs > 0 else 0
-                    st.metric("元数据注入率", f"{embedded_rate:.1f}%")
+                    st.metric("💉 元数据注入率", f"{embedded_rate:.1f}%")
 
                 with stats_col2:
                     vehicle_rate = (metadata_stats['docs_with_vehicle'] / total_docs * 100) if total_docs > 0 else 0
-                    st.metric("车辆检测率", f"{vehicle_rate:.1f}%")
+                    st.metric("🚗 车辆检测率", f"{vehicle_rate:.1f}%")
 
                 with stats_col3:
                     avg_fields = (
                             metadata_stats['total_metadata_fields'] / max(metadata_stats['docs_with_embedded'], 1))
-                    st.metric("平均元数据字段", f"{avg_fields:.1f}")
+                    st.metric("📊 平均元数据字段", f"{avg_fields:.1f}")
 
                 with stats_col4:
-                    st.metric("检测到的车型", len(metadata_stats['unique_vehicles']))
+                    st.metric("🏷️ 检测到的车型", len(metadata_stats['unique_vehicles']))
 
-                # Show detected vehicles and sources
+                # Show detected vehicles and sources with better formatting
                 if metadata_stats['unique_vehicles']:
-                    st.markdown("**🚗 检测到的车型:**")
+                    st.markdown("##### 🚗 检测到的车型")
                     vehicles_list = list(metadata_stats['unique_vehicles'])[:5]  # Show first 5
-                    st.write(", ".join(vehicles_list))
+                    for vehicle in vehicles_list:
+                        st.markdown(f"• `{vehicle}`")
                     if len(metadata_stats['unique_vehicles']) > 5:
                         st.caption(f"... 还有 {len(metadata_stats['unique_vehicles']) - 5} 个车型")
 
                 if metadata_stats['unique_sources']:
-                    st.markdown("**📺 来源平台:**")
-                    st.write(", ".join(metadata_stats['unique_sources']))
+                    st.markdown("##### 📺 来源平台")
+                    for source in metadata_stats['unique_sources']:
+                        st.markdown(f"• `{source}`")
 
-                    # Document sample with metadata details
-                    st.markdown("---")
-                    st.subheader("📄 文档样本及元数据")
-
+                # Document sample with metadata details (keep existing expander)
+                with st.expander("📄 **文档样本及元数据**", expanded=False):
                     # Show first few documents with detailed metadata
                     sample_docs = documents[:3] if len(documents) > 3 else documents
 
@@ -501,59 +500,89 @@ def display_job_card(job: Dict[str, Any], context: str, index: int):
         # UPDATED: Show details only if this job is the active one
         if st.session_state.active_job_detail == job_id:
             st.markdown("---")
-            st.markdown("### 📋 任务详情")
 
             # Get full job details
             job_detail = get_job_details(job_id)
 
             if job_detail:
-                # Basic information in columns
-                detail_col1, detail_col2 = st.columns(2)
+                # UPDATED: Make task details collapsible with visual appeal
+                with st.expander("📋 **任务详情**", expanded=False):
+                    # Use info container for better visual appeal
+                    with st.container():
+                        st.markdown("##### 基本信息")
 
-                with detail_col1:
-                    st.write(f"**任务ID:** {job_id}")
-                    st.write(f"**类型:** {format_job_type(job_detail.get('job_type', ''))}")
-                    st.write(f"**状态:** {job_detail.get('status', '')}")
+                        # Basic information in columns with better styling
+                        detail_col1, detail_col2 = st.columns(2)
 
-                with detail_col2:
-                    created = job_detail.get('created_at', 0)
-                    updated = job_detail.get('updated_at', 0)
+                        with detail_col1:
+                            st.info(f"**任务ID:** `{job_id}`")
+                            st.success(f"**类型:** {format_job_type(job_detail.get('job_type', ''))}")
 
-                    if created:
-                        st.write(f"**创建:** {time.strftime('%m-%d %H:%M:%S', time.localtime(created))}")
-                    if updated:
-                        st.write(f"**更新:** {time.strftime('%m-%d %H:%M:%S', time.localtime(updated))}")
+                            # Status with color coding
+                            status = job_detail.get('status', '')
+                            if status == 'completed':
+                                st.success(f"**状态:** ✅ {status}")
+                            elif status == 'processing':
+                                st.info(f"**状态:** 🔄 {status}")
+                            elif status == 'failed':
+                                st.error(f"**状态:** ❌ {status}")
+                            else:
+                                st.warning(f"**状态:** ⏳ {status}")
 
-                # Progress information
-                progress_info = job_detail.get('progress_info', {})
-                if progress_info:
-                    progress = progress_info.get('progress')
-                    message = progress_info.get('message', '')
+                        with detail_col2:
+                            created = job_detail.get('created_at', 0)
+                            updated = job_detail.get('updated_at', 0)
 
-                    st.write("**当前进度:**")
-                    if progress is not None:
-                        st.progress(progress / 100.0)
-                        st.caption(f"{progress}% - {message}")
-                    else:
-                        st.caption(message or "处理中...")
+                            if created:
+                                st.write(f"🕐 **创建:** {time.strftime('%m-%d %H:%M:%S', time.localtime(created))}")
+                            if updated:
+                                st.write(f"🔄 **更新:** {time.strftime('%m-%d %H:%M:%S', time.localtime(updated))}")
 
-                # Enhanced Metadata Display
-                st.markdown("**📋 任务元数据:**")
-                metadata = job_detail.get('metadata', {})
-                result = job_detail.get('result', {})
+                        # Progress information with better styling
+                        progress_info = job_detail.get('progress_info', {})
+                        if progress_info:
+                            st.markdown("##### 处理进度")
+                            progress = progress_info.get('progress')
+                            message = progress_info.get('message', '')
 
-                if metadata and isinstance(metadata, dict):
-                    if metadata.get('url'):
-                        st.write(f"**URL:** {metadata['url']}")
-                    if metadata.get('query'):
-                        st.write(f"**查询:** {metadata['query']}")
-                    if metadata.get('platform'):
-                        st.write(f"**平台:** {metadata['platform']}")
+                            if progress is not None:
+                                st.progress(progress / 100.0)
+                                st.caption(f"📊 {progress}% - {message}")
+                            else:
+                                st.caption(f"⚙️ {message or '处理中...'}")
 
-                    if metadata.get('mode_name'):
-                        st.write(f"**模式名称:** {metadata['mode_name']}")
+                        # Enhanced Metadata Display with better organization
+                        st.markdown("##### 任务元数据")
+                        metadata = job_detail.get('metadata', {})
+
+                        if metadata and isinstance(metadata, dict):
+                            # Create organized metadata display
+                            meta_col1, meta_col2 = st.columns(2)
+
+                            with meta_col1:
+                                if metadata.get('url'):
+                                    st.markdown(f"🔗 **URL:** {metadata['url']}")
+                                if metadata.get('query'):
+                                    st.markdown(f"❓ **查询:** {metadata['query']}")
+                                if metadata.get('platform'):
+                                    st.markdown(f"📺 **平台:** {metadata['platform']}")
+
+                            with meta_col2:
+                                # UPDATED: Show query mode information with styling
+                                if metadata.get('query_mode'):
+                                    st.markdown(f"⚙️ **查询模式:** `{metadata['query_mode']}`")
+                                if metadata.get('mode_name'):
+                                    mode_name = metadata['mode_name']
+                                    # Add color based on mode
+                                    mode_colors = {
+                                        "车辆规格查询": "🔵", "新功能建议": "🟢", "权衡利弊分析": "🟠",
+                                        "用户场景分析": "🟣", "多角色讨论": "🔴", "原始用户评论": "🌈"
+                                    }
+                                    mode_icon = mode_colors.get(mode_name, "⚪")
+                                    st.markdown(f"{mode_icon} **模式名称:** {mode_name}")
 
                 # Parse result properly
+                result = job_detail.get('result', {})
                 if isinstance(result, str):
                     try:
                         import json
@@ -561,30 +590,52 @@ def display_job_card(job: Dict[str, Any], context: str, index: int):
                     except:
                         result = {}
 
-                display_enhanced_job_metadata_analysis(job_detail)
+                # UPDATED: Make metadata analysis collapsible
+                if job_detail.get('status') == 'completed' and (
+                        'documents' in result or 'processed_documents' in result):
+                    with st.expander("📊 **处理结果元数据分析**", expanded=False):
+                        display_enhanced_job_metadata_analysis(job_detail)
 
-                # UPDATED: Show validation results for completed LLM inference jobs
+                # UPDATED: Show validation results for completed LLM inference jobs (collapsible)
                 if job_detail.get('status') == 'completed' and job_type == "llm_inference":
                     if has_validation_data(result):
-                        st.markdown("---")
-                        st.markdown("### 🛡️ 验证结果")
+                        with st.expander("🛡️ **验证结果**", expanded=False):
+                            # Quick validation summary with better styling
+                            st.markdown("##### 验证概览")
+                            validation_badge = render_quick_validation_badge(result)
+                            st.markdown(f"**验证状态:** {validation_badge}")
 
-                        # Quick validation summary
-                        display_job_validation_summary(result)
+                            # Enhanced validation summary
+                            automotive_validation = result.get("automotive_validation", {})
+                            if automotive_validation:
+                                confidence_level = automotive_validation.get("confidence_level", "unknown")
+                                has_warnings = automotive_validation.get("has_warnings", False)
 
-                        # Option to view full validation details
-                        if st.button(f"查看完整验证报告", key=f"full_validation_{job_id[:8]}"):
-                            st.session_state[f"show_full_validation_{job_id}"] = True
-                            st.rerun()
+                                if confidence_level == "high" and not has_warnings:
+                                    st.success("✅ 高质量回答，已通过专业验证")
+                                elif confidence_level == "medium":
+                                    st.info("📋 中等质量回答，建议参考多个来源")
+                                elif confidence_level == "low" or has_warnings:
+                                    st.warning("⚠️ 包含需注意信息，请查看验证详情")
+                                else:
+                                    st.error("❓ 验证状态未知")
 
-                        # Show full validation if requested
-                        if st.session_state.get(f"show_full_validation_{job_id}", False):
-                            st.markdown("#### 完整验证报告")
-                            render_unified_validation_display(result)
-
-                            if st.button(f"隐藏验证报告", key=f"hide_validation_{job_id[:8]}"):
-                                st.session_state[f"show_full_validation_{job_id}"] = False
+                            # Option to view full validation details
+                            if st.button(f"📋 查看完整验证报告", key=f"full_validation_{job_id[:8]}",
+                                         use_container_width=True):
+                                st.session_state[f"show_full_validation_{job_id}"] = True
                                 st.rerun()
+
+                            # Show full validation if requested
+                            if st.session_state.get(f"show_full_validation_{job_id}", False):
+                                st.markdown("---")
+                                st.markdown("##### 完整验证报告")
+                                render_unified_validation_display(result)
+
+                                if st.button(f"🔼 隐藏验证报告", key=f"hide_validation_{job_id[:8]}",
+                                             use_container_width=True):
+                                    st.session_state[f"show_full_validation_{job_id}"] = False
+                                    st.rerun()
 
                 # Enhanced Results Display for Video Processing
                 if job_detail.get('status') == 'completed':
