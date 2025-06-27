@@ -609,63 +609,158 @@ def display_job_card(job: Dict[str, Any], context: str, index: int):
                         with st.expander("🛡️ **完整验证报告**", expanded=False):
                             st.markdown("##### 详细验证分析")
 
-                            # FIXED: Use a simplified validation display to avoid nested expanders
-                            # Instead of calling render_unified_validation_display which has expanders,
-                            # we'll display the key validation info directly
+                            # UPDATED: Try to import and use a nested-safe version of validation display
+                            try:
+                                # Import the validation display functions
+                                from src.ui.components.validation_display import (
+                                    render_quick_validation_badge,
+                                    ValidationDisplaySystem
+                                )
 
-                            automotive_validation = result.get("automotive_validation", {})
-                            if automotive_validation:
-                                st.markdown("**🔍 汽车专业验证:**")
+                                # Create validation system and render without expanders
+                                validation_system = ValidationDisplaySystem()
 
-                                # Confidence level
-                                confidence_level = automotive_validation.get("confidence_level", "unknown")
-                                confidence_score = automotive_validation.get("confidence_score", 0)
-                                st.write(f"**置信度:** {confidence_level} ({confidence_score}%)")
+                                # Display automotive validation details
+                                automotive_validation = result.get("automotive_validation", {})
+                                if automotive_validation:
+                                    st.markdown("**🚗 汽车专业验证分析**")
 
-                                # Warnings
-                                has_warnings = automotive_validation.get("has_warnings", False)
-                                if has_warnings:
-                                    warnings = automotive_validation.get("warnings", [])
-                                    if warnings:
-                                        st.write("**⚠️ 注意事项:**")
-                                        for warning in warnings:
-                                            st.warning(f"• {warning}")
+                                    # Confidence analysis
+                                    confidence_level = automotive_validation.get("confidence_level", "unknown")
+                                    confidence_score = automotive_validation.get("confidence_score", 0)
 
-                                # Technical accuracy
-                                technical_accuracy = automotive_validation.get("technical_accuracy", {})
-                                if technical_accuracy:
-                                    st.write("**🔧 技术准确性:**")
-                                    for key, value in technical_accuracy.items():
-                                        if isinstance(value, (int, float)):
-                                            st.write(f"• {key}: {value}%")
-                                        else:
-                                            st.write(f"• {key}: {value}")
+                                    # Display confidence with color coding
+                                    if confidence_level == "high":
+                                        st.success(f"🟢 **高置信度** ({confidence_score}%)")
+                                    elif confidence_level == "medium":
+                                        st.warning(f"🟡 **中等置信度** ({confidence_score}%)")
+                                    else:
+                                        st.error(f"🔴 **低置信度** ({confidence_score}%)")
 
-                                # Sources validation
-                                sources_validation = automotive_validation.get("sources_validation", {})
-                                if sources_validation:
-                                    st.write("**📚 来源验证:**")
-                                    for key, value in sources_validation.items():
-                                        st.write(f"• {key}: {value}")
+                                    # Technical accuracy breakdown
+                                    technical_accuracy = automotive_validation.get("technical_accuracy", {})
+                                    if technical_accuracy:
+                                        st.markdown("**🔧 技术准确性分析:**")
 
-                            # Simple confidence if available
-                            simple_confidence = result.get("simple_confidence", 0)
-                            if simple_confidence > 0:
-                                st.write(f"**📊 简单置信度:** {simple_confidence}%")
+                                        tech_col1, tech_col2 = st.columns(2)
+                                        items = list(technical_accuracy.items())
+                                        mid_point = len(items) // 2
 
-                            # Document validation metadata
-                            documents = result.get("documents", [])
-                            if documents:
-                                validated_docs = 0
-                                for doc in documents:
-                                    if isinstance(doc, dict):
-                                        metadata = doc.get("metadata", {})
-                                        if (metadata.get("automotive_warnings") or
-                                                metadata.get("validation_status")):
-                                            validated_docs += 1
+                                        with tech_col1:
+                                            for key, value in items[:mid_point]:
+                                                if isinstance(value, (int, float)):
+                                                    st.metric(key.replace("_", " ").title(), f"{value}%")
+                                                else:
+                                                    st.write(f"**{key.replace('_', ' ').title()}:** {value}")
 
-                                if validated_docs > 0:
-                                    st.write(f"**📄 文档验证:** {validated_docs}/{len(documents)} 个文档包含验证信息")
+                                        with tech_col2:
+                                            for key, value in items[mid_point:]:
+                                                if isinstance(value, (int, float)):
+                                                    st.metric(key.replace("_", " ").title(), f"{value}%")
+                                                else:
+                                                    st.write(f"**{key.replace('_', ' ').title()}:** {value}")
+
+                                    # Warnings and issues
+                                    has_warnings = automotive_validation.get("has_warnings", False)
+                                    if has_warnings:
+                                        warnings = automotive_validation.get("warnings", [])
+                                        if warnings:
+                                            st.markdown("**⚠️ 发现的问题:**")
+                                            for i, warning in enumerate(warnings, 1):
+                                                st.warning(f"{i}. {warning}")
+
+                                    # Source validation
+                                    sources_validation = automotive_validation.get("sources_validation", {})
+                                    if sources_validation:
+                                        st.markdown("**📚 来源可靠性验证:**")
+
+                                        for source_type, validation_info in sources_validation.items():
+                                            if isinstance(validation_info, dict):
+                                                st.write(f"**{source_type.replace('_', ' ').title()}:**")
+                                                for key, value in validation_info.items():
+                                                    st.write(f"  • {key.replace('_', ' ')}: {value}")
+                                            else:
+                                                st.write(
+                                                    f"**{source_type.replace('_', ' ').title()}:** {validation_info}")
+
+                                    # Recommendation analysis
+                                    recommendations = automotive_validation.get("recommendations", [])
+                                    if recommendations:
+                                        st.markdown("**💡 验证建议:**")
+                                        for i, rec in enumerate(recommendations, 1):
+                                            st.info(f"{i}. {rec}")
+
+                                # Document-level validation
+                                documents = result.get("documents", [])
+                                if documents:
+                                    validated_docs = []
+                                    for i, doc in enumerate(documents):
+                                        if isinstance(doc, dict):
+                                            metadata = doc.get("metadata", {})
+                                            if (metadata.get("automotive_warnings") or
+                                                    metadata.get("validation_status")):
+                                                validated_docs.append((i, doc, metadata))
+
+                                    if validated_docs:
+                                        st.markdown("**📄 文档级验证详情:**")
+                                        st.write(f"发现 {len(validated_docs)} 个文档包含验证信息")
+
+                                        for doc_idx, doc, metadata in validated_docs[:3]:  # Show first 3
+                                            st.markdown(f"**文档 {doc_idx + 1}:**")
+
+                                            if metadata.get("validation_status"):
+                                                st.write(f"• 验证状态: {metadata['validation_status']}")
+
+                                            if metadata.get("automotive_warnings"):
+                                                warnings = metadata["automotive_warnings"]
+                                                if isinstance(warnings, list):
+                                                    st.write("• 发现的问题:")
+                                                    for warning in warnings:
+                                                        st.caption(f"  - {warning}")
+                                                else:
+                                                    st.write(f"• 问题: {warnings}")
+
+                                            # Content preview
+                                            content = doc.get("content", "")
+                                            if content:
+                                                preview = content[:200] + "..." if len(content) > 200 else content
+                                                st.caption(f"内容预览: {preview}")
+
+                                            if doc_idx < len(validated_docs) - 1:
+                                                st.divider()
+
+                                # Overall validation summary
+                                simple_confidence = result.get("simple_confidence", 0)
+                                if simple_confidence > 0:
+                                    st.markdown("**📊 综合评分:**")
+
+                                    # Create a progress bar for confidence
+                                    confidence_normalized = simple_confidence / 100.0
+                                    st.progress(confidence_normalized)
+                                    st.write(f"整体可信度: {simple_confidence:.1f}%")
+
+                                    # Confidence interpretation
+                                    if simple_confidence >= 80:
+                                        st.success("✅ 高度可信 - 可以直接采用此回答")
+                                    elif simple_confidence >= 60:
+                                        st.warning("📋 中等可信 - 建议参考其他来源验证")
+                                    else:
+                                        st.error("⚠️ 可信度较低 - 需要进一步验证")
+
+                            except Exception as e:
+                                # Fallback to basic display if import fails
+                                st.error(f"验证显示加载失败: {str(e)}")
+                                st.markdown("**基本验证信息:**")
+
+                                automotive_validation = result.get("automotive_validation", {})
+                                if automotive_validation:
+                                    confidence_level = automotive_validation.get("confidence_level", "unknown")
+                                    confidence_score = automotive_validation.get("confidence_score", 0)
+                                    st.write(f"置信度: {confidence_level} ({confidence_score}%)")
+
+                                simple_confidence = result.get("simple_confidence", 0)
+                                if simple_confidence > 0:
+                                    st.write(f"简单置信度: {simple_confidence}%")
 
                 # Enhanced Results Display for Video Processing
                 if job_detail.get('status') == 'completed':
