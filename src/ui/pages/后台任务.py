@@ -279,28 +279,35 @@ def display_enhanced_job_metadata_analysis(job_details: Dict[str, Any]):
                     for source in metadata_stats['unique_sources']:
                         st.markdown(f"• `{source}`")
 
-                # Document sample with metadata details (keep existing expander)
-                with st.expander("📄 **文档样本及元数据**", expanded=False):
-                    # Show first few documents with detailed metadata
-                    sample_docs = documents[:3] if len(documents) > 3 else documents
+                # FIXED: Document sample with metadata details (removed nested expander)
+                st.markdown("---")
+                st.markdown("##### 📄 文档样本及元数据")
 
-                    for i, doc in enumerate(sample_docs):
-                        # FIXED: Add unique_id parameter to prevent key conflicts
-                        job_id = job_details.get('job_id', 'unknown')
-                        unique_id = f"job_{job_id[:8]}_doc_{i}"
+                # Show first few documents with detailed metadata
+                sample_docs = documents[:3] if len(documents) > 3 else documents
 
-                        with st.expander(f"查看文档 {i + 1} 元数据详情", expanded=False):
-                            if isinstance(doc, dict):
-                                # Convert to expected format
-                                doc_format = {
-                                    'content': doc.get('content', doc.get('page_content', '')),
-                                    'metadata': doc.get('metadata', {})
-                                }
-                                # FIXED: Pass unique_id to prevent duplicate keys
-                                render_embedded_metadata_display(doc_format, show_full_content=False,
-                                                                 unique_id=unique_id)
-                            else:
-                                st.warning("文档格式不支持元数据显示")
+                for i, doc in enumerate(sample_docs):
+                    # FIXED: Add unique_id parameter to prevent key conflicts
+                    job_id = job_details.get('job_id', 'unknown')
+                    unique_id = f"job_{job_id[:8]}_doc_{i}"
+
+                    # FIXED: Use collapsible sections instead of nested expanders
+                    st.markdown(f"**📄 文档 {i + 1} 元数据详情**")
+                    if isinstance(doc, dict):
+                        # Convert to expected format
+                        doc_format = {
+                            'content': doc.get('content', doc.get('page_content', '')),
+                            'metadata': doc.get('metadata', {})
+                        }
+                        # FIXED: Pass unique_id to prevent duplicate keys
+                        render_embedded_metadata_display(doc_format, show_full_content=False,
+                                                         unique_id=unique_id)
+                    else:
+                        st.warning("文档格式不支持元数据显示")
+
+                    # Add separator between documents
+                    if i < len(sample_docs) - 1:
+                        st.markdown("---")
 
 
 def display_job_validation_summary(result: Dict[str, Any]) -> None:
