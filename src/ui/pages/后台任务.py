@@ -607,160 +607,226 @@ def display_job_card(job: Dict[str, Any], context: str, index: int):
                 if job_detail.get('status') == 'completed' and job_type == "llm_inference":
                     if has_validation_data(result):
                         with st.expander("🛡️ **完整验证报告**", expanded=False):
-                            st.markdown("##### 详细验证分析")
+                            st.markdown("##### 📋 验证概览与文档使用分析")
 
-                            # UPDATED: Try to import and use a nested-safe version of validation display
+                            # UPDATED: Start with document usage and validation methodology
+                            documents = result.get("documents", [])
+                            if documents:
+                                st.markdown("**📚 文档检索与使用情况:**")
+
+                                # Document statistics
+                                doc_col1, doc_col2, doc_col3 = st.columns(3)
+                                with doc_col1:
+                                    st.metric("📄 检索文档数", len(documents))
+                                with doc_col2:
+                                    # Calculate average relevance score
+                                    relevance_scores = [doc.get("relevance_score", 0) for doc in documents if
+                                                        isinstance(doc, dict)]
+                                    avg_relevance = sum(relevance_scores) / len(
+                                        relevance_scores) if relevance_scores else 0
+                                    st.metric("📊 平均相关性", f"{avg_relevance:.2f}")
+                                with doc_col3:
+                                    # Count high-relevance documents (score > 0.7)
+                                    high_relevance = sum(1 for score in relevance_scores if score > 0.7)
+                                    st.metric("🎯 高相关性文档", high_relevance)
+
+                                # Document quality analysis
+                                st.markdown("**🔍 文档质量分析:**")
+
+                                # Analyze document metadata for quality indicators
+                                docs_with_metadata = 0
+                                docs_with_vehicle_info = 0
+                                total_content_length = 0
+                                unique_sources = set()
+
+                                for doc in documents:
+                                    if isinstance(doc, dict):
+                                        content = doc.get("content", "")
+                                        metadata = doc.get("metadata", {})
+
+                                        total_content_length += len(content)
+
+                                        # Check for embedded metadata
+                                        import re
+                                        if re.search(r'【[^】]+】', content):
+                                            docs_with_metadata += 1
+
+                                        # Check for vehicle information
+                                        if (metadata.get('has_vehicle_info') or
+                                                metadata.get('vehicleModel') or
+                                                metadata.get('model')):
+                                            docs_with_vehicle_info += 1
+
+                                        # Track sources
+                                        source = metadata.get('source') or metadata.get('sourcePlatform')
+                                        if source:
+                                            unique_sources.add(source)
+
+                                quality_col1, quality_col2, quality_col3, quality_col4 = st.columns(4)
+                                with quality_col1:
+                                    metadata_rate = (docs_with_metadata / len(documents) * 100) if documents else 0
+                                    st.metric("💉 元数据丰富度", f"{metadata_rate:.1f}%")
+                                with quality_col2:
+                                    vehicle_rate = (docs_with_vehicle_info / len(documents) * 100) if documents else 0
+                                    st.metric("🚗 车辆信息覆盖", f"{vehicle_rate:.1f}%")
+                                with quality_col3:
+                                    avg_length = total_content_length / len(documents) if documents else 0
+                                    st.metric("📝 平均内容长度", f"{avg_length:.0f} 字符")
+                                with quality_col4:
+                                    st.metric("📺 数据源数量", len(unique_sources))
+
+                                # Show source diversity
+                                if unique_sources:
+                                    st.markdown("**📺 数据来源分布:**")
+                                    source_list = list(unique_sources)[:5]  # Show top 5 sources
+                                    st.write("• " + " • ".join(f"`{source}`" for source in source_list))
+                                    if len(unique_sources) > 5:
+                                        st.caption(f"... 还有 {len(unique_sources) - 5} 个其他来源")
+
+                                st.markdown("---")
+
+                            # UPDATED: Enhanced validation methodology explanation
+                            st.markdown("##### 🔬 验证方法论")
+                            st.markdown("""
+                            **验证框架说明:**
+                            - **🎯 相关性验证:** 评估检索文档与查询的匹配度
+                            - **🔧 技术准确性:** 验证汽车专业术语和数据的正确性  
+                            - **📚 来源可靠性:** 评估信息来源的权威性和可信度
+                            - **⚖️ 一致性检查:** 确保多个来源信息的一致性
+                            - **⚠️ 风险识别:** 检测潜在的不准确或过时信息
+                            """)
+
+                            # UPDATED: Detailed validation results with context
                             try:
-                                # Import the validation display functions
-                                from src.ui.components.validation_display import (
-                                    render_quick_validation_badge,
-                                    ValidationDisplaySystem
-                                )
-
-                                # Create validation system and render without expanders
-                                validation_system = ValidationDisplaySystem()
-
-                                # Display automotive validation details
                                 automotive_validation = result.get("automotive_validation", {})
                                 if automotive_validation:
-                                    st.markdown("**🚗 汽车专业验证分析**")
+                                    st.markdown("##### 🚗 汽车专业验证结果")
 
-                                    # Confidence analysis
+                                    # Overall confidence with detailed breakdown
                                     confidence_level = automotive_validation.get("confidence_level", "unknown")
                                     confidence_score = automotive_validation.get("confidence_score", 0)
 
-                                    # Display confidence with color coding
-                                    if confidence_level == "high":
-                                        st.success(f"🟢 **高置信度** ({confidence_score}%)")
-                                    elif confidence_level == "medium":
-                                        st.warning(f"🟡 **中等置信度** ({confidence_score}%)")
-                                    else:
-                                        st.error(f"🔴 **低置信度** ({confidence_score}%)")
+                                    # Display confidence with detailed explanation
+                                    conf_col1, conf_col2 = st.columns([2, 3])
 
-                                    # Technical accuracy breakdown
+                                    with conf_col1:
+                                        if confidence_level == "high":
+                                            st.success(f"🟢 **高置信度** ({confidence_score}%)")
+                                        elif confidence_level == "medium":
+                                            st.warning(f"🟡 **中等置信度** ({confidence_score}%)")
+                                        else:
+                                            st.error(f"🔴 **低置信度** ({confidence_score}%)")
+
+                                    with conf_col2:
+                                        # Confidence interpretation
+                                        if confidence_level == "high":
+                                            st.write("✅ 信息经过多重验证，技术准确性高")
+                                        elif confidence_level == "medium":
+                                            st.write("📋 信息基本可靠，建议参考其他来源")
+                                        else:
+                                            st.write("⚠️ 信息需要进一步验证，谨慎使用")
+
+                                    # Technical accuracy breakdown with explanations
                                     technical_accuracy = automotive_validation.get("technical_accuracy", {})
                                     if technical_accuracy:
-                                        st.markdown("**🔧 技术准确性分析:**")
+                                        st.markdown("**🔧 技术准确性详细分析:**")
 
-                                        tech_col1, tech_col2 = st.columns(2)
-                                        items = list(technical_accuracy.items())
-                                        mid_point = len(items) // 2
+                                        # Create metrics with explanations
+                                        for key, value in technical_accuracy.items():
+                                            metric_col1, metric_col2 = st.columns([1, 2])
 
-                                        with tech_col1:
-                                            for key, value in items[:mid_point]:
+                                            with metric_col1:
                                                 if isinstance(value, (int, float)):
                                                     st.metric(key.replace("_", " ").title(), f"{value}%")
                                                 else:
                                                     st.write(f"**{key.replace('_', ' ').title()}:** {value}")
 
-                                        with tech_col2:
-                                            for key, value in items[mid_point:]:
-                                                if isinstance(value, (int, float)):
-                                                    st.metric(key.replace("_", " ").title(), f"{value}%")
-                                                else:
-                                                    st.write(f"**{key.replace('_', ' ').title()}:** {value}")
+                                            with metric_col2:
+                                                # Add explanations for common metrics
+                                                explanations = {
+                                                    "specification_accuracy": "规格参数的准确性评估",
+                                                    "terminology_correctness": "专业术语使用的正确性",
+                                                    "data_consistency": "多源数据的一致性程度",
+                                                    "technical_depth": "技术内容的深度和完整性"
+                                                }
+                                                explanation = explanations.get(key, "专业验证指标")
+                                                st.caption(explanation)
 
-                                    # Warnings and issues
+                                    # Warning analysis with context
                                     has_warnings = automotive_validation.get("has_warnings", False)
                                     if has_warnings:
                                         warnings = automotive_validation.get("warnings", [])
                                         if warnings:
-                                            st.markdown("**⚠️ 发现的问题:**")
+                                            st.markdown("**⚠️ 发现的验证问题:**")
                                             for i, warning in enumerate(warnings, 1):
-                                                st.warning(f"{i}. {warning}")
+                                                st.warning(f"**问题 {i}:** {warning}")
+                                                # Add context about why this is flagged
+                                                st.caption("💡 此问题可能影响信息的准确性或完整性")
 
-                                    # Source validation
+                                    # Source validation with detailed analysis
                                     sources_validation = automotive_validation.get("sources_validation", {})
                                     if sources_validation:
                                         st.markdown("**📚 来源可靠性验证:**")
 
                                         for source_type, validation_info in sources_validation.items():
-                                            if isinstance(validation_info, dict):
-                                                st.write(f"**{source_type.replace('_', ' ').title()}:**")
-                                                for key, value in validation_info.items():
-                                                    st.write(f"  • {key.replace('_', ' ')}: {value}")
-                                            else:
-                                                st.write(
-                                                    f"**{source_type.replace('_', ' ').title()}:** {validation_info}")
+                                            st.markdown(f"**{source_type.replace('_', ' ').title()}:**")
 
-                                    # Recommendation analysis
+                                            if isinstance(validation_info, dict):
+                                                for key, value in validation_info.items():
+                                                    if isinstance(value, (int, float)):
+                                                        reliability_color = "🟢" if value > 80 else "🟡" if value > 60 else "🔴"
+                                                        st.write(
+                                                            f"  {reliability_color} {key.replace('_', ' ')}: {value}%")
+                                                    else:
+                                                        st.write(f"  • {key.replace('_', ' ')}: {value}")
+                                            else:
+                                                st.write(f"  • 评估结果: {validation_info}")
+
+                                    # Recommendations with actionable insights
                                     recommendations = automotive_validation.get("recommendations", [])
                                     if recommendations:
-                                        st.markdown("**💡 验证建议:**")
+                                        st.markdown("**💡 验证建议与使用指导:**")
                                         for i, rec in enumerate(recommendations, 1):
-                                            st.info(f"{i}. {rec}")
+                                            st.info(f"**建议 {i}:** {rec}")
 
-                                # Document-level validation
-                                documents = result.get("documents", [])
-                                if documents:
-                                    validated_docs = []
-                                    for i, doc in enumerate(documents):
-                                        if isinstance(doc, dict):
-                                            metadata = doc.get("metadata", {})
-                                            if (metadata.get("automotive_warnings") or
-                                                    metadata.get("validation_status")):
-                                                validated_docs.append((i, doc, metadata))
-
-                                    if validated_docs:
-                                        st.markdown("**📄 文档级验证详情:**")
-                                        st.write(f"发现 {len(validated_docs)} 个文档包含验证信息")
-
-                                        for doc_idx, doc, metadata in validated_docs[:3]:  # Show first 3
-                                            st.markdown(f"**文档 {doc_idx + 1}:**")
-
-                                            if metadata.get("validation_status"):
-                                                st.write(f"• 验证状态: {metadata['validation_status']}")
-
-                                            if metadata.get("automotive_warnings"):
-                                                warnings = metadata["automotive_warnings"]
-                                                if isinstance(warnings, list):
-                                                    st.write("• 发现的问题:")
-                                                    for warning in warnings:
-                                                        st.caption(f"  - {warning}")
-                                                else:
-                                                    st.write(f"• 问题: {warnings}")
-
-                                            # Content preview
-                                            content = doc.get("content", "")
-                                            if content:
-                                                preview = content[:200] + "..." if len(content) > 200 else content
-                                                st.caption(f"内容预览: {preview}")
-
-                                            if doc_idx < len(validated_docs) - 1:
-                                                st.divider()
-
-                                # Overall validation summary
+                                # Overall confidence summary with document correlation
                                 simple_confidence = result.get("simple_confidence", 0)
                                 if simple_confidence > 0:
-                                    st.markdown("**📊 综合评分:**")
+                                    st.markdown("##### 📊 综合可信度评估")
 
-                                    # Create a progress bar for confidence
+                                    # Create comprehensive confidence display
                                     confidence_normalized = simple_confidence / 100.0
                                     st.progress(confidence_normalized)
-                                    st.write(f"整体可信度: {simple_confidence:.1f}%")
 
-                                    # Confidence interpretation
-                                    if simple_confidence >= 80:
-                                        st.success("✅ 高度可信 - 可以直接采用此回答")
-                                    elif simple_confidence >= 60:
-                                        st.warning("📋 中等可信 - 建议参考其他来源验证")
-                                    else:
-                                        st.error("⚠️ 可信度较低 - 需要进一步验证")
+                                    summary_col1, summary_col2 = st.columns([1, 2])
+
+                                    with summary_col1:
+                                        st.metric("整体可信度", f"{simple_confidence:.1f}%")
+
+                                    with summary_col2:
+                                        # Detailed confidence interpretation
+                                        if simple_confidence >= 80:
+                                            st.success("✅ **高度可信** - 信息经过充分验证，可直接采用")
+                                        elif simple_confidence >= 60:
+                                            st.warning("📋 **中等可信** - 建议结合其他来源进行验证")
+                                        else:
+                                            st.error("⚠️ **谨慎使用** - 信息需要进一步核实")
+
+                                    # Correlation with document quality
+                                    if documents:
+                                        st.markdown("**📈 可信度与文档质量关联分析:**")
+                                        st.write(f"• 基于 {len(documents)} 个文档的综合分析")
+                                        st.write(f"• 平均文档相关性: {avg_relevance:.2f}")
+                                        st.write(f"• 高质量文档占比: {high_relevance}/{len(documents)}")
+                                        st.write(f"• 元数据丰富度: {metadata_rate:.1f}%")
 
                             except Exception as e:
-                                # Fallback to basic display if import fails
-                                st.error(f"验证显示加载失败: {str(e)}")
-                                st.markdown("**基本验证信息:**")
+                                st.error(f"验证分析加载失败: {str(e)}")
+                                st.write("显示基本验证信息...")
 
-                                automotive_validation = result.get("automotive_validation", {})
-                                if automotive_validation:
-                                    confidence_level = automotive_validation.get("confidence_level", "unknown")
-                                    confidence_score = automotive_validation.get("confidence_score", 0)
-                                    st.write(f"置信度: {confidence_level} ({confidence_score}%)")
-
-                                simple_confidence = result.get("simple_confidence", 0)
-                                if simple_confidence > 0:
-                                    st.write(f"简单置信度: {simple_confidence}%")
+                                # Fallback basic display
+                                if 'simple_confidence' in result:
+                                    st.write(f"基本可信度: {result['simple_confidence']}%")
 
                 # Enhanced Results Display for Video Processing
                 if job_detail.get('status') == 'completed':
@@ -847,9 +913,9 @@ def display_job_card(job: Dict[str, Any], context: str, index: int):
                                     key=f"transcript_{job_id[:8]}"
                                 )
 
-                        # Document processing results
+                        # Document processing results (UPDATED: Make it a subtle footer)
                         if 'document_count' in result:
-                            st.success(f"✅ 成功生成 {result['document_count']} 个文档片段")
+                            st.caption(f"📄 检索并使用了 {result['document_count']} 个相关文档片段")
 
                         # Query results
                         if 'answer' in result:
