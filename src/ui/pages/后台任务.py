@@ -608,7 +608,64 @@ def display_job_card(job: Dict[str, Any], context: str, index: int):
                     if has_validation_data(result):
                         with st.expander("🛡️ **完整验证报告**", expanded=False):
                             st.markdown("##### 详细验证分析")
-                            render_unified_validation_display(result)
+
+                            # FIXED: Use a simplified validation display to avoid nested expanders
+                            # Instead of calling render_unified_validation_display which has expanders,
+                            # we'll display the key validation info directly
+
+                            automotive_validation = result.get("automotive_validation", {})
+                            if automotive_validation:
+                                st.markdown("**🔍 汽车专业验证:**")
+
+                                # Confidence level
+                                confidence_level = automotive_validation.get("confidence_level", "unknown")
+                                confidence_score = automotive_validation.get("confidence_score", 0)
+                                st.write(f"**置信度:** {confidence_level} ({confidence_score}%)")
+
+                                # Warnings
+                                has_warnings = automotive_validation.get("has_warnings", False)
+                                if has_warnings:
+                                    warnings = automotive_validation.get("warnings", [])
+                                    if warnings:
+                                        st.write("**⚠️ 注意事项:**")
+                                        for warning in warnings:
+                                            st.warning(f"• {warning}")
+
+                                # Technical accuracy
+                                technical_accuracy = automotive_validation.get("technical_accuracy", {})
+                                if technical_accuracy:
+                                    st.write("**🔧 技术准确性:**")
+                                    for key, value in technical_accuracy.items():
+                                        if isinstance(value, (int, float)):
+                                            st.write(f"• {key}: {value}%")
+                                        else:
+                                            st.write(f"• {key}: {value}")
+
+                                # Sources validation
+                                sources_validation = automotive_validation.get("sources_validation", {})
+                                if sources_validation:
+                                    st.write("**📚 来源验证:**")
+                                    for key, value in sources_validation.items():
+                                        st.write(f"• {key}: {value}")
+
+                            # Simple confidence if available
+                            simple_confidence = result.get("simple_confidence", 0)
+                            if simple_confidence > 0:
+                                st.write(f"**📊 简单置信度:** {simple_confidence}%")
+
+                            # Document validation metadata
+                            documents = result.get("documents", [])
+                            if documents:
+                                validated_docs = 0
+                                for doc in documents:
+                                    if isinstance(doc, dict):
+                                        metadata = doc.get("metadata", {})
+                                        if (metadata.get("automotive_warnings") or
+                                                metadata.get("validation_status")):
+                                            validated_docs += 1
+
+                                if validated_docs > 0:
+                                    st.write(f"**📄 文档验证:** {validated_docs}/{len(documents)} 个文档包含验证信息")
 
                 # Enhanced Results Display for Video Processing
                 if job_detail.get('status') == 'completed':
