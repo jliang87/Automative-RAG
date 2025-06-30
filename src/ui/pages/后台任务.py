@@ -142,6 +142,25 @@ if "all_jobs_page" not in st.session_state:
 if "active_job_detail" not in st.session_state:
     st.session_state.active_job_detail = None
 
+# === PERSISTENT TAB STATE MANAGEMENT ===
+# Use query params to persist tab state across reconnections
+query_params = st.query_params
+if "tab" in query_params:
+    # Restore tab from URL parameters
+    try:
+        tab_from_url = int(query_params["tab"])
+        if tab_from_url in [0, 1, 2]:  # Valid tab indices
+            st.session_state.current_tab = tab_from_url
+    except (ValueError, TypeError):
+        pass
+
+# Initialize tab state if not exists (fallback only)
+if "current_tab" not in st.session_state:
+    st.session_state.current_tab = 1  # Default to completed as fallback
+
+# Update URL parameters to reflect current tab
+st.query_params["tab"] = str(st.session_state.current_tab)
+
 
 def format_job_type(job_type: str) -> str:
     """Format job type for display - CLEANED UP VERSION"""
@@ -1003,8 +1022,7 @@ completed_jobs = [j for j in jobs if j.get("status") == "completed"]
 
 # === TABBED INTERFACE WITH IMPROVED PAGINATION ===
 # Manual tab implementation to preserve state during pagination
-if "current_tab" not in st.session_state:
-    st.session_state.current_tab = 0  # 0=processing, 1=completed, 2=all
+# Tab state is now managed via URL parameters for persistence
 
 # Create tab buttons
 tab_col1, tab_col2, tab_col3 = st.columns(3)
@@ -1015,6 +1033,7 @@ with tab_col1:
                  use_container_width=True,
                  type="primary" if st.session_state.current_tab == 0 else "secondary"):
         st.session_state.current_tab = 0
+        st.query_params["tab"] = "0"  # Persist tab selection in URL
         # Clear active detail when switching tabs
         st.session_state.active_job_detail = None
         st.rerun()
@@ -1025,6 +1044,7 @@ with tab_col2:
                  use_container_width=True,
                  type="primary" if st.session_state.current_tab == 1 else "secondary"):
         st.session_state.current_tab = 1
+        st.query_params["tab"] = "1"  # Persist tab selection in URL
         # Clear active detail when switching tabs
         st.session_state.active_job_detail = None
         st.rerun()
@@ -1035,6 +1055,7 @@ with tab_col3:
                  use_container_width=True,
                  type="primary" if st.session_state.current_tab == 2 else "secondary"):
         st.session_state.current_tab = 2
+        st.query_params["tab"] = "2"  # Persist tab selection in URL
         # Clear active detail when switching tabs
         st.session_state.active_job_detail = None
         st.rerun()
