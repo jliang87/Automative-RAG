@@ -143,55 +143,53 @@ if "active_job_detail" not in st.session_state:
     st.session_state.active_job_detail = None
 
 # === IMPROVED TAB STATE MANAGEMENT ===
-# Use a more reliable method to detect fresh navigation
-if "page_visit_count" not in st.session_state:
-    st.session_state.page_visit_count = 0
-    st.session_state.is_fresh_visit = True
+# Track page navigation more reliably using session key counting
+if "page_navigation_key" not in st.session_state:
+    st.session_state.page_navigation_key = "后台任务_initial"
+    st.session_state.is_fresh_navigation = True
 else:
-    st.session_state.page_visit_count += 1
-    # If this is the first visit in this session (count was 0), it's fresh navigation
-    st.session_state.is_fresh_visit = (st.session_state.page_visit_count == 1)
+    # Check if this is the same page visit or a new navigation
+    current_navigation_key = f"后台任务_{id(st.session_state)}"
+    if st.session_state.page_navigation_key != current_navigation_key:
+        st.session_state.is_fresh_navigation = True
+        st.session_state.page_navigation_key = current_navigation_key
+    else:
+        st.session_state.is_fresh_navigation = False
 
-current_page_id = "后台任务"
+# Alternative approach: Check if coming from URL parameters vs fresh navigation
+query_params = st.query_params
+has_tab_in_url = "tab" in query_params
 
-# Track the current page for future visits
-if "current_page_id" not in st.session_state:
-    st.session_state.current_page_id = None
-
-# Check if we're coming from a different page
-coming_from_different_page = (st.session_state.current_page_id != current_page_id)
-
-# Reset tab state for fresh navigation OR when coming from different page
-if st.session_state.is_fresh_visit or coming_from_different_page:
-    # Fresh navigation - reset to default
+# Determine if this is fresh navigation or reconnection
+if st.session_state.is_fresh_navigation and not has_tab_in_url:
+    # Fresh navigation without URL tab parameter - reset to default
     st.session_state.current_tab = 0
     st.session_state.active_job_detail = None
     st.query_params["tab"] = "0"
-    # Clear page visit count to enable fresh detection next time
-    if coming_from_different_page:
-        st.session_state.page_visit_count = 0
-else:
-    # Same page (reconnection/refresh) - try to restore from URL
-    query_params = st.query_params
-    if "tab" in query_params:
-        try:
-            tab_from_url = int(query_params["tab"])
-            if tab_from_url in [0, 1, 2]:
-                st.session_state.current_tab = tab_from_url
-        except (ValueError, TypeError):
+    st.session_state.is_fresh_navigation = False  # Mark as handled
+elif has_tab_in_url:
+    # URL has tab parameter (reconnection or bookmark) - restore from URL
+    try:
+        tab_from_url = int(query_params["tab"])
+        if tab_from_url in [0, 1, 2]:
+            st.session_state.current_tab = tab_from_url
+        else:
             # Invalid tab in URL, reset to default
             st.session_state.current_tab = 0
             st.query_params["tab"] = "0"
+    except (ValueError, TypeError):
+        # Invalid tab value in URL, reset to default
+        st.session_state.current_tab = 0
+        st.query_params["tab"] = "0"
+else:
+    # Fallback: ensure current_tab exists and has valid value
+    if "current_tab" not in st.session_state or st.session_state.current_tab not in [0, 1, 2]:
+        st.session_state.current_tab = 0
+        st.query_params["tab"] = "0"
 
-# Update the current page ID for next visit
-st.session_state.current_page_id = current_page_id
-
-# Fallback initialization if current_tab doesn't exist
-if "current_tab" not in st.session_state:
-    st.session_state.current_tab = 0
-
-# Update URL parameters to reflect current tab
-st.query_params["tab"] = str(st.session_state.current_tab)
+# Always ensure URL matches session state
+if str(st.session_state.current_tab) != query_params.get("tab", ""):
+    st.query_params["tab"] = str(st.session_state.current_tab)
 
 
 def format_job_type(job_type: str) -> str:
