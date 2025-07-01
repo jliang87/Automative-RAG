@@ -142,21 +142,34 @@ if "all_jobs_page" not in st.session_state:
 if "active_job_detail" not in st.session_state:
     st.session_state.active_job_detail = None
 
-# === PERSISTENT TAB STATE MANAGEMENT ===
-# Use query params to persist tab state across reconnections
-query_params = st.query_params
-if "tab" in query_params:
-    # Restore tab from URL parameters
+# === IMPROVED TAB STATE MANAGEMENT ===
+if "last_visited_page" not in st.session_state:
+    st.session_state.last_visited_page = None
+
+current_page = "后台任务"  # Identifier for this page
+
+# If coming from a different page, reset tab state
+if st.session_state.last_visited_page != current_page:
+    # Fresh navigation from another page - reset to default
+    st.session_state.current_tab = 0
+    st.session_state.active_job_detail = None
+    st.query_params["tab"] = "0"
+elif "tab" in st.query_params:
+    # Same page (reconnection) - restore from URL
+    query_params = st.query_params
     try:
         tab_from_url = int(query_params["tab"])
-        if tab_from_url in [0, 1, 2]:  # Valid tab indices
+        if tab_from_url in [0, 1, 2]:
             st.session_state.current_tab = tab_from_url
     except (ValueError, TypeError):
         pass
 
-# Initialize tab state if not exists (fallback only)
+# Update the last visited page
+st.session_state.last_visited_page = current_page
+
+# Fallback initialization if current_tab doesn't exist
 if "current_tab" not in st.session_state:
-    st.session_state.current_tab = 0  # UPDATED: Default to completed (now index 0)
+    st.session_state.current_tab = 0
 
 # Update URL parameters to reflect current tab
 st.query_params["tab"] = str(st.session_state.current_tab)
@@ -1022,43 +1035,146 @@ completed_jobs = [j for j in jobs if j.get("status") == "completed"]
 
 # === TABBED INTERFACE WITH IMPROVED PAGINATION ===
 # UPDATED: Tab order - Completed (0), Processing (1), All (2)
-# Tab state is now managed via URL parameters for persistence
+# Tab state is now managed for fresh navigation vs reconnection
 
-# Create tab buttons - UPDATED: New order (Completed, Processing, All)
+# Add custom CSS for colorful tab buttons
+st.markdown("""
+<style>
+/* Completed Jobs Tab - Green Theme */
+.completed-tab button {
+    background: linear-gradient(135deg, #10b981 0%, #059669 100%) !important;
+    color: white !important;
+    border: none !important;
+    font-weight: 600 !important;
+    box-shadow: 0 2px 8px rgba(16, 185, 129, 0.3) !important;
+    transition: all 0.3s ease !important;
+}
+
+.completed-tab button:hover {
+    background: linear-gradient(135deg, #059669 0%, #047857 100%) !important;
+    transform: translateY(-2px) !important;
+    box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4) !important;
+}
+
+.completed-tab-inactive button {
+    background: linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%) !important;
+    color: #065f46 !important;
+    border: 2px solid #10b981 !important;
+    font-weight: 500 !important;
+}
+
+.completed-tab-inactive button:hover {
+    background: linear-gradient(135deg, #a7f3d0 0%, #6ee7b7 100%) !important;
+    color: #047857 !important;
+}
+
+/* Processing Jobs Tab - Blue Theme */
+.processing-tab button {
+    background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%) !important;
+    color: white !important;
+    border: none !important;
+    font-weight: 600 !important;
+    box-shadow: 0 2px 8px rgba(59, 130, 246, 0.3) !important;
+    transition: all 0.3s ease !important;
+}
+
+.processing-tab button:hover {
+    background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%) !important;
+    transform: translateY(-2px) !important;
+    box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4) !important;
+}
+
+.processing-tab-inactive button {
+    background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%) !important;
+    color: #1e40af !important;
+    border: 2px solid #3b82f6 !important;
+    font-weight: 500 !important;
+}
+
+.processing-tab-inactive button:hover {
+    background: linear-gradient(135deg, #bfdbfe 0%, #93c5fd 100%) !important;
+    color: #1d4ed8 !important;
+}
+
+/* All Jobs Tab - Purple Theme */
+.all-tab button {
+    background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%) !important;
+    color: white !important;
+    border: none !important;
+    font-weight: 600 !important;
+    box-shadow: 0 2px 8px rgba(139, 92, 246, 0.3) !important;
+    transition: all 0.3s ease !important;
+}
+
+.all-tab button:hover {
+    background: linear-gradient(135deg, #7c3aed 0%, #6d28d9 100%) !important;
+    transform: translateY(-2px) !important;
+    box-shadow: 0 4px 12px rgba(139, 92, 246, 0.4) !important;
+}
+
+.all-tab-inactive button {
+    background: linear-gradient(135deg, #ede9fe 0%, #ddd6fe 100%) !important;
+    color: #5b21b6 !important;
+    border: 2px solid #8b5cf6 !important;
+    font-weight: 500 !important;
+}
+
+.all-tab-inactive button:hover {
+    background: linear-gradient(135deg, #ddd6fe 0%, #c4b5fd 100%) !important;
+    color: #6d28d9 !important;
+}
+
+/* Add subtle glow effect for active tabs */
+.completed-tab, .processing-tab, .all-tab {
+    margin: 0 4px !important;
+}
+</style>
+""", unsafe_allow_html=True)
+
+# Create tab buttons with colored themes - UPDATED: New order (Completed, Processing, All)
 tab_col1, tab_col2, tab_col3 = st.columns(3)
 
 with tab_col1:
+    # Completed Jobs Tab - Green Theme
+    tab_class = "completed-tab" if st.session_state.current_tab == 0 else "completed-tab-inactive"
+    st.markdown(f'<div class="{tab_class}">', unsafe_allow_html=True)
     if st.button(f"✅ 已完成 ({len(completed_jobs)})",
                  key="tab_completed",
-                 use_container_width=True,
-                 type="primary" if st.session_state.current_tab == 0 else "secondary"):
+                 use_container_width=True):
         st.session_state.current_tab = 0
         st.query_params["tab"] = "0"  # Persist tab selection in URL
         # Clear active detail when switching tabs
         st.session_state.active_job_detail = None
         st.rerun()
+    st.markdown('</div>', unsafe_allow_html=True)
 
 with tab_col2:
+    # Processing Jobs Tab - Blue Theme
+    tab_class = "processing-tab" if st.session_state.current_tab == 1 else "processing-tab-inactive"
+    st.markdown(f'<div class="{tab_class}">', unsafe_allow_html=True)
     if st.button(f"⏳ 处理中 ({len(processing_jobs)})",
                  key="tab_processing",
-                 use_container_width=True,
-                 type="primary" if st.session_state.current_tab == 1 else "secondary"):
+                 use_container_width=True):
         st.session_state.current_tab = 1
         st.query_params["tab"] = "1"  # Persist tab selection in URL
         # Clear active detail when switching tabs
         st.session_state.active_job_detail = None
         st.rerun()
+    st.markdown('</div>', unsafe_allow_html=True)
 
 with tab_col3:
+    # All Jobs Tab - Purple Theme
+    tab_class = "all-tab" if st.session_state.current_tab == 2 else "all-tab-inactive"
+    st.markdown(f'<div class="{tab_class}">', unsafe_allow_html=True)
     if st.button(f"📋 全部任务 ({len(jobs)})",
                  key="tab_all",
-                 use_container_width=True,
-                 type="primary" if st.session_state.current_tab == 2 else "secondary"):
+                 use_container_width=True):
         st.session_state.current_tab = 2
         st.query_params["tab"] = "2"  # Persist tab selection in URL
         # Clear active detail when switching tabs
         st.session_state.active_job_detail = None
         st.rerun()
+    st.markdown('</div>', unsafe_allow_html=True)
 
 st.markdown("---")
 
