@@ -26,46 +26,352 @@ logger = logging.getLogger(__name__)
 
 initialize_session_state()
 
-st.title("📋 后台任务")
-st.markdown("查看和管理您的处理任务，包括验证结果")
+# === PRODUCTION-GRADE STYLING ===
+st.markdown("""
+<style>
+/* Main container styling */
+.main .block-container {
+    padding-top: 2rem;
+    padding-bottom: 2rem;
+    max-width: 1200px;
+}
 
-# === JOB STATISTICS OVERVIEW ===
+/* Header styling */
+.main-header {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    padding: 2rem;
+    border-radius: 12px;
+    margin-bottom: 2rem;
+    color: white;
+    text-align: center;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+}
+
+.main-header h1 {
+    margin: 0;
+    font-size: 2.5rem;
+    font-weight: 700;
+    text-shadow: 0 2px 4px rgba(0,0,0,0.3);
+}
+
+.main-header p {
+    margin: 0.5rem 0 0 0;
+    font-size: 1.1rem;
+    opacity: 0.9;
+}
+
+/* Stats cards styling */
+.stats-container {
+    display: flex;
+    gap: 1rem;
+    margin-bottom: 2rem;
+}
+
+.stat-card {
+    background: white;
+    padding: 1.5rem;
+    border-radius: 12px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+    border-left: 4px solid;
+    flex: 1;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.stat-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 20px rgba(0,0,0,0.12);
+}
+
+.stat-card.completed { border-left-color: #10B981; }
+.stat-card.processing { border-left-color: #3B82F6; }
+.stat-card.pending { border-left-color: #F59E0B; }
+.stat-card.failed { border-left-color: #EF4444; }
+
+/* Custom tab styling */
+.custom-tabs {
+    background: white;
+    border-radius: 12px;
+    padding: 0.5rem;
+    margin-bottom: 2rem;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+    display: flex;
+    gap: 0.5rem;
+}
+
+.custom-tab {
+    flex: 1;
+    padding: 1rem 1.5rem;
+    border-radius: 8px;
+    border: none;
+    background: transparent;
+    color: #6B7280;
+    font-weight: 600;
+    font-size: 0.95rem;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    position: relative;
+    overflow: hidden;
+}
+
+.custom-tab:before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent);
+    transition: left 0.5s;
+}
+
+.custom-tab:hover:before {
+    left: 100%;
+}
+
+.custom-tab.active {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+    transform: translateY(-1px);
+}
+
+.custom-tab.completed.active {
+    background: linear-gradient(135deg, #10B981 0%, #059669 100%);
+    box-shadow: 0 4px 15px rgba(16, 185, 129, 0.4);
+}
+
+.custom-tab.processing.active {
+    background: linear-gradient(135deg, #3B82F6 0%, #1D4ED8 100%);
+    box-shadow: 0 4px 15px rgba(59, 130, 246, 0.4);
+}
+
+.custom-tab.all.active {
+    background: linear-gradient(135deg, #8B5CF6 0%, #7C3AED 100%);
+    box-shadow: 0 4px 15px rgba(139, 92, 246, 0.4);
+}
+
+/* Job card styling */
+.job-card {
+    background: white;
+    border-radius: 12px;
+    padding: 1.5rem;
+    margin-bottom: 1rem;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.06);
+    border: 1px solid #E5E7EB;
+    transition: all 0.3s ease;
+}
+
+.job-card:hover {
+    box-shadow: 0 8px 25px rgba(0,0,0,0.12);
+    transform: translateY(-2px);
+    border-color: #D1D5DB;
+}
+
+.job-card.active {
+    border-color: #667eea;
+    box-shadow: 0 8px 25px rgba(102, 126, 234, 0.15);
+}
+
+/* Status indicators */
+.status-indicator {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.25rem 0.75rem;
+    border-radius: 20px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.status-indicator.completed {
+    background: #ECFDF5;
+    color: #065F46;
+    border: 1px solid #A7F3D0;
+}
+
+.status-indicator.processing {
+    background: #EFF6FF;
+    color: #1E40AF;
+    border: 1px solid #93C5FD;
+}
+
+.status-indicator.pending {
+    background: #FFFBEB;
+    color: #92400E;
+    border: 1px solid #FCD34D;
+}
+
+.status-indicator.failed {
+    background: #FEF2F2;
+    color: #991B1B;
+    border: 1px solid #FECACA;
+}
+
+/* Button enhancements */
+.stButton > button {
+    border-radius: 8px;
+    border: none;
+    font-weight: 600;
+    transition: all 0.3s ease;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+
+.stButton > button:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 15px rgba(0,0,0,0.15);
+}
+
+/* Progress bar styling */
+.stProgress > div > div > div {
+    background: linear-gradient(90deg, #667eea, #764ba2);
+    border-radius: 4px;
+}
+
+/* Metric styling */
+.metric-container {
+    background: white;
+    padding: 1rem;
+    border-radius: 8px;
+    border-left: 3px solid #667eea;
+    margin: 0.5rem 0;
+}
+
+/* Expander styling */
+.streamlit-expanderHeader {
+    background: #F9FAFB;
+    border-radius: 8px;
+    border: 1px solid #E5E7EB;
+    margin-bottom: 0.5rem;
+}
+
+/* Custom dividers */
+hr {
+    border: none;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, #E5E7EB, transparent);
+    margin: 2rem 0;
+}
+
+/* Responsive design */
+@media (max-width: 768px) {
+    .custom-tabs {
+        flex-direction: column;
+    }
+
+    .stats-container {
+        flex-direction: column;
+    }
+
+    .main-header h1 {
+        font-size: 2rem;
+    }
+}
+
+/* Animation for loading states */
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
+
+.loading {
+    animation: pulse 2s infinite;
+}
+
+/* Success/Error message styling */
+.success-banner {
+    background: linear-gradient(135deg, #10B981, #059669);
+    color: white;
+    padding: 1rem;
+    border-radius: 8px;
+    margin: 1rem 0;
+    box-shadow: 0 4px 15px rgba(16, 185, 129, 0.3);
+}
+
+.error-banner {
+    background: linear-gradient(135deg, #EF4444, #DC2626);
+    color: white;
+    padding: 1rem;
+    border-radius: 8px;
+    margin: 1rem 0;
+    box-shadow: 0 4px 15px rgba(239, 68, 68, 0.3);
+}
+</style>
+""", unsafe_allow_html=True)
+
+# === PRODUCTION HEADER ===
+st.markdown("""
+<div class="main-header">
+    <h1>📋 任务管理中心</h1>
+    <p>专业级任务监控与管理平台 • 实时状态跟踪 • 智能验证分析</p>
+</div>
+""", unsafe_allow_html=True)
+
+# === PROFESSIONAL STATISTICS DASHBOARD ===
 job_stats = get_job_statistics()
 
 if any(job_stats.values()):
-    col1, col2, col3, col4 = st.columns(4)
+    st.markdown("""
+    <div class="stats-container">
+        <div class="stat-card completed">
+            <h3 style="margin: 0; color: #065F46; font-size: 2rem;">{}</h3>
+            <p style="margin: 0.5rem 0 0 0; color: #6B7280; font-weight: 600;">已完成任务</p>
+            <small style="color: #10B981;">✓ 处理完毕</small>
+        </div>
+        <div class="stat-card processing">
+            <h3 style="margin: 0; color: #1E40AF; font-size: 2rem;">{}</h3>
+            <p style="margin: 0.5rem 0 0 0; color: #6B7280; font-weight: 600;">处理中任务</p>
+            <small style="color: #3B82F6;">⚡ 实时处理</small>
+        </div>
+        <div class="stat-card pending">
+            <h3 style="margin: 0; color: #92400E; font-size: 2rem;">{}</h3>
+            <p style="margin: 0.5rem 0 0 0; color: #6B7280; font-weight: 600;">等待中任务</p>
+            <small style="color: #F59E0B;">⏳ 队列中</small>
+        </div>
+        <div class="stat-card failed">
+            <h3 style="margin: 0; color: #991B1B; font-size: 2rem;">{}</h3>
+            <p style="margin: 0.5rem 0 0 0; color: #6B7280; font-weight: 600;">失败任务</p>
+            <small style="color: #EF4444;">⚠️ 需处理</small>
+        </div>
+    </div>
+    """.format(
+        job_stats.get("completed", 0),
+        job_stats.get("processing", 0),
+        job_stats.get("pending", 0),
+        job_stats.get("failed", 0)
+    ), unsafe_allow_html=True)
 
-    with col1:
-        st.metric("已完成", job_stats.get("completed", 0))
-    with col2:
-        processing_count = job_stats.get("processing", 0)
-        st.metric("处理中", processing_count)
-    with col3:
-        st.metric("等待中", job_stats.get("pending", 0))
-    with col4:
-        st.metric("失败", job_stats.get("failed", 0))
+# === PROFESSIONAL CONTROL PANEL ===
+st.markdown("""
+<div style="background: white; padding: 1.5rem; border-radius: 12px; box-shadow: 0 2px 10px rgba(0,0,0,0.08); margin-bottom: 2rem;">
+    <h4 style="margin: 0 0 1rem 0; color: #374151; font-weight: 700;">⚙️ 控制面板</h4>
+</div>
+""", unsafe_allow_html=True)
 
-    st.markdown("---")
-
-# === PAGINATION CONTROLS ===
 col1, col2, col3 = st.columns(3)
 
 with col1:
-    jobs_limit = st.selectbox("获取任务数量", [50, 100, 200], index=1, help="限制获取的任务数量")
+    jobs_limit = st.selectbox("📊 获取任务数量", [50, 100, 200], index=1, help="限制获取的任务数量")
 
 with col2:
-    jobs_per_page = st.selectbox("每页显示", [10, 20, 30, 50], index=1, help="每页显示的任务数量")
+    jobs_per_page = st.selectbox("📄 每页显示", [10, 20, 30, 50], index=1, help="每页显示的任务数量")
 
 with col3:
-    if st.button("🔄 刷新任务列表", use_container_width=True):
+    if st.button("🔄 刷新任务列表", use_container_width=True, type="primary"):
         st.rerun()
 
 # === FETCH JOBS ===
 jobs = get_jobs_list(limit=jobs_limit)
 
 if not jobs:
-    st.info("📭 暂无处理任务")
-    if st.button("🔄 刷新", use_container_width=True):
+    st.markdown("""
+    <div style="background: linear-gradient(135deg, #F3F4F6, #E5E7EB); padding: 2rem; border-radius: 12px; text-align: center; margin: 2rem 0;">
+        <h3 style="margin: 0; color: #6B7280;">📭 暂无处理任务</h3>
+        <p style="margin: 0.5rem 0 0 0; color: #9CA3AF;">当前没有任何任务需要处理</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    if st.button("🔄 刷新", use_container_width=True, type="primary"):
         st.rerun()
     st.stop()
 
@@ -156,7 +462,7 @@ if "tab" in query_params:
 
 # Initialize tab state if not exists (fallback only)
 if "current_tab" not in st.session_state:
-    st.session_state.current_tab = 1  # Default to completed as fallback
+    st.session_state.current_tab = 0  # UPDATED: Default to completed (now index 0)
 
 # Update URL parameters to reflect current tab
 st.query_params["tab"] = str(st.session_state.current_tab)
@@ -1021,49 +1327,111 @@ processing_jobs = [j for j in jobs if j.get("status") in ["pending", "processing
 completed_jobs = [j for j in jobs if j.get("status") == "completed"]
 
 # === TABBED INTERFACE WITH IMPROVED PAGINATION ===
-# Manual tab implementation to preserve state during pagination
+# UPDATED: Tab order - Completed (0), Processing (1), All (2)
 # Tab state is now managed via URL parameters for persistence
 
-# Create tab buttons
+# Create tab buttons - UPDATED: Professional custom tabs
+completed_count = len(completed_jobs)
+processing_count = len(processing_jobs)
+all_count = len(jobs)
+
+# Custom tab HTML with professional styling
+tab_html = f"""
+<div class="custom-tabs">
+    <button class="custom-tab completed {'active' if st.session_state.current_tab == 0 else ''}" 
+            onclick="window.parent.postMessage({{type: 'streamlit:setComponentValue', value: 0}}, '*')">
+        <span style="font-size: 1.1rem;">✅</span>
+        <strong>已完成</strong>
+        <span style="background: rgba(255,255,255,0.2); padding: 0.2rem 0.5rem; border-radius: 10px; margin-left: 0.5rem; font-size: 0.8rem;">{completed_count}</span>
+    </button>
+    <button class="custom-tab processing {'active' if st.session_state.current_tab == 1 else ''}"
+            onclick="window.parent.postMessage({{type: 'streamlit:setComponentValue', value: 1}}, '*')">
+        <span style="font-size: 1.1rem;">⏳</span>
+        <strong>处理中</strong>
+        <span style="background: rgba(255,255,255,0.2); padding: 0.2rem 0.5rem; border-radius: 10px; margin-left: 0.5rem; font-size: 0.8rem;">{processing_count}</span>
+    </button>
+    <button class="custom-tab all {'active' if st.session_state.current_tab == 2 else ''}"
+            onclick="window.parent.postMessage({{type: 'streamlit:setComponentValue', value: 2}}, '*')">
+        <span style="font-size: 1.1rem;">📋</span>
+        <strong>全部任务</strong>
+        <span style="background: rgba(255,255,255,0.2); padding: 0.2rem 0.5rem; border-radius: 10px; margin-left: 0.5rem; font-size: 0.8rem;">{all_count}</span>
+    </button>
+</div>
+"""
+
+# Fallback to regular Streamlit buttons with enhanced styling
 tab_col1, tab_col2, tab_col3 = st.columns(3)
 
 with tab_col1:
-    if st.button(f"⏳ 处理中 ({len(processing_jobs)})",
-                 key="tab_processing",
+    completed_active = st.session_state.current_tab == 0
+    if st.button(f"✅ **已完成** `{completed_count}`",
+                 key="tab_completed",
                  use_container_width=True,
-                 type="primary" if st.session_state.current_tab == 0 else "secondary"):
+                 type="primary" if completed_active else "secondary"):
         st.session_state.current_tab = 0
-        st.query_params["tab"] = "0"  # Persist tab selection in URL
-        # Clear active detail when switching tabs
+        st.query_params["tab"] = "0"
         st.session_state.active_job_detail = None
         st.rerun()
 
 with tab_col2:
-    if st.button(f"✅ 已完成 ({len(completed_jobs)})",
-                 key="tab_completed",
+    processing_active = st.session_state.current_tab == 1
+    if st.button(f"⏳ **处理中** `{processing_count}`",
+                 key="tab_processing",
                  use_container_width=True,
-                 type="primary" if st.session_state.current_tab == 1 else "secondary"):
+                 type="primary" if processing_active else "secondary"):
         st.session_state.current_tab = 1
-        st.query_params["tab"] = "1"  # Persist tab selection in URL
-        # Clear active detail when switching tabs
+        st.query_params["tab"] = "1"
         st.session_state.active_job_detail = None
         st.rerun()
 
 with tab_col3:
-    if st.button(f"📋 全部任务 ({len(jobs)})",
+    all_active = st.session_state.current_tab == 2
+    if st.button(f"📋 **全部任务** `{all_count}`",
                  key="tab_all",
                  use_container_width=True,
-                 type="primary" if st.session_state.current_tab == 2 else "secondary"):
+                 type="primary" if all_active else "secondary"):
         st.session_state.current_tab = 2
-        st.query_params["tab"] = "2"  # Persist tab selection in URL
-        # Clear active detail when switching tabs
+        st.query_params["tab"] = "2"
         st.session_state.active_job_detail = None
         st.rerun()
 
 st.markdown("---")
 
-# Display content based on selected tab
-if st.session_state.current_tab == 0:  # Processing jobs
+# Display content based on selected tab - UPDATED: New tab indices
+if st.session_state.current_tab == 0:  # Completed jobs (now first tab)
+    if completed_jobs:
+        # Get jobs for current page
+        page_jobs = paginate_jobs(completed_jobs, st.session_state.completed_page, jobs_per_page)
+
+        # Display all jobs first
+        for i, job in enumerate(page_jobs):
+            # Calculate global index for unique keys
+            global_index = (st.session_state.completed_page - 1) * jobs_per_page + i
+            display_job_card(job, f"completed", global_index)
+
+            # FIXED: Only add divider if this is NOT the last job
+            if i < len(page_jobs) - 1:
+                st.divider()
+
+        # Pagination at bottom
+        if len(completed_jobs) > jobs_per_page:
+            st.markdown("---")
+            new_page = render_pagination(
+                len(completed_jobs),
+                st.session_state.completed_page,
+                jobs_per_page,
+                "completed"
+            )
+            # Only update and rerun if page actually changed
+            if new_page != st.session_state.completed_page:
+                st.session_state.completed_page = new_page
+                # Clear active detail when changing pages
+                st.session_state.active_job_detail = None
+                st.rerun()
+    else:
+        st.info("📭 暂无已完成的任务")
+
+elif st.session_state.current_tab == 1:  # Processing jobs (now second tab)
     if processing_jobs:
         # Get jobs for current page
         page_jobs = paginate_jobs(processing_jobs, st.session_state.processing_page, jobs_per_page)
@@ -1102,40 +1470,7 @@ if st.session_state.current_tab == 0:  # Processing jobs
     else:
         st.info("✨ 当前没有正在处理的任务")
 
-elif st.session_state.current_tab == 1:  # Completed jobs
-    if completed_jobs:
-        # Get jobs for current page
-        page_jobs = paginate_jobs(completed_jobs, st.session_state.completed_page, jobs_per_page)
-
-        # Display all jobs first
-        for i, job in enumerate(page_jobs):
-            # Calculate global index for unique keys
-            global_index = (st.session_state.completed_page - 1) * jobs_per_page + i
-            display_job_card(job, f"completed", global_index)
-
-            # FIXED: Only add divider if this is NOT the last job
-            if i < len(page_jobs) - 1:
-                st.divider()
-
-        # Pagination at bottom
-        if len(completed_jobs) > jobs_per_page:
-            st.markdown("---")
-            new_page = render_pagination(
-                len(completed_jobs),
-                st.session_state.completed_page,
-                jobs_per_page,
-                "completed"
-            )
-            # Only update and rerun if page actually changed
-            if new_page != st.session_state.completed_page:
-                st.session_state.completed_page = new_page
-                # Clear active detail when changing pages
-                st.session_state.active_job_detail = None
-                st.rerun()
-    else:
-        st.info("📭 暂无已完成的任务")
-
-elif st.session_state.current_tab == 2:  # All jobs
+elif st.session_state.current_tab == 2:  # All jobs (still third tab)
     # Get jobs for current page
     page_jobs = paginate_jobs(jobs, st.session_state.all_jobs_page, jobs_per_page)
 
