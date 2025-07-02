@@ -12,6 +12,9 @@ from .common import get_redis_client
 from src.core.mode_config import mode_config, QueryMode, estimate_token_count
 from src.config.settings import settings
 
+from src.core.validation.validation_engine import validation_engine
+from src.core.validation.models.validation_models import ValidationStatus, ValidationChainResult
+
 logger = logging.getLogger(__name__)
 
 
@@ -1098,20 +1101,13 @@ def generate_embeddings_task(job_id: str, documents: List[Dict]):
 @dramatiq.actor(queue_name="embedding_tasks", store_results=True, max_retries=2)
 def retrieve_documents_task(job_id: str, query: str, metadata_filter: Optional[Dict] = None, query_mode: str = "facts"):
     """
-    Document retrieval with ChatGPT's recommended post-reranking fact validation.
-
-    STRATEGY:
-    1. Trust vector store semantic ranking
-    2. Apply minimal filtering (garbage removal)
-    3. POST-RERANKING: Apply automotive domain fact validation
-    4. Add validation warnings to metadata (don't remove docs)
+    Enhanced document retrieval with full validation pipeline
     """
     try:
         from .models import get_vector_store
-        from src.utils.quality_utils import automotive_fact_check_documents
         import numpy as np
 
-        logger.info(f"Retrieval + automotive fact validation for job {job_id} in '{query_mode}' mode: {query}")
+        logger.info(f"Enhanced retrieval + validation for job {job_id} in '{query_mode}' mode: {query}")
 
         vector_store = get_vector_store()
 
@@ -1122,11 +1118,11 @@ def retrieve_documents_task(job_id: str, query: str, metadata_filter: Optional[D
             logger.warning(f"Invalid query mode '{query_mode}', falling back to facts")
             mode_enum = QueryMode.FACTS
 
-        # Get mode-specific parameters (simplified)
+        # Get mode-specific parameters
         retrieval_params = mode_config.get_retrieval_params(mode_enum)
         context_params = mode_config.get_context_params(mode_enum)
 
-        # Phase 1: Initial broad retrieval (trust vector store ranking)
+        # Initial document retrieval
         initial_k = retrieval_params["retrieval_k"]
         results = vector_store.similarity_search_with_score(
             query=query,
@@ -1142,43 +1138,16 @@ def retrieve_documents_task(job_id: str, query: str, metadata_filter: Optional[D
                 "documents": [],
                 "document_count": 0,
                 "retrieval_completed_at": time.time(),
-                "retrieval_method": f"automotive_validated_{query_mode}",
+                "retrieval_method": f"enhanced_validation_{query_mode}",
                 "query_used": query,
-                "query_mode": query_mode
+                "query_mode": query_mode,
+                "validation_result": None
             })
             return
 
-        # Phase 2: MINIMAL filtering (trust semantic ranking, remove only garbage)
-        debug_mode = getattr(settings, 'debug_mode', False)
-        token_budget = context_params["max_context_tokens"]
-
-        filtered_results = minimal_effective_filter(
-            results,
-            token_budget,
-            debug_mode
-        )
-
-        # Phase 3: POST-RERANKING automotive domain fact validation (ChatGPT's approach)
-        logger.info("Applying automotive domain fact validation...")
-        fact_checked_results = automotive_fact_check_documents(filtered_results)
-
-        # Count validation results
-        docs_with_warnings = sum(1 for doc, _ in fact_checked_results
-                                 if doc.metadata.get("automotive_warnings"))
-
-        logger.info(f"Automotive fact validation: {len(fact_checked_results)} docs processed, "
-                    f"{docs_with_warnings} with warnings")
-
-        # Calculate statistics
-        if fact_checked_results:
-            relevance_scores = [score for _, score in fact_checked_results]
-            avg_relevance_score = sum(relevance_scores) / len(relevance_scores)
-        else:
-            avg_relevance_score = 0.0
-
-        # Format results for transfer to inference worker
-        serialized_docs = []
-        for doc, score in fact_checked_results:
+        # Convert to validation framework format
+        documents_for_validation = []
+        for doc, score in results:
             json_safe_score = float(score) if isinstance(score, (np.floating, np.float32, np.float64)) else score
 
             cleaned_metadata = {}
@@ -1189,10 +1158,55 @@ def retrieve_documents_task(job_id: str, query: str, metadata_filter: Optional[D
                     cleaned_metadata[key] = int(value)
                 elif isinstance(value, np.ndarray):
                     cleaned_metadata[key] = value.tolist()
-                elif isinstance(value, list):
-                    cleaned_metadata[key] = value  # Keep lists (warnings, etc.)
                 else:
                     cleaned_metadata[key] = value
+
+            documents_for_validation.append({
+                "content": doc.page_content,
+                "metadata": cleaned_metadata,
+                "relevance_score": json_safe_score
+            })
+
+        # Apply full validation pipeline
+        validation_result = await validation_engine.validate_documents(
+            documents=documents_for_validation,
+            query=query,
+            query_mode=query_mode,
+            metadata_filter=metadata_filter,
+            job_id=job_id
+        )
+
+        # Extract validated documents for LLM processing
+        # Apply token budget management to validated documents
+        token_budget = context_params["max_context_tokens"]
+        final_documents = apply_token_budget_management(results, token_budget)
+
+        # Calculate enhanced statistics
+        if final_documents:
+            relevance_scores = [score for _, score in final_documents]
+            avg_relevance_score = sum(relevance_scores) / len(relevance_scores)
+        else:
+            avg_relevance_score = 0.0
+
+        # Format results for transfer to inference worker
+        serialized_docs = []
+        for doc, score in final_documents:
+            json_safe_score = float(score) if isinstance(score, (np.floating, np.float32, np.float64)) else score
+
+            cleaned_metadata = {}
+            for key, value in doc.metadata.items():
+                if isinstance(value, (np.floating, np.float32, np.float64)):
+                    cleaned_metadata[key] = float(value)
+                elif isinstance(value, (np.integer, np.int32, np.int64)):
+                    cleaned_metadata[key] = int(value)
+                elif isinstance(value, np.ndarray):
+                    cleaned_metadata[key] = value.tolist()
+                else:
+                    cleaned_metadata[key] = value
+
+            # Add validation metadata
+            cleaned_metadata["validation_status"] = "validated"
+            cleaned_metadata["validation_confidence"] = validation_result.confidence.total_score
 
             serialized_docs.append({
                 "content": doc.page_content,
@@ -1200,52 +1214,81 @@ def retrieve_documents_task(job_id: str, query: str, metadata_filter: Optional[D
                 "relevance_score": json_safe_score
             })
 
-        logger.info(f"Automotive-validated retrieval completed for job {job_id}: {len(fact_checked_results)} documents")
-        logger.info(f"Average relevance score: {avg_relevance_score:.3f}")
+        logger.info(f"Enhanced validation completed for job {job_id}: {len(final_documents)} documents")
+        logger.info(f"Validation confidence: {validation_result.confidence.total_score:.1f}%")
 
-        # Trigger LLM inference with fact-checked documents
+        # Comprehensive result with validation data
         job_chain.task_completed(job_id, {
             "documents": serialized_docs,
             "document_count": len(serialized_docs),
             "retrieval_completed_at": time.time(),
-            "retrieval_method": f"automotive_validated_{query_mode}",
+            "retrieval_method": f"enhanced_validation_{query_mode}",
             "query_mode": query_mode,
             "avg_relevance_score": avg_relevance_score,
             "token_budget_used": token_budget,
-            "automotive_validation": {
-                "total_documents": len(fact_checked_results),
-                "documents_with_warnings": docs_with_warnings,
-                "validation_applied": True,
-                "domain_specific": "automotive"
+
+            # NEW: Comprehensive validation results
+            "validation_result": {
+                "chain_id": validation_result.chain_id,
+                "pipeline_type": validation_result.pipeline_type.value,
+                "overall_status": validation_result.overall_status.value,
+                "confidence": {
+                    "total_score": validation_result.confidence.total_score,
+                    "level": validation_result.confidence.level.value,
+                    "source_credibility": validation_result.confidence.source_credibility,
+                    "technical_consistency": validation_result.confidence.technical_consistency,
+                    "completeness": validation_result.confidence.completeness,
+                    "consensus": validation_result.confidence.consensus,
+                    "verification_coverage": validation_result.confidence.verification_coverage
+                },
+                "validation_steps": [
+                    {
+                        "step_name": step.step_name,
+                        "status": step.status.value,
+                        "confidence_impact": step.confidence_impact,
+                        "summary": step.summary,
+                        "warnings": [
+                            {
+                                "category": w.category,
+                                "severity": w.severity,
+                                "message": w.message,
+                                "explanation": w.explanation,
+                                "suggestion": w.suggestion
+                            }
+                            for w in step.warnings
+                        ]
+                    }
+                    for step in validation_result.validation_steps
+                ],
+                "trust_trail": validation_result.step_progression,
+                "contribution_opportunities": [
+                    {
+                        "needed_resource": prompt.needed_resource_type,
+                        "description": prompt.specific_need_description,
+                        "confidence_impact": prompt.confidence_impact,
+                        "future_benefit": prompt.future_benefit_description
+                    }
+                    for prompt in validation_result.contribution_opportunities
+                ]
             },
-            "enhanced_with_fact_checking": True
+
+            "enhanced_with_validation_framework": True
         })
 
     except Exception as e:
-        logger.error(f"Automotive-validated retrieval failed for job {job_id}: {str(e)}")
-        job_chain.task_failed(job_id, f"Automotive-validated retrieval failed: {str(e)}")
+        logger.error(f"Enhanced retrieval failed for job {job_id}: {str(e)}")
+        job_chain.task_failed(job_id, f"Enhanced retrieval failed: {str(e)}")
 
 
 @dramatiq.actor(queue_name="inference_tasks", store_results=True, max_retries=2)
 def llm_inference_task(job_id: str, query: str, documents: List[Dict], query_mode: str = "facts"):
     """
-    LLM inference with automotive domain fact validation and user trust features.
-
-    STRATEGY (ChatGPT's approach):
-    1. Generate answer with mode-specific parameters
-    2. Apply automotive domain fact validation to final answer
-    3. Add validation warnings as footnotes for user trust
+    Enhanced LLM inference with answer validation
     """
     try:
         from .models import get_llm_model
-        from langchain_core.documents import Document
-        from src.utils.quality_utils import (
-            automotive_fact_check_answer,
-            format_automotive_warnings_for_user,
-            get_automotive_validation_summary
-        )
 
-        logger.info(f"LLM inference + automotive validation for job {job_id} in '{query_mode}' mode")
+        logger.info(f"Enhanced LLM inference + answer validation for job {job_id} in '{query_mode}' mode")
 
         # Get the preloaded LLM model
         llm_model = get_llm_model()
@@ -1293,26 +1336,36 @@ def llm_inference_task(job_id: str, query: str, documents: List[Dict], query_mod
             repetition_penalty=llm_params.get("repetition_penalty", 1.1)
         )
 
-        # AUTOMOTIVE DOMAIN FACT VALIDATION (ChatGPT's approach)
-        logger.info("Applying automotive domain fact validation to answer...")
+        # NEW: Enhanced answer validation using validation framework
+        logger.info("Applying enhanced answer validation...")
 
-        # Validate answer against automotive domain knowledge
-        validation_results = automotive_fact_check_answer(base_answer, doc_objects)
+        # Convert documents to validation format
+        doc_list = []
+        for doc in doc_objects:
+            doc_dict = {
+                "content": doc.page_content,
+                "metadata": doc.metadata
+            }
+            doc_list.append(doc_dict)
 
-        # Format validation warnings for user display (increases trust)
-        warning_footnotes = format_automotive_warnings_for_user(validation_results)
+        # Validate answer using the validation framework
+        answer_validation = await validation_engine.validate_answer(
+            answer=base_answer,
+            documents=doc_list,
+            query=query,
+            query_mode=query_mode,
+            job_id=job_id
+        )
+
+        # Format validation warnings for user display
+        warning_footnotes = validation_engine.format_automotive_warnings_for_user(answer_validation)
 
         # Create final answer with validation footnotes
         final_answer = base_answer + warning_footnotes
 
-        # Get document validation summary
-        doc_validation_summary = get_automotive_validation_summary(doc_objects)
-
-        # Simple confidence assessment combining relevance and automotive validation
-        automotive_confidence = validation_results.get("automotive_confidence", "unknown")
-        simple_confidence = min(100, avg_relevance_score * 100 +
-                                (20 if automotive_confidence == "high" else
-                                 10 if automotive_confidence == "medium" else 0))
+        # Enhanced confidence assessment
+        validation_confidence = answer_validation.get("confidence_score", 0)
+        simple_confidence = min(100, avg_relevance_score * 50 + validation_confidence * 0.5)
 
         # Get current job data
         current_job = job_tracker.get_job(job_id, include_progress=False)
@@ -1324,7 +1377,10 @@ def llm_inference_task(job_id: str, query: str, documents: List[Dict], query_mod
             except:
                 existing_result = {}
 
-        # Create enhanced inference result with automotive validation
+        # Get validation result from retrieval step
+        retrieval_validation = existing_result.get("validation_result", {})
+
+        # Create comprehensive inference result with enhanced validation
         inference_result = {
             "answer": final_answer,
             "base_answer": base_answer,  # Answer without validation footnotes
@@ -1333,26 +1389,42 @@ def llm_inference_task(job_id: str, query: str, documents: List[Dict], query_mod
             "inference_completed_at": time.time(),
             "llm_parameters_used": llm_params,
 
-            # Simple confidence metrics
+            # Enhanced confidence metrics
             "simple_confidence": simple_confidence,
             "avg_relevance_score": avg_relevance_score,
             "documents_used": len(documents),
 
-            # AUTOMOTIVE DOMAIN VALIDATION (the key addition)
-            "automotive_validation": {
-                "answer_validation": validation_results,
-                "document_validation_summary": doc_validation_summary,
-                "confidence_level": automotive_confidence,
-                "has_warnings": bool(
-                    validation_results.get("answer_warnings") or validation_results.get("source_warnings")),
-                "user_trust_features": {
-                    "validation_footnotes_added": bool(warning_footnotes),
-                    "transparent_fact_checking": True,
-                    "domain_specific_validation": "automotive"
+            # COMPREHENSIVE VALIDATION INTEGRATION
+            "enhanced_validation": {
+                "answer_validation": answer_validation,
+                "retrieval_validation": retrieval_validation,
+                "overall_confidence": validation_confidence,
+                "confidence_level": answer_validation.get("automotive_confidence", "unknown"),
+                "validation_warnings": answer_validation.get("answer_warnings", []),
+                "source_warnings": answer_validation.get("source_warnings", []),
+
+                # Trust trail information
+                "trust_trail_available": bool(retrieval_validation.get("trust_trail")),
+                "validation_steps_completed": len(retrieval_validation.get("validation_steps", [])),
+                "pipeline_type": retrieval_validation.get("pipeline_type", "unknown"),
+
+                # User guidance
+                "contribution_opportunities": retrieval_validation.get("contribution_opportunities", []),
+                "guided_trust_loop_enabled": True,
+
+                # Validation transparency
+                "validation_methodology": {
+                    "retrieval_pipeline": retrieval_validation.get("pipeline_type"),
+                    "answer_validation_applied": True,
+                    "multi_step_validation": True,
+                    "meta_validation_enabled": True,
+                    "user_contribution_enabled": True
                 }
             },
 
-            "enhanced_with_automotive_validation": True
+            # Legacy compatibility
+            "automotive_validation": answer_validation,
+            "enhanced_with_validation_framework": True
         }
 
         # Preserve existing data and add inference result
@@ -1360,18 +1432,232 @@ def llm_inference_task(job_id: str, query: str, documents: List[Dict], query_mod
         final_result.update(existing_result)
         final_result.update(inference_result)
 
-        logger.info(f"Automotive-validated LLM inference completed for job {job_id}")
-        logger.info(f"Simple confidence: {simple_confidence:.1f}%, Automotive confidence: {automotive_confidence}")
+        logger.info(f"Enhanced LLM inference completed for job {job_id}")
+        logger.info(f"Simple confidence: {simple_confidence:.1f}%, Validation confidence: {validation_confidence:.1f}%")
 
-        if validation_results.get("answer_warnings"):
-            logger.info(f"Answer warnings: {len(validation_results['answer_warnings'])}")
-        if validation_results.get("source_warnings"):
-            logger.info(f"Source warnings: {len(set(validation_results['source_warnings']))}")
+        if answer_validation.get("answer_warnings"):
+            logger.info(f"Answer warnings: {len(answer_validation['answer_warnings'])}")
+        if answer_validation.get("source_warnings"):
+            logger.info(f"Source warnings: {len(answer_validation['source_warnings'])}")
 
         # Complete the job
         job_chain.task_completed(job_id, final_result)
 
     except Exception as e:
-        error_msg = f"Automotive-validated LLM inference failed for job {job_id}: {str(e)}"
+        error_msg = f"Enhanced LLM inference failed for job {job_id}: {str(e)}"
         logger.error(error_msg)
         job_chain.task_failed(job_id, error_msg)
+
+
+@dramatiq.actor(queue_name="inference_tasks", store_results=True, max_retries=2)
+def process_user_contribution_task(job_id: str, step_type: str, contribution_data: Dict[str, Any]):
+    """
+    Process user contribution and retry validation (Guided Trust Loop)
+    """
+    try:
+        logger.info(f"Processing user contribution for job {job_id}, step {step_type}")
+
+        # Process contribution using validation engine
+        contribution_result = await validation_engine.process_user_contribution(
+            job_id=job_id,
+            step_type=step_type,
+            contribution_data=contribution_data
+        )
+
+        if contribution_result.get("success"):
+            # Update job with new validation results
+            new_confidence = contribution_result.get("new_confidence", 0)
+            learning_credit = contribution_result.get("learning_credit")
+
+            # Get current job data
+            current_job = job_tracker.get_job(job_id, include_progress=False)
+            existing_result = current_job.get("result", {}) if current_job else {}
+
+            if isinstance(existing_result, str):
+                try:
+                    existing_result = json.loads(existing_result)
+                except:
+                    existing_result = {}
+
+            # Update validation results
+            validation_update = {
+                "contribution_processed": True,
+                "contribution_accepted": True,
+                "updated_confidence": new_confidence,
+                "learning_credit_earned": learning_credit,
+                "contribution_timestamp": time.time(),
+                "updated_validation": contribution_result.get("validation_updated", False)
+            }
+
+            # Update enhanced validation section
+            if "enhanced_validation" in existing_result:
+                existing_result["enhanced_validation"]["user_contributions"] = existing_result[
+                    "enhanced_validation"].get("user_contributions", [])
+                existing_result["enhanced_validation"]["user_contributions"].append(validation_update)
+                existing_result["enhanced_validation"]["overall_confidence"] = new_confidence
+
+            # Update job
+            job_tracker.update_job_status(
+                job_id,
+                "completed",  # Job remains completed, just updated
+                result=existing_result,
+                stage="contribution_processed",
+                replace_result=True
+            )
+
+            logger.info(f"User contribution processed successfully for job {job_id}")
+
+        else:
+            error_msg = contribution_result.get("error", "Unknown error processing contribution")
+            logger.error(f"Contribution processing failed for job {job_id}: {error_msg}")
+
+    except Exception as e:
+        error_msg = f"Contribution processing task failed for job {job_id}: {str(e)}"
+        logger.error(error_msg)
+
+
+def get_validation_summary_for_ui(job_result: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Extract validation summary for UI display
+    Compatible with existing UI code expectations
+    """
+
+    # Get validation data from either new or legacy format
+    enhanced_validation = job_result.get("enhanced_validation", {})
+    validation_result = job_result.get("validation_result", {})
+    automotive_validation = job_result.get("automotive_validation", {})
+
+    # Create comprehensive summary
+    summary = {
+        # Basic validation info
+        "validation_applied": bool(enhanced_validation or validation_result or automotive_validation),
+        "validation_framework_used": bool(enhanced_validation),
+
+        # Confidence information
+        "overall_confidence": enhanced_validation.get("overall_confidence",
+                                                      automotive_validation.get("confidence_score", 0)),
+        "confidence_level": enhanced_validation.get("confidence_level",
+                                                    automotive_validation.get("automotive_confidence", "unknown")),
+
+        # Validation details
+        "pipeline_type": validation_result.get("pipeline_type", "unknown"),
+        "validation_steps_completed": len(validation_result.get("validation_steps", [])),
+        "verification_coverage": validation_result.get("confidence", {}).get("verification_coverage", 0),
+
+        # Warnings and issues
+        "has_warnings": bool(
+            enhanced_validation.get("validation_warnings") or
+            enhanced_validation.get("source_warnings") or
+            automotive_validation.get("answer_warnings") or
+            automotive_validation.get("source_warnings")
+        ),
+        "warning_count": len(
+            enhanced_validation.get("validation_warnings", []) +
+            enhanced_validation.get("source_warnings", []) +
+            automotive_validation.get("answer_warnings", []) +
+            automotive_validation.get("source_warnings", [])
+        ),
+
+        # Trust trail and user interaction
+        "trust_trail_available": enhanced_validation.get("trust_trail_available", False),
+        "contribution_opportunities": len(validation_result.get("contribution_opportunities", [])),
+        "guided_trust_loop_enabled": enhanced_validation.get("guided_trust_loop_enabled", False),
+
+        # User contributions
+        "user_contributions": len(enhanced_validation.get("user_contributions", [])),
+        "learning_credits_available": sum(
+            opp.get("confidence_impact", 0)
+            for opp in validation_result.get("contribution_opportunities", [])
+        ),
+
+        # Validation quality indicators
+        "validation_quality": {
+            "source_credibility": validation_result.get("confidence", {}).get("source_credibility", 0),
+            "technical_consistency": validation_result.get("confidence", {}).get("technical_consistency", 0),
+            "completeness": validation_result.get("confidence", {}).get("completeness", 0),
+            "consensus": validation_result.get("confidence", {}).get("consensus", 0)
+        }
+    }
+
+    return summary
+
+
+def enhance_job_status_with_validation(job_details: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Enhance job details with validation information for UI display
+    """
+
+    result = job_details.get("result", {})
+    if isinstance(result, str):
+        try:
+            result = json.loads(result)
+        except:
+            result = {}
+
+    # Add validation summary
+    validation_summary = get_validation_summary_for_ui(result)
+    job_details["validation_summary"] = validation_summary
+
+    # Add quick validation status for display
+    if validation_summary["validation_applied"]:
+        confidence = validation_summary["overall_confidence"]
+        if confidence >= 80:
+            job_details["validation_status"] = "high_confidence"
+            job_details["validation_badge"] = "🟢 High Confidence"
+        elif confidence >= 60:
+            job_details["validation_status"] = "medium_confidence"
+            job_details["validation_badge"] = "🟡 Medium Confidence"
+        else:
+            job_details["validation_status"] = "low_confidence"
+            job_details["validation_badge"] = "🔴 Low Confidence"
+
+        if validation_summary["has_warnings"]:
+            job_details["validation_badge"] += f" ({validation_summary['warning_count']} warnings)"
+    else:
+        job_details["validation_status"] = "not_validated"
+        job_details["validation_badge"] = "⚪ Not Validated"
+
+    return job_details
+
+# Instructions for integrating with existing code:
+
+"""
+INTEGRATION INSTRUCTIONS:
+
+1. Add these imports to the top of job_chain.py:
+   ```python
+   from src.core.validation.validation_engine import validation_engine
+   from src.core.validation.models.validation_models import ValidationStatus, ValidationChainResult
+   ```
+
+2. Replace the existing retrieve_documents_task function with the enhanced version above
+
+3. Replace the existing llm_inference_task function with the enhanced version above
+
+4. Add the process_user_contribution_task function for guided trust loop functionality
+
+5. Update any existing automotive_fact_check_* function calls to use the validation_engine methods:
+   - automotive_fact_check_documents -> validation_engine.validate_documents
+   - automotive_fact_check_answer -> validation_engine.validate_answer
+   - format_automotive_warnings_for_user -> validation_engine.format_automotive_warnings_for_user
+
+6. For UI integration, use the helper functions:
+   - get_validation_summary_for_ui(job_result) to extract validation info
+   - enhance_job_status_with_validation(job_details) to add validation status
+
+7. The validation framework is now fully integrated and provides:
+   - Multi-step validation pipelines
+   - Meta-validation (validation of validation)
+   - Guided trust loop for user contributions
+   - Comprehensive confidence scoring
+   - Trust trail visualization data
+   - Learning credit system
+   - Backward compatibility with existing code
+
+8. All existing job processing continues to work, but now with enhanced validation:
+   - Video processing jobs get full validation pipeline
+   - PDF processing jobs get validation
+   - Text processing jobs get validation
+   - Query processing gets answer validation
+   - Users can contribute to improve validation quality
+"""

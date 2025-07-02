@@ -35,9 +35,9 @@ ENV/
 .ipynb_checkpoints
 
 # Data and logs
-data/
-models/
-logs/
+/data/
+/models/
+/logs/
 *.log
 
 # Docker
