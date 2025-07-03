@@ -7,7 +7,7 @@ from pydantic import HttpUrl, BaseModel
 import logging
 import json
 
-from src.core.background.job_chain import job_chain, JobType
+from src.core.orchestration.job_chain import job_chain, JobType
 from src.core.orchestration.job_tracker import job_tracker
 from src.models.schema import ManualIngestRequest, BackgroundJobResponse
 

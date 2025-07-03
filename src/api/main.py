@@ -177,7 +177,7 @@ async def health_check():
     # Check job chain system
     job_chain_ok = False
     try:
-        from src.core.background.job_chain import job_chain
+        from src.core.orchestration.job_chain import job_chain
         queue_status = job_chain.get_queue_status()
         job_chain_ok = True
     except Exception:
@@ -204,7 +204,7 @@ async def health_check():
 async def get_job_chains_overview():
     """Get comprehensive overview of the job chain system."""
     try:
-        from src.core.background.job_chain import job_chain
+        from src.core.orchestration.job_chain import job_chain
         from src.core.orchestration.job_tracker import job_tracker
 
         # Get queue status (for 系统信息.py)
@@ -266,7 +266,7 @@ async def get_job_chains_overview():
 async def get_job_chain_details(job_id: str):
     """Get detailed information about a specific job chain."""
     try:
-        from src.core.background.job_chain import job_chain
+        from src.core.orchestration.job_chain import job_chain
         from src.core.orchestration.job_tracker import job_tracker
 
         # Get job chain status
@@ -327,7 +327,7 @@ async def get_worker_status():
     """Get worker status for system monitoring."""
     try:
         from src.api.dependencies import get_redis_client
-        from src.core.worker_status import get_worker_status_for_ui
+        from src.core.background.worker_status import get_worker_status_for_ui
 
         redis_client = get_redis_client()
         return get_worker_status_for_ui(redis_client)

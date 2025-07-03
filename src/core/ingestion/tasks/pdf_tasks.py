@@ -8,8 +8,8 @@ import logging
 from typing import Dict, Optional
 import dramatiq
 
-from core.orchestration.job_tracker import job_tracker
-from core.orchestration.job_chain import job_chain
+from src.core.orchestration.job_tracker import job_tracker
+from src.core.orchestration.job_chain import job_chain
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +81,7 @@ def process_pdf_task(job_id: str, file_path: str, metadata: Optional[Dict] = Non
             # Fallback to basic PDF processing
             logger.warning(f"Enhanced processing not available, using basic PDF processing for job {job_id}")
 
-            from core.ingestion.loaders.pdf_loader import PDFLoader
+            from src.core.ingestion.loaders.pdf_loader import PDFLoader
             from src.config.settings import settings
 
             # Create PDF loader

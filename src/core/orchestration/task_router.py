@@ -85,13 +85,13 @@ class TaskRouter:
             else:
                 error_msg = f"Unknown task type: {task_name}"
                 logger.error(error_msg)
-                from core.orchestration.job_chain import job_chain
+                from src.core.orchestration.job_chain import job_chain
                 job_chain.task_failed(job_id, error_msg)
 
         except Exception as e:
             error_msg = f"Error routing task {task_name} for job {job_id}: {str(e)}"
             logger.error(error_msg)
-            from core.orchestration.job_chain import job_chain
+            from src.core.orchestration.job_chain import job_chain
             job_chain.task_failed(job_id, error_msg)
 
     def start_job_workflow(self, job_id: str, job_type: JobType, data: Dict[str, Any]) -> None:
@@ -107,61 +107,61 @@ class TaskRouter:
             logger.info(f"Starting {job_type.value} workflow for job {job_id}")
 
             if job_type == JobType.VIDEO_PROCESSING:
-                from core.ingestion.tasks.video_tasks import start_video_processing
+                from src.core.ingestion.tasks.video_tasks import start_video_processing
                 start_video_processing(job_id, data)
 
             elif job_type == JobType.PDF_PROCESSING:
-                from core.ingestion.tasks.pdf_tasks import start_pdf_processing
+                from src.core.ingestion.tasks.pdf_tasks import start_pdf_processing
                 start_pdf_processing(job_id, data)
 
             elif job_type == JobType.TEXT_PROCESSING:
-                from core.ingestion.tasks.text_tasks import start_text_processing
+                from src.core.ingestion.tasks.text_tasks import start_text_processing
                 start_text_processing(job_id, data)
 
             elif job_type == JobType.LLM_INFERENCE:
-                from core.query.tasks.retrieval_tasks import start_document_retrieval
+                from src.core.query.tasks.retrieval_tasks import start_document_retrieval
                 start_document_retrieval(job_id, data)
 
             else:
                 error_msg = f"Unknown job type: {job_type}"
                 logger.error(error_msg)
-                from core.orchestration.job_chain import job_chain
+                from src.core.orchestration.job_chain import job_chain
                 job_chain.task_failed(job_id, error_msg)
 
         except Exception as e:
             error_msg = f"Error starting {job_type.value} workflow for job {job_id}: {str(e)}"
             logger.error(error_msg)
-            from core.orchestration.job_chain import job_chain
+            from src.core.orchestration.job_chain import job_chain
             job_chain.task_failed(job_id, error_msg)
 
     def _route_video_download(self, job_id: str, data: Dict[str, Any]) -> None:
         """Route video download task."""
-        from core.ingestion.tasks.video_tasks import download_video_task
+        from src.core.ingestion.tasks.video_tasks import download_video_task
         download_video_task.send(job_id, data.get("url"), data.get("metadata"))
 
     def _route_video_transcription(self, job_id: str, data: Dict[str, Any]) -> None:
         """Route video transcription task."""
-        from core.ingestion.tasks.video_tasks import transcribe_video_task
+        from src.core.ingestion.tasks.video_tasks import transcribe_video_task
         transcribe_video_task.send(job_id, data.get("media_path"))
 
     def _route_pdf_processing(self, job_id: str, data: Dict[str, Any]) -> None:
         """Route PDF processing task."""
-        from core.ingestion.tasks.pdf_tasks import process_pdf_task
+        from src.core.ingestion.tasks.pdf_tasks import process_pdf_task
         process_pdf_task.send(job_id, data.get("file_path"), data.get("metadata"))
 
     def _route_text_processing(self, job_id: str, data: Dict[str, Any]) -> None:
         """Route text processing task."""
-        from core.ingestion.tasks.text_tasks import process_text_task
+        from src.core.ingestion.tasks.text_tasks import process_text_task
         process_text_task.send(job_id, data.get("text"), data.get("metadata"))
 
     def _route_embedding_generation(self, job_id: str, data: Dict[str, Any]) -> None:
         """Route embedding generation task."""
-        from core.ingestion.tasks.embedding_tasks import generate_embeddings_task
+        from src.core.ingestion.tasks.embedding_tasks import generate_embeddings_task
         generate_embeddings_task.send(job_id, data.get("documents"))
 
     def _route_document_retrieval(self, job_id: str, data: Dict[str, Any]) -> None:
         """Route document retrieval task."""
-        from core.query.tasks.retrieval_tasks import retrieve_documents_task
+        from src.core.query.tasks.retrieval_tasks import retrieve_documents_task
         query_mode = data.get("query_mode", "facts")
         retrieve_documents_task.send(
             job_id,
@@ -172,7 +172,7 @@ class TaskRouter:
 
     def _route_llm_inference(self, job_id: str, data: Dict[str, Any]) -> None:
         """Route LLM inference task."""
-        from core.query.tasks.inference_tasks import llm_inference_task
+        from src.core.query.tasks.inference_tasks import llm_inference_task
         query_mode = data.get("query_mode", "facts")
         llm_inference_task.send(
             job_id,

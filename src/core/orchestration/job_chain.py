@@ -9,9 +9,9 @@ import logging
 from typing import Dict, Optional, Any
 from enum import Enum
 
-from core.orchestration.job_tracker import job_tracker, JobStatus
-from core.orchestration.task_router import task_router, JobType
-from core.orchestration.queue_manager import queue_manager
+from src.core.orchestration.job_tracker import job_tracker, JobStatus
+from src.core.orchestration.task_router import task_router, JobType
+from src.core.orchestration.queue_manager import queue_manager
 
 logger = logging.getLogger(__name__)
 
@@ -509,7 +509,7 @@ The validation framework can now access the restructured ingestion system throug
 
 1. Enhanced Ingestion Processors:
    ```python
-   from core.orchestration.job_chain import get_enhanced_ingestion_processors
+   from src.core.orchestration.job_chain import get_enhanced_ingestion_processors
    processors = get_enhanced_ingestion_processors()
    text_processor = processors["text"]()
    pdf_processor = processors["pdf"]()
@@ -517,14 +517,14 @@ The validation framework can now access the restructured ingestion system throug
 
 2. Direct Content Processing:
    ```python
-   from core.orchestration.job_chain import process_content_for_validation
+   from src.core.orchestration.job_chain import process_content_for_validation
    documents = process_content_for_validation("text", some_text, metadata)
    documents = process_content_for_validation("pdf", "/path/to/file.pdf", metadata)
    ```
 
 3. Capability Discovery:
    ```python
-   from core.orchestration.job_chain import get_ingestion_processor_capabilities
+   from src.core.orchestration.job_chain import get_ingestion_processor_capabilities
    capabilities = get_ingestion_processor_capabilities()
    supported_types = capabilities["supported_types"]
    ```
@@ -544,7 +544,7 @@ The validation framework can now access the restructured ingestion system throug
 
 6. Job Tracking:
    ```python
-   from core.orchestration.job_tracker import job_tracker
+   from src.core.orchestration.job_tracker import job_tracker
    job_details = job_tracker.get_job(job_id)
    ```
 

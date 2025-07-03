@@ -8,8 +8,8 @@ import logging
 from typing import Dict, Optional
 import dramatiq
 
-from core.orchestration.job_tracker import job_tracker
-from core.orchestration.job_chain import job_chain
+from src.core.orchestration.job_tracker import job_tracker
+from src.core.orchestration.job_chain import job_chain
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +20,7 @@ def download_video_task(job_id: str, url: str, metadata: Optional[Dict] = None):
     try:
         logger.info(f"Downloading video for job {job_id}: {url}")
 
-        from core.ingestion.loaders.video_transcriber import VideoTranscriber
+        from src.core.ingestion.loaders.video_transcriber import VideoTranscriber
 
         transcriber = VideoTranscriber()
 
@@ -80,8 +80,8 @@ def transcribe_video_task(job_id: str, media_path: str):
     try:
         logger.info(f"Transcribing video for job {job_id}: {media_path}")
 
-        from core.background.models import get_whisper_model
-        from core.ingestion.loaders.enhanced_transcript_processor import EnhancedTranscriptProcessor
+        from src.core.background.models import get_whisper_model
+        from src.core.ingestion.loaders.enhanced_transcript_processor import EnhancedTranscriptProcessor
         from src.config.settings import settings
         import json
 

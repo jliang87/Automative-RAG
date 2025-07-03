@@ -8,8 +8,8 @@ import logging
 from typing import Dict, List
 import dramatiq
 
-from core.orchestration.job_tracker import job_tracker
-from core.orchestration.job_chain import job_chain
+from src.core.orchestration.job_tracker import job_tracker
+from src.core.orchestration.job_chain import job_chain
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +20,7 @@ def generate_embeddings_task(job_id: str, documents: List[Dict]):
     try:
         logger.info(f"Generating embeddings for job {job_id}: {len(documents)} documents")
 
-        from core.background.models import get_vector_store
+        from src.core.background.models import get_vector_store
         from langchain_core.documents import Document
 
         # Validate documents exist

@@ -8,14 +8,14 @@ import logging
 from typing import Dict, Optional
 import dramatiq
 
-from core.orchestration.job_tracker import job_tracker
-from core.orchestration.job_chain import job_chain
+from src.core.orchestration.job_tracker import job_tracker
+from src.core.orchestration.job_chain import job_chain
 
 logger = logging.getLogger(__name__)
 
 # Import unified ingestion system (internal use only)
 try:
-    from core.ingestion.factory import ProcessorFactory
+    from src.core.ingestion.factory import ProcessorFactory
 
     ENHANCED_PROCESSING_AVAILABLE = True
     logger.info("✅ Enhanced ingestion system available for text processing")

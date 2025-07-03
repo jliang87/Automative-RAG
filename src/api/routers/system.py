@@ -8,9 +8,9 @@ from typing import Dict, Any
 import redis
 
 from src.core.orchestration.job_tracker import job_tracker
-from src.core.background.job_chain import job_chain
+from src.core.orchestration.job_chain import job_chain
 from src.api.dependencies import get_redis_client, get_token_header
-from src.core.worker_status import get_worker_status_for_ui, debug_redis_keys, clean_problematic_redis_keys  # Fixed import
+from src.core.background.worker_status import get_worker_status_for_ui, debug_redis_keys, clean_problematic_redis_keys  # Fixed import
 from src.config.settings import settings
 
 router = APIRouter()
@@ -383,7 +383,7 @@ async def test_heartbeat_system(redis_client: redis.Redis = Depends(get_redis_cl
         redis_client.set(test_key, test_value, ex=300)
 
         # Try to detect it
-        from src.core.worker_status import get_worker_heartbeats
+        from src.core.background.worker_status import get_worker_heartbeats
         workers = get_worker_heartbeats(redis_client)
 
         # Check if our test worker was detected

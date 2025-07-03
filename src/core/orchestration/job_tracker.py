@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 class JobTracker:
     def __init__(self, redis_client=None):
         if redis_client is None:
-            from .common import get_redis_client
+            from src.core.background.common import get_redis_client
             self.redis = get_redis_client()  # This client supports UTF-8
         else:
             self.redis = redis_client

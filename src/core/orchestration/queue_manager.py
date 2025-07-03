@@ -19,7 +19,7 @@ class QueueManager:
     """
 
     def __init__(self):
-        from core.background.common import get_redis_client
+        from src.core.background.common import get_redis_client
         self.redis = get_redis_client()
 
     def is_queue_busy(self, queue_name: str) -> bool:
@@ -56,7 +56,7 @@ class QueueManager:
         logger.info(f"Queued task {task_name} for job {job_id} in {queue_name}")
 
         # Update job progress to show waiting
-        from core.orchestration.job_tracker import job_tracker
+        from src.core.orchestration.job_tracker import job_tracker
         job_tracker.update_job_progress(job_id, None, f"Waiting for {queue_name} to become available")
 
     def process_waiting_tasks(self, queue_name: str) -> None:
@@ -67,7 +67,7 @@ class QueueManager:
             logger.info(f"Processing waiting task for queue {queue_name}: {waiting_task['task_name']}")
 
             # Execute the waiting task immediately
-            from core.orchestration.job_chain import job_chain
+            from src.core.orchestration.job_chain import job_chain
             job_chain._execute_task_immediately(
                 waiting_task["job_id"],
                 waiting_task["task_name"],

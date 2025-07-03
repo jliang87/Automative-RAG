@@ -1,14 +1,21 @@
-# Exports core components - Updated after cleanup
-from src.core.query.llm.rerankers import ColBERTReranker
-from src.core.query.llm.local_llm import LocalLLM
-from src.core.ingestion.loaders.pdf_loader import PDFLoader
-from src.core.query.retrieval.vectorstore import QdrantStore
-from src.core.ingestion.loaders.video_transcriber import VideoTranscriber
+"""
+Core RAG System
+Restructured modular architecture with clean separation of concerns.
 
+Modules:
+- background: Infrastructure (Redis, models, workers)
+- ingestion: Document processing and embedding  
+- orchestration: Job management and workflow
+- query: Document retrieval and LLM inference
+"""
+
+# High-level convenience imports
+from .background import JobStatus
+from .orchestration import job_chain, JobType
+
+# Most specific imports should come from submodules
 __all__ = [
-    "ColBERTReranker",
-    "LocalLLM",
-    "PDFLoader",
-    "QdrantStore",
-    "VideoTranscriber"
+    "JobStatus",
+    "job_chain", 
+    "JobType"
 ]

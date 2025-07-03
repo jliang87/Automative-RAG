@@ -8,9 +8,9 @@ import logging
 from typing import Dict, List, Any
 import dramatiq
 
-from core.orchestration.job_tracker import job_tracker
-from core.orchestration.job_chain import job_chain
-from core.query.llm.mode_config import mode_config, QueryMode
+from src.core.orchestration.job_tracker import job_tracker
+from src.core.orchestration.job_chain import job_chain
+from src.core.query.llm.mode_config import mode_config, QueryMode
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +21,7 @@ def llm_inference_task(job_id: str, query: str, documents: List[Dict], query_mod
     Enhanced LLM inference with answer validation
     """
     try:
-        from core.background.models import get_llm_model
+        from src.core.background.models import get_llm_model
         from langchain_core.documents import Document
 
         logger.info(f"Enhanced LLM inference + answer validation for job {job_id} in '{query_mode}' mode")
@@ -92,7 +92,7 @@ def llm_inference_task(job_id: str, query: str, documents: List[Dict], query_mod
                 doc_list.append(doc_dict)
 
             # Validate answer using the validation framework
-            answer_validation = await validation_engine.validate_answer(
+            answer_validation = validation_engine.validate_answer(
                 answer=base_answer,
                 documents=doc_list,
                 query=query,
@@ -213,7 +213,7 @@ def process_user_contribution_task(job_id: str, step_type: str, contribution_dat
         try:
             from core.validation.validation_engine import validation_engine
 
-            contribution_result = await validation_engine.process_user_contribution(
+            contribution_result = validation_engine.process_user_contribution(
                 job_id=job_id,
                 step_type=step_type,
                 contribution_data=contribution_data

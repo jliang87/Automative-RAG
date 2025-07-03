@@ -9,9 +9,9 @@ from typing import Dict, Optional
 import dramatiq
 import numpy as np
 
-from core.orchestration.job_tracker import job_tracker
-from core.orchestration.job_chain import job_chain
-from core.query.llm.mode_config import mode_config, QueryMode
+from src.core.orchestration.job_tracker import job_tracker
+from src.core.orchestration.job_chain import job_chain
+from src.core.query.llm.mode_config import mode_config, QueryMode
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +21,7 @@ def apply_token_budget_management(documents, token_budget: int):
     if not documents:
         return documents
 
-    from core.query.llm.mode_config import estimate_token_count
+    from src.core.query.llm.mode_config import estimate_token_count
 
     selected_docs = []
     total_tokens = 0
@@ -52,7 +52,7 @@ def retrieve_documents_task(job_id: str, query: str, metadata_filter: Optional[D
     Enhanced document retrieval with full validation pipeline
     """
     try:
-        from core.background.models import get_vector_store
+        from src.core.background.models import get_vector_store
 
         logger.info(f"Enhanced retrieval + validation for job {job_id} in '{query_mode}' mode: {query}")
 
@@ -120,7 +120,7 @@ def retrieve_documents_task(job_id: str, query: str, metadata_filter: Optional[D
                 })
 
             # Apply full validation pipeline
-            validation_result = await validation_engine.validate_documents(
+            validation_result = validation_engine.validate_documents(
                 documents=documents_for_validation,
                 query=query,
                 query_mode=query_mode,
