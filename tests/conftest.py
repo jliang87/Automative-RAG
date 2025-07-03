@@ -20,10 +20,10 @@ from langchain_core.documents import Document
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from src.api.main import app
-from src.core.vectorstore import QdrantStore
-from src.core.colbert_reranker import ColBERTReranker
-from src.core.llm import LocalLLM
-from src.core.video_transcriber import VideoTranscriber
+from src.core.query.retrieval.vectorstore import QdrantStore
+from src.core.query.llm.rerankers import ColBERTReranker
+from src.core.query.llm.local_llm import LocalLLM
+from src.core.ingestion.loaders.video_transcriber import VideoTranscriber
 
 
 @pytest.fixture

@@ -1,13 +1,12 @@
-from typing import Dict, Optional
 import logging
 import os
 import redis
-from fastapi import Depends, HTTPException, Header, status
+from fastapi import HTTPException, Header, status
 from qdrant_client import QdrantClient
 
 from src.config.settings import settings
-from src.core.vectorstore import QdrantStore
-from src.core.background.job_tracker import JobTracker
+from src.core.query.retrieval.vectorstore import QdrantStore
+from src.core.orchestration.job_tracker import JobTracker
 
 # Configure logging
 logger = logging.getLogger(__name__)

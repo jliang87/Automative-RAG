@@ -4,7 +4,7 @@ import logging
 from typing import Dict, List, Optional, Any, Union
 import redis
 
-from .common import JobStatus
+from src.core.background.common import JobStatus
 
 logger = logging.getLogger(__name__)
 

@@ -25,7 +25,7 @@ class VideoProcessor(BaseIngestionProcessor):
         """Initialize video processor with existing VideoTranscriber."""
         # Note: We don't call super().__init__() because VideoTranscriber
         # already has its own EnhancedTranscriptProcessor instance
-        from src.core.video_transcriber import VideoTranscriber
+        from src.core.ingestion.loaders.video_transcriber import VideoTranscriber
         self.video_transcriber = VideoTranscriber()
 
         logger.info("VideoProcessor initialized with existing VideoTranscriber")

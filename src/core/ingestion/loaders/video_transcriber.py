@@ -1,6 +1,5 @@
 import os
 import re
-import tempfile
 import subprocess
 import json
 from typing import Dict, List, Optional, Tuple, Union, Literal
@@ -10,10 +9,10 @@ import logging
 from langchain_core.documents import Document
 from faster_whisper import WhisperModel
 
-from src.models.schema import DocumentMetadata, DocumentSource
+from src.models.schema import DocumentSource
 from src.config.settings import settings
 # ✅ FIXED IMPORT - Only import what exists
-from src.core.enhanced_transcript_processor import EnhancedTranscriptProcessor
+from src.core.ingestion.loaders.enhanced_transcript_processor import EnhancedTranscriptProcessor
 
 logger = logging.getLogger(__name__)
 

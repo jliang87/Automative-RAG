@@ -24,7 +24,7 @@ class BaseIngestionProcessor(ABC):
 
     def __init__(self):
         """Initialize with EnhancedTranscriptProcessor for unified processing."""
-        from src.core.enhanced_transcript_processor import EnhancedTranscriptProcessor
+        from src.core.ingestion.loaders.enhanced_transcript_processor import EnhancedTranscriptProcessor
         self.transcript_processor = EnhancedTranscriptProcessor()
         logger.info(f"Initialized {self.__class__.__name__} with EnhancedTranscriptProcessor")
 

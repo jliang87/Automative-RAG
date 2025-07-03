@@ -4,13 +4,13 @@ import torch
 import psutil
 import logging
 from fastapi import APIRouter, Depends, HTTPException
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any
 import redis
 
-from src.core.background.job_tracker import job_tracker
+from src.core.orchestration.job_tracker import job_tracker
 from src.core.background.job_chain import job_chain
 from src.api.dependencies import get_redis_client, get_token_header
-from src.core.worker_status import get_worker_status_for_ui, get_worker_summary, debug_redis_keys, clean_problematic_redis_keys  # Fixed import
+from src.core.worker_status import get_worker_status_for_ui, debug_redis_keys, clean_problematic_redis_keys  # Fixed import
 from src.config.settings import settings
 
 router = APIRouter()

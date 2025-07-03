@@ -2,14 +2,13 @@
 Tests for the document ingestion components.
 """
 
-import os
 import pytest
-from unittest.mock import patch, MagicMock, mock_open
+from unittest.mock import patch, MagicMock
 import torch
 from langchain_core.documents import Document
 
-from src.core.video_transcriber import VideoTranscriber
-from src.core.pdf_loader import PDFLoader
+from src.core.ingestion.loaders.video_transcriber import VideoTranscriber
+from src.core.ingestion.loaders.pdf_loader import PDFLoader
 
 
 def test_document_processor_initialization(vector_store):

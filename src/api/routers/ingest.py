@@ -1,15 +1,15 @@
 import os
 import uuid
-from typing import Dict, List, Optional, Union, Any
+from typing import Dict, List, Optional, Any
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, Query
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile, Query
 from pydantic import HttpUrl, BaseModel
 import logging
 import json
 
 from src.core.background.job_chain import job_chain, JobType
-from src.core.background.job_tracker import job_tracker
-from src.models.schema import IngestResponse, ManualIngestRequest, BackgroundJobResponse
+from src.core.orchestration.job_tracker import job_tracker
+from src.models.schema import ManualIngestRequest, BackgroundJobResponse
 
 logger = logging.getLogger(__name__)
 

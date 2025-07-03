@@ -2,12 +2,10 @@
 Tests for the retrieval components.
 """
 
-import pytest
 from unittest.mock import patch, MagicMock
-import torch
 from langchain_core.documents import Document
 
-from src.core.vectorstore import QdrantStore
+from src.core.query.retrieval.vectorstore import QdrantStore
 from src.core.retriever import HybridRetriever
 
 

@@ -8,15 +8,14 @@ import sys
 import json
 import argparse
 import logging
-import time
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Import project modules
 from src.config.settings import settings
-from src.core.vectorstore import QdrantStore
+from src.core.query.retrieval.vectorstore import QdrantStore
 from qdrant_client import QdrantClient
 
 # Configure logging

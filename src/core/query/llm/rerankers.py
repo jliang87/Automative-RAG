@@ -23,7 +23,7 @@ class ColBERTReranker:
     3. Weighted combination of both scores for optimal bilingual performance
     """
 
-    # Update the __init__ method in src/core/colbert_reranker.py to use local BGE reranker
+    # Update the __init__ method in src/core/rerankers.py to use local BGE reranker
 
     def __init__(
             self,

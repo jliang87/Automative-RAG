@@ -1,12 +1,12 @@
 import uuid
 import json
-from typing import Dict, List, Optional, Any, Union
-from fastapi import APIRouter, Depends, HTTPException, Query as FastAPIQuery
+from typing import Dict, List, Optional, Any
+from fastapi import APIRouter, HTTPException
 import logging
 import numpy as np
 
 from src.core.background.job_chain import job_chain, JobType
-from src.core.background.job_tracker import job_tracker
+from src.core.orchestration.job_tracker import job_tracker
 from src.models.schema import (
     # REMOVED: QueryRequest, QueryResponse, BackgroundJobResponse (legacy)
     # UNIFIED: Only enhanced query models

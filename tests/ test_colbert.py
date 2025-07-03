@@ -4,10 +4,10 @@ Tests for the ColBERT reranker component.
 
 import pytest
 import torch
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 from langchain_core.documents import Document
 
-from src.core.colbert_reranker import ColBERTReranker
+from src.core.query.llm.rerankers import ColBERTReranker
 
 
 @pytest.mark.parametrize("device", ["cpu", pytest.param("cuda:0", marks=pytest.mark.skipif(not torch.cuda.is_available(), reason="No GPU available"))])

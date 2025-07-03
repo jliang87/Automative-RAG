@@ -7,7 +7,6 @@ Tesla T4 optimized with proper memory management.
 import os
 import torch
 import logging
-from typing import Optional
 
 from src.config.settings import settings
 
@@ -127,7 +126,7 @@ def preload_llm_model():
                 torch.cuda.synchronize(i)
 
         # Import the LLM - NO PARAMETERS, use environment config
-        from src.core.llm import LocalLLM
+        from src.core.query.llm.local_llm import LocalLLM
 
         # Load the model using ONLY environment configuration
         _PRELOADED_LLM_MODEL = LocalLLM()  # No parameters - all from environment!
@@ -192,7 +191,7 @@ def preload_colbert_reranker():
                 torch.cuda.synchronize(i)
 
         # Import reranker
-        from src.core.colbert_reranker import ColBERTReranker
+        from src.core.query.llm.rerankers import ColBERTReranker
 
         # Load the reranking models using environment configuration
         _PRELOADED_COLBERT_RERANKER = ColBERTReranker(
@@ -288,7 +287,7 @@ def get_vector_store():
     """Get a vector store instance using environment configuration."""
     global _PRELOADED_EMBEDDING_MODEL
 
-    from src.core.vectorstore import QdrantStore
+    from src.core.query.retrieval.vectorstore import QdrantStore
     from qdrant_client import QdrantClient
 
     # Initialize qdrant client
@@ -343,7 +342,7 @@ def get_llm_model():
         return _PRELOADED_LLM_MODEL
 
     # Otherwise, create a new model instance using environment configuration
-    from src.core.llm import LocalLLM
+    from src.core.query.llm.local_llm import LocalLLM
 
     # Create LLM using ONLY environment configuration - no overrides!
     logger.info("Creating LLM instance using environment configuration")
@@ -360,7 +359,7 @@ def get_colbert_reranker():
         return _PRELOADED_COLBERT_RERANKER
 
     # Otherwise, create a new reranker instance using environment config
-    from src.core.colbert_reranker import ColBERTReranker
+    from src.core.query.llm.rerankers import ColBERTReranker
 
     # Use environment configuration
     device = settings.device if worker_type == "gpu-inference" else "cpu"

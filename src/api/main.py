@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.openapi.utils import get_openapi
@@ -8,7 +8,6 @@ import logging
 
 from src.api.routers import auth, ingest, query, system
 from src.api.routers.model import router as model_router
-from src.config.settings import settings
 from src.api.dependencies import load_all_components
 
 # Define API metadata
@@ -206,7 +205,7 @@ async def get_job_chains_overview():
     """Get comprehensive overview of the job chain system."""
     try:
         from src.core.background.job_chain import job_chain
-        from src.core.background.job_tracker import job_tracker
+        from src.core.orchestration.job_tracker import job_tracker
 
         # Get queue status (for 系统信息.py)
         queue_status = job_chain.get_queue_status()
@@ -268,7 +267,7 @@ async def get_job_chain_details(job_id: str):
     """Get detailed information about a specific job chain."""
     try:
         from src.core.background.job_chain import job_chain
-        from src.core.background.job_tracker import job_tracker
+        from src.core.orchestration.job_tracker import job_tracker
 
         # Get job chain status
         chain_status = job_chain.get_job_chain_status(job_id)

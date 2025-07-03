@@ -106,7 +106,7 @@ This endpoint returns details about the model configuration, device usage, and V
 To query the local LLM directly:
 
 ```python
-from src.core.llm import LocalLLM
+from src.core.query.llm.local_llm import LocalLLM
 
 # Initialize with GPU support
 llm = LocalLLM(

@@ -5,15 +5,13 @@ from typing import List, Tuple, Dict, Optional, Any
 from langchain_core.documents import Document
 from enum import Enum
 import dramatiq
-import numpy as np
 
-from .job_tracker import job_tracker, JobStatus
+from src.core.orchestration.job_tracker import job_tracker, JobStatus
 from .common import get_redis_client
-from src.core.mode_config import mode_config, QueryMode, estimate_token_count
+from src.core.query.llm.mode_config import mode_config, QueryMode, estimate_token_count
 from src.config.settings import settings
 
 from src.core.validation.validation_engine import validation_engine
-from src.core.validation.models.validation_models import ValidationStatus, ValidationChainResult
 
 logger = logging.getLogger(__name__)
 
@@ -650,7 +648,7 @@ def download_video_task(job_id: str, url: str, metadata: Optional[Dict] = None):
     try:
         logger.info(f"Downloading video for job {job_id}: {url}")
 
-        from src.core.video_transcriber import VideoTranscriber
+        from src.core.ingestion.loaders.video_transcriber import VideoTranscriber
 
         transcriber = VideoTranscriber()
 
@@ -712,7 +710,7 @@ def transcribe_video_task(job_id: str, media_path: str):
 
         from .models import get_whisper_model
         # ✅ IMPORT ENHANCED PROCESSOR
-        from src.core.enhanced_transcript_processor import EnhancedTranscriptProcessor
+        from src.core.ingestion.loaders.enhanced_transcript_processor import EnhancedTranscriptProcessor
 
         # Get the preloaded Whisper model
         whisper_model = get_whisper_model()
@@ -863,7 +861,7 @@ def process_pdf_task(job_id: str, file_path: str, metadata: Optional[Dict] = Non
     try:
         logger.info(f"Processing PDF for job {job_id}: {file_path}")
 
-        from src.core.pdf_loader import PDFLoader
+        from src.core.ingestion.loaders.pdf_loader import PDFLoader
 
         # Create PDF loader
         pdf_loader = PDFLoader(

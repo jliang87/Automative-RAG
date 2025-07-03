@@ -30,7 +30,7 @@ class PDFProcessor(BaseIngestionProcessor):
         super().__init__()
 
         # Import PDFLoader for PDF-specific operations
-        from src.core.pdf_loader import PDFLoader
+        from src.core.ingestion.loaders.pdf_loader import PDFLoader
         self.pdf_loader = PDFLoader()
 
         logger.info("PDFProcessor initialized with PDFLoader and EnhancedTranscriptProcessor")
