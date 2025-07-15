@@ -19,7 +19,6 @@ def llm_phase_validation_task(job_id: str, task_data: Dict[str, Any]):
         logger.info(f"Starting LLM phase validation for job {job_id}")
 
         # Import LLM validation components
-        from src.core.validation.validation_interface import validation_engine
         from src.core.validation.models.validation_models import ValidationContext
 
         query = task_data.get("query", "")
@@ -199,4 +198,129 @@ async def _execute_final_assessment(context, query_mode, previous_results):
             "user_contribution_opportunities": len(
                 [step for step in final_steps if hasattr(step, 'contribution_prompt') and step.contribution_prompt])
         }
+    }
+
+
+async def _execute_pre_llm_validation(context, query_mode):
+    """Execute pre-LLM validation phase with enhanced prompting."""
+
+    # Import mode-specific prompt templates
+    from src.core.validation.prompts.mode_prompt_manager import get_pre_validation_prompt
+    from src.core.query.tasks.inference_tasks import call_llm_with_prompt
+
+    # Get mode-specific prompt
+    prompt = get_pre_validation_prompt(query_mode, context)
+
+    # Call LLM for pre-validation with validation-specific settings
+    llm_response = await call_llm_with_prompt(
+        prompt,
+        temperature=0.1,  # Low temperature for validation consistency
+        max_tokens=2000,  # Sufficient for structured validation output
+        model_preference="high_accuracy"  # Use most accurate model for validation
+    )
+
+    # Parse structured response with error handling
+    import json
+    try:
+        validation_result = json.loads(llm_response)
+
+        # Validate the response structure
+        if not isinstance(validation_result, dict):
+            raise ValueError("Invalid response format")
+
+        # Ensure required fields exist
+        overall_assessment = validation_result.get("overall_assessment", {})
+        if not overall_assessment:
+            validation_result["overall_assessment"] = {
+                "status": "WARNING",
+                "proceed_to_inference": True,
+                "overall_confidence": 0.7
+            }
+
+    except (json.JSONDecodeError, ValueError) as e:
+        logger.warning(f"Failed to parse LLM validation response: {e}")
+        # Fallback validation result
+        validation_result = {
+            "validation_phase": "pre_validation_fallback",
+            "overall_assessment": {
+                "status": "WARNING",
+                "proceed_to_inference": True,
+                "overall_confidence": 0.7,
+                "parsing_error": str(e)
+            }
+        }
+
+    return {
+        "validation_type": "pre_llm_phase",
+        "query_mode": query_mode,
+        "llm_validation_result": validation_result,
+        "status": validation_result.get("overall_assessment", {}).get("status", "WARNING"),
+        "proceed_to_main_inference": validation_result.get("overall_assessment", {}).get("proceed_to_inference", True),
+        "confidence": validation_result.get("overall_assessment", {}).get("overall_confidence", 0.7),
+        "requires_meta_validation": validation_result.get("overall_assessment", {}).get("meta_validation_needed", {})
+    }
+
+
+async def _execute_post_llm_validation(context, query_mode, previous_results):
+    """Execute post-LLM validation phase with response analysis."""
+
+    from src.core.validation.prompts.mode_prompt_manager import get_post_validation_prompt
+    from src.core.query.tasks.inference_tasks import call_llm_with_prompt
+
+    # Get generated response from previous results
+    generated_response = previous_results.get("generated_response", "")
+
+    if not generated_response:
+        logger.warning("No generated response found for post-validation")
+        return {
+            "validation_type": "post_llm_phase",
+            "status": "WARNING",
+            "error": "No generated response to validate"
+        }
+
+    # Get mode-specific prompt
+    prompt = get_post_validation_prompt(query_mode, context, generated_response)
+
+    # Call LLM for post-validation
+    llm_response = await call_llm_with_prompt(
+        prompt,
+        temperature=0.1,
+        max_tokens=2000,
+        model_preference="high_accuracy"
+    )
+
+    # Parse structured response
+    import json
+    try:
+        validation_result = json.loads(llm_response)
+
+        # Validate response structure
+        overall_assessment = validation_result.get("overall_assessment", {})
+        if not overall_assessment:
+            validation_result["overall_assessment"] = {
+                "status": "WARNING",
+                "final_recommendation": "APPROVE",
+                "overall_confidence": 0.7
+            }
+
+    except (json.JSONDecodeError, ValueError) as e:
+        logger.warning(f"Failed to parse post-LLM validation response: {e}")
+        validation_result = {
+            "validation_phase": "post_validation_fallback",
+            "overall_assessment": {
+                "status": "WARNING",
+                "final_recommendation": "APPROVE",
+                "overall_confidence": 0.7,
+                "parsing_error": str(e)
+            }
+        }
+
+    return {
+        "validation_type": "post_llm_phase",
+        "query_mode": query_mode,
+        "llm_validation_result": validation_result,
+        "status": validation_result.get("overall_assessment", {}).get("status", "WARNING"),
+        "final_recommendation": validation_result.get("overall_assessment", {}).get("final_recommendation", "APPROVE"),
+        "confidence": validation_result.get("overall_assessment", {}).get("overall_confidence", 0.7),
+        "corrections_needed": validation_result.get("overall_assessment", {}).get("corrections_needed", [])
     }

@@ -87,3 +87,62 @@ def meta_validation_task(job_id: str, task_data: Dict[str, Any]):
         error_msg = f"Meta-validation failed: {str(e)}"
         logger.error(error_msg)
         job_chain.task_failed(job_id, error_msg)
+
+
+async def _generate_user_choice_options(failure_context, failed_step, query_mode):
+    """Generate user choice options based on failure context."""
+
+    from src.core.validation.meta_validation.user_guidance.failure_guidance import GuidanceEngine
+
+    guidance_engine = GuidanceEngine()
+
+    # Generate specific guidance for the failure
+    guidance = guidance_engine.generate_guidance_for_failure(failed_step, failure_context)
+
+    # Create user choice options
+    options = {
+        "auto_fetch": {
+            "available": True,
+            "description": "Automatically fetch additional authoritative sources",
+            "estimated_time": "30-60 seconds",
+            "confidence_boost_estimate": 15.0,
+            "targets": _determine_auto_fetch_targets(failed_step, failure_context)
+        },
+        "user_guidance": {
+            "available": True,
+            "description": "Provide additional sources or information manually",
+            "estimated_time": "user dependent",
+            "confidence_boost_estimate": 20.0,
+            "guidance": guidance,
+            "contribution_types": ["url_link", "file_upload", "text_input"]
+        },
+        "restart_full": {
+            "available": True,
+            "description": "Start validation pipeline from beginning",
+            "estimated_time": "2-3 minutes",
+            "note": "This will clear all progress and start fresh"
+        }
+    }
+
+    return options
+
+
+def _determine_auto_fetch_targets(failed_step, failure_context):
+    """Determine what auto-fetch targets are appropriate for the failure."""
+
+    targets = []
+
+    if "technical_consistency" in failed_step:
+        targets.extend(["official_specs", "epa_data"])
+
+    if "source_credibility" in failed_step:
+        targets.extend(["manufacturer_sources", "safety_ratings"])
+
+    if "completeness" in failed_step:
+        targets.extend(["official_specs", "manufacturer_sources"])
+
+    # Default targets if none specific
+    if not targets:
+        targets = ["official_specs", "epa_data"]
+
+    return targets

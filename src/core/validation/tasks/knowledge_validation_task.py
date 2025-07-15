@@ -19,7 +19,6 @@ def knowledge_validation_task(job_id: str, task_data: Dict[str, Any]):
         logger.info(f"Starting knowledge validation for job {job_id}")
 
         # Import validation components
-        from src.core.validation.validation_interface import validation_engine
         from src.core.validation.models.validation_models import ValidationContext
 
         query = task_data.get("query", "")
@@ -90,3 +89,54 @@ def knowledge_validation_task(job_id: str, task_data: Dict[str, Any]):
         error_msg = f"Knowledge validation failed: {str(e)}"
         logger.error(error_msg)
         job_chain.task_failed(job_id, error_msg)
+
+
+async def _execute_knowledge_validation_with_progress(context, step_configs, job_id):
+    """Execute knowledge validation with progress tracking."""
+
+    from src.core.validation.validation_engine import validation_pipeline_engine
+    from src.core.orchestration.job_tracker import job_tracker
+
+    knowledge_steps = []
+    total_steps = len(step_configs)
+
+    for i, step_config in enumerate(step_configs):
+        step_type = ValidationStepType(step_config["step_type"])
+
+        # Update progress
+        progress = 5 + (i / total_steps) * 20  # Knowledge phase is 5-25%
+        job_tracker.update_job_progress(
+            job_id,
+            progress,
+            f"knowledge_validation.{step_type.value}"
+        )
+
+        # Get step implementation
+        step_class = validation_pipeline_engine.validation_step_implementations.get(step_type)
+        if step_class:
+            step_instance = step_class(step_config, validation_pipeline_engine.meta_validator)
+
+            try:
+                step_result = await step_instance.execute(context)
+                knowledge_steps.append(step_result)
+
+                logger.info(f"Knowledge step {step_type.value} completed: {step_result.status.value}")
+
+            except Exception as e:
+                logger.error(f"Knowledge step {step_type.value} failed: {str(e)}")
+                # Create error step result
+                error_step = ValidationStepResult(
+                    step_id=f"{step_type.value}_error",
+                    step_type=step_type,
+                    step_name=f"{step_type.value.replace('_', ' ').title()}",
+                    status=ValidationStatus.FAILED,
+                    confidence_impact=-10.0,
+                    summary=f"Step failed: {str(e)}",
+                    started_at=datetime.now(),
+                    completed_at=datetime.now()
+                )
+                knowledge_steps.append(error_step)
+        else:
+            logger.warning(f"No implementation found for step type: {step_type}")
+
+    return knowledge_steps

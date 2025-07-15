@@ -1,24 +1,35 @@
 """
-Hybrid Validation Engine - Master validation orchestrator
-Integrates with existing orchestration but provides comprehensive validation
+Validation Pipeline Engine - Master validation orchestrator
+Manages the complete 5-phase validation pipeline with proper task orchestration
 """
 
 import logging
 import time
 import asyncio
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Tuple
+from datetime import datetime
+
+from .models.validation_models import (
+    ValidationContext, ValidationChainResult, PipelineType, ValidationStepType,
+    ValidationStepResult, ValidationStatus, ConfidenceBreakdown, ConfidenceLevel
+)
+from .confidence_calculator import ConfidenceCalculator
+from .steps.steps_readiness_checker import MetaValidator
 
 logger = logging.getLogger(__name__)
 
 
-class HybridValidationEngine:
+class ValidationPipelineEngine:
     """
-    Master validation engine orchestrating the complete pipeline.
-    Integrates with existing orchestration but provides comprehensive validation.
+    Master validation pipeline engine orchestrating the complete 5-phase pipeline.
+    Manages: Knowledge → Pre-LLM → Main LLM → Post-LLM → Final Assessment
     """
 
     def __init__(self):
         self.progress_tracker = PipelineProgressTracker()
+        self.pipeline_configurator = PipelineConfigurator()
+        self.confidence_calculator = ConfidenceCalculator()
+        self.meta_validator = MetaValidator()
 
         # Use existing orchestration components
         from src.core.orchestration.task_router import task_router
@@ -26,65 +37,87 @@ class HybridValidationEngine:
         self.task_router = task_router
         self.job_tracker = job_tracker
 
+        # Initialize validation step implementations
+        self.validation_step_implementations = self._initialize_validation_steps()
+
+    def _initialize_validation_steps(self) -> Dict[ValidationStepType, Any]:
+        """Initialize validation step implementations"""
+
+        from .steps.retrieval_quality import RetrievalQualityValidator
+        from .steps.source_credibility_validator import SourceCredibilityValidator
+        from .steps.technical_consistency_validator import TechnicalConsistencyValidator
+        from .steps.completeness_analysis import CompletenessValidator
+        from .steps.consensus_analysis import ConsensusValidator
+        from .steps.llm_response_quality import LLMResponseQualityValidator
+
+        return {
+            ValidationStepType.RETRIEVAL: RetrievalQualityValidator,
+            ValidationStepType.SOURCE_CREDIBILITY: SourceCredibilityValidator,
+            ValidationStepType.TECHNICAL_CONSISTENCY: TechnicalConsistencyValidator,
+            ValidationStepType.COMPLETENESS: CompletenessValidator,
+            ValidationStepType.CONSENSUS: ConsensusValidator,
+            ValidationStepType.LLM_INFERENCE: LLMResponseQualityValidator
+        }
+
     async def execute_complete_validation_pipeline(self,
                                                    documents: List[Dict],
                                                    query: str,
                                                    query_mode: str,
                                                    job_id: str) -> Dict[str, Any]:
-        """Execute the complete validation pipeline with mode-specific validation."""
+        """Execute the complete 5-phase validation pipeline"""
 
         try:
             # Initialize pipeline progress
-            await self._update_progress(job_id, "pipeline.initializing", 0)
+            await self._update_pipeline_progress(job_id, "pipeline.initializing", 0)
 
-            # PHASE 1: Knowledge-Based Validation (CPU Tasks) - 20-35%
-            rule_results = await self._execute_knowledge_based_validation(
+            # PHASE 1: Knowledge-Based Validation (CPU Tasks) - 0-25%
+            knowledge_results = await self._execute_knowledge_validation_phase(
                 job_id, documents, query, query_mode
             )
 
             # Check if meta-validation needed
-            if rule_results.get("requires_meta_validation"):
-                return await self._handle_meta_validation(job_id, rule_results, "knowledge_validation")
+            if knowledge_results.get("requires_meta_validation"):
+                return await self._handle_meta_validation_routing(job_id, knowledge_results, "knowledge_validation")
 
-            # PHASE 2: Pre-LLM Phase Validation (GPU Task) - 35-50%
+            # PHASE 2: Pre-LLM Validation (GPU Task) - 25-40%
             pre_llm_results = await self._execute_pre_llm_validation_phase(
-                job_id, documents, query, query_mode, rule_results
+                job_id, documents, query, query_mode, knowledge_results
             )
 
             # Check if meta-validation needed
             if pre_llm_results.get("requires_meta_validation"):
-                return await self._handle_meta_validation(job_id, pre_llm_results, "pre_llm_validation")
+                return await self._handle_meta_validation_routing(job_id, pre_llm_results, "pre_llm_validation")
 
-            # PHASE 3: Main LLM Inference (GPU Task) - 50-75%
-            main_response = await self._execute_main_llm_inference(
+            # PHASE 3: Main LLM Inference (GPU Task) - 40-65%
+            main_inference_results = await self._execute_main_inference_phase(
                 job_id, documents, query, query_mode, pre_llm_results
             )
 
-            # PHASE 4: Post-LLM Phase Validation (GPU Task) - 75-90%
+            # PHASE 4: Post-LLM Validation (GPU Task) - 65-85%
             post_llm_results = await self._execute_post_llm_validation_phase(
-                job_id, documents, query, query_mode, main_response, pre_llm_results
+                job_id, documents, query, query_mode, main_inference_results, pre_llm_results
             )
 
             # Check if meta-validation needed
             if post_llm_results.get("requires_meta_validation"):
-                return await self._handle_meta_validation(job_id, post_llm_results, "post_llm_validation")
+                return await self._handle_meta_validation_routing(job_id, post_llm_results, "post_llm_validation")
 
-            # PHASE 5: Final Assessment (GPU Task) - 90-100%
-            final_assessment = await self._execute_final_validation_phase(
-                job_id, documents, query, query_mode, main_response,
-                rule_results, pre_llm_results, post_llm_results
+            # PHASE 5: Final Assessment (GPU Task) - 85-100%
+            final_assessment = await self._execute_final_assessment_phase(
+                job_id, documents, query, query_mode, main_inference_results,
+                knowledge_results, pre_llm_results, post_llm_results
             )
 
             # Complete pipeline
-            await self._update_progress(job_id, "pipeline.complete", 100)
+            await self._update_pipeline_progress(job_id, "pipeline.complete", 100)
 
             return {
                 "status": "success",
                 "query_mode": query_mode,
                 "documents": documents,
-                "knowledge_validation": rule_results,
+                "knowledge_validation": knowledge_results,
                 "pre_llm_validation": pre_llm_results,
-                "main_response": main_response,
+                "main_response": main_inference_results,
                 "post_llm_validation": post_llm_results,
                 "final_assessment": final_assessment,
                 "pipeline_metadata": self.progress_tracker.get_pipeline_summary(job_id),
@@ -96,38 +129,75 @@ class HybridValidationEngine:
             await self._handle_pipeline_error(job_id, e)
             raise
 
-    async def _execute_knowledge_based_validation(self, job_id, documents, query, query_mode):
-        """Execute knowledge-based validation phase using existing task system."""
+    async def _execute_knowledge_validation_phase(self, job_id, documents, query, query_mode):
+        """Execute knowledge-based validation phase (CPU intensive)"""
 
-        await self._update_progress(job_id, "knowledge_validation.start", 20)
+        await self._update_pipeline_progress(job_id, "knowledge_validation.start", 5)
 
-        # Prepare knowledge validation task data
-        task_data = {
-            "validation_type": "knowledge_based",
-            "documents": documents,
-            "query": query,
-            "query_mode": query_mode,
-            "validation_workflow": "comprehensive"
-        }
-
-        # Route to CPU task using existing task_router
-        self.task_router.route_task(
-            f"{job_id}_knowledge",
-            "knowledge_validation",
-            "cpu_tasks",
-            task_data
+        # Create validation context
+        context = ValidationContext(
+            query_id=job_id,
+            query_text=query,
+            query_mode=query_mode,
+            documents=documents
         )
 
-        # Wait for completion
-        knowledge_results = await self._wait_for_task_completion(f"{job_id}_knowledge")
+        # Execute knowledge-based validation steps
+        pipeline_config = self.pipeline_configurator.get_pipeline_config(query_mode)
+        knowledge_steps = []
 
-        await self._update_progress(job_id, "knowledge_validation.complete", 35)
-        return knowledge_results
+        for step_config in pipeline_config.get("knowledge_steps", []):
+            step_type = ValidationStepType(step_config["step_type"])
 
-    async def _execute_pre_llm_validation_phase(self, job_id, documents, query, query_mode, rule_results):
-        """Execute pre-LLM validation phase using existing task system."""
+            # Get step implementation
+            step_class = self.validation_step_implementations.get(step_type)
+            if step_class:
+                step_instance = step_class(step_config, self.meta_validator)
+                step_result = await step_instance.execute(context)
+                knowledge_steps.append(step_result)
 
-        await self._update_progress(job_id, "pre_llm_validation.start", 35)
+                # Update progress incrementally
+                progress = 5 + (len(knowledge_steps) / len(pipeline_config.get("knowledge_steps", []))) * 20
+                await self._update_pipeline_progress(job_id, f"knowledge_validation.step_{step_type.value}", progress)
+
+        # Calculate confidence for knowledge steps
+        knowledge_confidence = self.confidence_calculator.calculate_confidence(
+            knowledge_steps, pipeline_config.get("confidence_weights", {})
+        )
+
+        # Determine if meta-validation is needed
+        requires_meta_validation = any(
+            step.status.value in ["unverifiable", "failed"] for step in knowledge_steps
+        )
+
+        await self._update_pipeline_progress(job_id, "knowledge_validation.complete", 25)
+
+        return {
+            "validation_type": "knowledge_based",
+            "query_mode": query_mode,
+            "knowledge_validation_steps": [
+                {
+                    "step_name": step.step_name,
+                    "step_type": step.step_type.value,
+                    "status": step.status.value,
+                    "confidence_impact": step.confidence_impact,
+                    "warnings": [w.message for w in step.warnings],
+                    "duration_ms": step.duration_ms
+                }
+                for step in knowledge_steps
+            ],
+            "knowledge_confidence": knowledge_confidence.total_score,
+            "requires_meta_validation": requires_meta_validation,
+            "meta_validation_opportunities": [
+                step.contribution_prompt.__dict__ if step.contribution_prompt else None
+                for step in knowledge_steps
+            ]
+        }
+
+    async def _execute_pre_llm_validation_phase(self, job_id, documents, query, query_mode, knowledge_results):
+        """Execute pre-LLM validation phase (GPU intensive)"""
+
+        await self._update_pipeline_progress(job_id, "pre_llm_validation.start", 25)
 
         # Prepare pre-LLM validation task data
         task_data = {
@@ -136,27 +206,28 @@ class HybridValidationEngine:
             "documents": documents,
             "query": query,
             "query_mode": query_mode,
-            "previous_results": rule_results
+            "previous_results": knowledge_results
         }
 
         # Route to GPU task using existing task_router
+        task_id = f"{job_id}_pre_llm"
         self.task_router.route_task(
-            f"{job_id}_pre_llm",
-            "pre_llm_validation",
+            task_id,
+            "llm_phase_validation",
             "inference_tasks",
             task_data
         )
 
         # Wait for completion
-        pre_llm_results = await self._wait_for_task_completion(f"{job_id}_pre_llm")
+        pre_llm_results = await self._wait_for_task_completion(task_id)
 
-        await self._update_progress(job_id, "pre_llm_validation.complete", 50)
+        await self._update_pipeline_progress(job_id, "pre_llm_validation.complete", 40)
         return pre_llm_results
 
-    async def _execute_main_llm_inference(self, job_id, documents, query, query_mode, pre_llm_results):
-        """Execute main LLM inference using existing task system."""
+    async def _execute_main_inference_phase(self, job_id, documents, query, query_mode, pre_llm_results):
+        """Execute main LLM inference phase (GPU intensive)"""
 
-        await self._update_progress(job_id, "main_inference.start", 50)
+        await self._update_pipeline_progress(job_id, "main_inference.start", 40)
 
         # Use existing LLM inference task with validation enhancement
         inference_data = {
@@ -170,24 +241,25 @@ class HybridValidationEngine:
         }
 
         # Route to existing LLM inference task
+        task_id = f"{job_id}_main_inference"
         self.task_router.route_task(
-            f"{job_id}_main_inference",
+            task_id,
             "main_llm_inference",
             "inference_tasks",
             inference_data
         )
 
         # Wait for completion
-        main_response = await self._wait_for_task_completion(f"{job_id}_main_inference")
+        main_response = await self._wait_for_task_completion(task_id)
 
-        await self._update_progress(job_id, "main_inference.complete", 75)
+        await self._update_pipeline_progress(job_id, "main_inference.complete", 65)
         return main_response
 
-    async def _execute_post_llm_validation_phase(self, job_id, documents, query, query_mode, main_response,
-                                                 pre_llm_results):
-        """Execute post-LLM validation phase."""
+    async def _execute_post_llm_validation_phase(self, job_id, documents, query, query_mode,
+                                                main_response, pre_llm_results):
+        """Execute post-LLM validation phase (GPU intensive)"""
 
-        await self._update_progress(job_id, "post_llm_validation.start", 75)
+        await self._update_pipeline_progress(job_id, "post_llm_validation.start", 65)
 
         task_data = {
             "validation_type": "post_llm_phase",
@@ -201,23 +273,24 @@ class HybridValidationEngine:
             }
         }
 
+        task_id = f"{job_id}_post_llm"
         self.task_router.route_task(
-            f"{job_id}_post_llm",
-            "post_llm_validation",
+            task_id,
+            "llm_phase_validation",
             "inference_tasks",
             task_data
         )
 
-        post_llm_results = await self._wait_for_task_completion(f"{job_id}_post_llm")
+        post_llm_results = await self._wait_for_task_completion(task_id)
 
-        await self._update_progress(job_id, "post_llm_validation.complete", 90)
+        await self._update_pipeline_progress(job_id, "post_llm_validation.complete", 85)
         return post_llm_results
 
-    async def _execute_final_validation_phase(self, job_id, documents, query, query_mode, main_response,
-                                              rule_results, pre_llm_results, post_llm_results):
-        """Execute final validation assessment."""
+    async def _execute_final_assessment_phase(self, job_id, documents, query, query_mode,
+                                             main_response, knowledge_results, pre_llm_results, post_llm_results):
+        """Execute final validation assessment phase (GPU intensive)"""
 
-        await self._update_progress(job_id, "final_assessment.start", 90)
+        await self._update_pipeline_progress(job_id, "final_assessment.start", 85)
 
         task_data = {
             "validation_type": "final_assessment",
@@ -226,29 +299,30 @@ class HybridValidationEngine:
             "query": query,
             "query_mode": query_mode,
             "previous_results": {
-                "knowledge_validation": rule_results,
+                "knowledge_validation": knowledge_results,
                 "pre_llm_validation": pre_llm_results,
                 "main_response": main_response,
                 "post_llm_validation": post_llm_results
             }
         }
 
+        task_id = f"{job_id}_final"
         self.task_router.route_task(
-            f"{job_id}_final",
-            "final_validation",
+            task_id,
+            "llm_phase_validation",
             "inference_tasks",
             task_data
         )
 
-        final_assessment = await self._wait_for_task_completion(f"{job_id}_final")
+        final_assessment = await self._wait_for_task_completion(task_id)
 
-        await self._update_progress(job_id, "final_assessment.complete", 100)
+        await self._update_pipeline_progress(job_id, "final_assessment.complete", 100)
         return final_assessment
 
-    async def _handle_meta_validation(self, job_id: str, failed_results: Dict[str, Any], failed_stage: str):
-        """Handle meta-validation when validation steps fail."""
+    async def _handle_meta_validation_routing(self, job_id: str, failed_results: Dict[str, Any], failed_stage: str):
+        """Handle meta-validation when validation steps fail"""
 
-        await self._update_progress(job_id, "meta_validation.analyzing", None)
+        await self._update_pipeline_progress(job_id, "meta_validation.analyzing", None)
 
         # Prepare meta-validation task data
         meta_task_data = {
@@ -260,15 +334,16 @@ class HybridValidationEngine:
         }
 
         # Route to meta-validation task
+        task_id = f"{job_id}_meta"
         self.task_router.route_task(
-            f"{job_id}_meta",
+            task_id,
             "meta_validation",
             "cpu_tasks",
             meta_task_data
         )
 
         # Wait for meta-validation completion (sets up user choice)
-        meta_results = await self._wait_for_task_completion(f"{job_id}_meta")
+        meta_results = await self._wait_for_task_completion(task_id)
 
         return {
             "status": "awaiting_user_input",
@@ -277,72 +352,10 @@ class HybridValidationEngine:
             "user_choice_required": True
         }
 
-    async def _wait_for_task_completion(self, task_job_id: str) -> Dict[str, Any]:
-        """Wait for task completion using existing job_tracker."""
-
-        max_wait_time = 300  # 5 minutes max wait
-        check_interval = 0.5  # Check every 500ms
-        waited_time = 0
-
-        while waited_time < max_wait_time:
-            job_data = self.job_tracker.get_job(task_job_id)
-            if job_data:
-                status = job_data.get("status")
-                if status == "completed":
-                    return job_data.get("result", {})
-                elif status == "failed":
-                    error = job_data.get("error", "Unknown error")
-                    raise ValidationTaskError(f"Task {task_job_id} failed: {error}")
-                elif status == "awaiting_user_input":
-                    # For meta-validation, this is expected
-                    return job_data.get("result", {})
-
-            await asyncio.sleep(check_interval)
-            waited_time += check_interval
-
-        raise ValidationTaskError(f"Task {task_job_id} timed out after {max_wait_time} seconds")
-
-    async def _update_progress(self, job_id: str, message_key: str, percentage: Optional[int]):
-        """Update progress using existing job_tracker (for UI polling)."""
-
-        # Update job progress for existing UI polling
-        if percentage is not None:
-            self.job_tracker.update_job_progress(job_id, percentage, message_key)
-
-        # Update job status with detailed information
-        self.job_tracker.update_job_status(
-            job_id,
-            "processing",
-            result={
-                "current_stage": message_key,
-                "progress_percentage": percentage,
-                "timestamp": time.time(),
-                "pipeline_stage": message_key.split(".")[0] if "." in message_key else message_key
-            },
-            stage=message_key
-        )
-
-    async def _handle_pipeline_error(self, job_id: str, error: Exception):
-        """Handle pipeline execution errors."""
-
-        error_msg = f"Validation pipeline error: {str(error)}"
-        logger.error(error_msg, exc_info=True)
-
-        self.job_tracker.update_job_status(
-            job_id,
-            "failed",
-            error=error_msg,
-            result={
-                "pipeline_error": True,
-                "error_stage": "pipeline_execution",
-                "error_message": str(error)
-            }
-        )
-
     async def process_user_choice(self, job_id: str, user_choice: str, user_data: Optional[Dict[str, Any]] = None):
-        """Process user choice for meta-validation."""
+        """Process user choice for meta-validation"""
 
-        logger.info(f"Processing user choice '{user_choice}' for job {job_id}")
+        logger.info(f"Pipeline Engine: Processing user choice '{user_choice}' for job {job_id}")
 
         if user_choice == "auto_fetch":
             return await self._handle_auto_fetch_choice(job_id, user_data)
@@ -354,7 +367,7 @@ class HybridValidationEngine:
             raise ValueError(f"Unknown user choice: {user_choice}")
 
     async def _handle_auto_fetch_choice(self, job_id: str, user_data: Optional[Dict[str, Any]]):
-        """Handle auto-fetch user choice."""
+        """Handle auto-fetch user choice"""
 
         # Get original job data
         job_data = self.job_tracker.get_job(job_id)
@@ -372,15 +385,16 @@ class HybridValidationEngine:
         }
 
         # Route to auto-fetch task
+        task_id = f"{job_id}_auto_fetch"
         self.task_router.route_task(
-            f"{job_id}_auto_fetch",
+            task_id,
             "auto_fetch",
             "cpu_tasks",
             auto_fetch_data
         )
 
         # Wait for auto-fetch completion
-        auto_fetch_results = await self._wait_for_task_completion(f"{job_id}_auto_fetch")
+        auto_fetch_results = await self._wait_for_task_completion(task_id)
 
         if auto_fetch_results.get("fetch_success"):
             # Update job status to resume validation
@@ -409,10 +423,10 @@ class HybridValidationEngine:
             }
 
     async def _handle_user_guidance_choice(self, job_id: str, user_data: Optional[Dict[str, Any]]):
-        """Handle user user_guidance choice."""
+        """Handle user guidance choice"""
 
-        # Process user-provided sources/user_guidance
-        from src.core.validation.guidance.guided_trust_loop import contribution_handler
+        # Process user-provided sources/guidance
+        from .meta_validation.user_guidance.guided_trust_loop import contribution_handler
 
         contribution_result = await contribution_handler.process_contribution(
             job_id=job_id,
@@ -439,7 +453,7 @@ class HybridValidationEngine:
             }
 
     async def _handle_restart_choice(self, job_id: str, user_data: Optional[Dict[str, Any]]):
-        """Handle restart validation choice."""
+        """Handle restart validation choice"""
 
         # Clear any cached validation state
         # Restart the validation pipeline from the beginning
@@ -451,6 +465,192 @@ class HybridValidationEngine:
             "new_job_id": f"{job_id}_restart"
         }
 
+    async def _wait_for_task_completion(self, task_id: str) -> Dict[str, Any]:
+        """Wait for task completion using existing job_tracker"""
+
+        max_wait_time = 300  # 5 minutes max wait
+        check_interval = 0.5  # Check every 500ms
+        waited_time = 0
+
+        while waited_time < max_wait_time:
+            job_data = self.job_tracker.get_job(task_id)
+            if job_data:
+                status = job_data.get("status")
+                if status == "completed":
+                    return job_data.get("result", {})
+                elif status == "failed":
+                    error = job_data.get("error", "Unknown error")
+                    raise ValidationPipelineError(f"Task {task_id} failed: {error}")
+                elif status == "awaiting_user_input":
+                    # For meta-validation, this is expected
+                    return job_data.get("result", {})
+
+            await asyncio.sleep(check_interval)
+            waited_time += check_interval
+
+        raise ValidationPipelineError(f"Task {task_id} timed out after {max_wait_time} seconds")
+
+    async def _update_pipeline_progress(self, job_id: str, stage_key: str, percentage: Optional[int]):
+        """Update pipeline progress for tracking"""
+
+        # Update job progress for UI polling
+        if percentage is not None:
+            self.job_tracker.update_job_progress(job_id, percentage, stage_key)
+
+        # Update job status with detailed information
+        self.job_tracker.update_job_status(
+            job_id,
+            "processing",
+            result={
+                "current_stage": stage_key,
+                "progress_percentage": percentage,
+                "timestamp": time.time(),
+                "pipeline_phase": stage_key.split(".")[0] if "." in stage_key else stage_key
+            },
+            stage=stage_key
+        )
+
+    async def _handle_pipeline_error(self, job_id: str, error: Exception):
+        """Handle pipeline execution errors"""
+
+        error_msg = f"Validation pipeline error: {str(error)}"
+        logger.error(error_msg, exc_info=True)
+
+        self.job_tracker.update_job_status(
+            job_id,
+            "failed",
+            error=error_msg,
+            result={
+                "pipeline_error": True,
+                "error_stage": "pipeline_execution",
+                "error_message": str(error)
+            }
+        )
+
+    def get_pipeline_statistics(self) -> Dict[str, Any]:
+        """Get pipeline engine statistics"""
+
+        return {
+            "pipeline_phases": 5,
+            "validation_steps_available": len(self.validation_step_implementations),
+            "pipeline_configurations": len(self.pipeline_configurator.get_available_configurations()),
+            "engine_status": "operational"
+        }
+
+
+class PipelineConfigurator:
+    """
+    Configures validation pipelines based on query mode and type
+    """
+
+    def __init__(self):
+        self.pipeline_configurations = self._initialize_pipeline_configurations()
+
+    def _initialize_pipeline_configurations(self) -> Dict[str, Dict[str, Any]]:
+        """Initialize pipeline configurations for different query modes"""
+
+        return {
+            "facts": {
+                "knowledge_steps": [
+                    {"step_type": "retrieval", "weight": 0.2},
+                    {"step_type": "source_credibility", "weight": 0.4},
+                    {"step_type": "technical_consistency", "weight": 0.4}
+                ],
+                "confidence_weights": {
+                    ValidationStepType.RETRIEVAL: 0.15,
+                    ValidationStepType.SOURCE_CREDIBILITY: 0.4,
+                    ValidationStepType.TECHNICAL_CONSISTENCY: 0.3,
+                    ValidationStepType.COMPLETENESS: 0.1,
+                    ValidationStepType.LLM_INFERENCE: 0.05
+                }
+            },
+            "features": {
+                "knowledge_steps": [
+                    {"step_type": "retrieval", "weight": 0.2},
+                    {"step_type": "source_credibility", "weight": 0.3},
+                    {"step_type": "completeness", "weight": 0.5}
+                ],
+                "confidence_weights": {
+                    ValidationStepType.RETRIEVAL: 0.15,
+                    ValidationStepType.SOURCE_CREDIBILITY: 0.3,
+                    ValidationStepType.TECHNICAL_CONSISTENCY: 0.2,
+                    ValidationStepType.COMPLETENESS: 0.25,
+                    ValidationStepType.LLM_INFERENCE: 0.1
+                }
+            },
+            "tradeoffs": {
+                "knowledge_steps": [
+                    {"step_type": "retrieval", "weight": 0.2},
+                    {"step_type": "source_credibility", "weight": 0.3},
+                    {"step_type": "completeness", "weight": 0.3},
+                    {"step_type": "consensus", "weight": 0.2}
+                ],
+                "confidence_weights": {
+                    ValidationStepType.RETRIEVAL: 0.1,
+                    ValidationStepType.SOURCE_CREDIBILITY: 0.25,
+                    ValidationStepType.TECHNICAL_CONSISTENCY: 0.2,
+                    ValidationStepType.COMPLETENESS: 0.25,
+                    ValidationStepType.CONSENSUS: 0.15,
+                    ValidationStepType.LLM_INFERENCE: 0.05
+                }
+            },
+            "scenarios": {
+                "knowledge_steps": [
+                    {"step_type": "retrieval", "weight": 0.3},
+                    {"step_type": "completeness", "weight": 0.4},
+                    {"step_type": "consensus", "weight": 0.3}
+                ],
+                "confidence_weights": {
+                    ValidationStepType.RETRIEVAL: 0.2,
+                    ValidationStepType.SOURCE_CREDIBILITY: 0.2,
+                    ValidationStepType.TECHNICAL_CONSISTENCY: 0.15,
+                    ValidationStepType.COMPLETENESS: 0.3,
+                    ValidationStepType.CONSENSUS: 0.1,
+                    ValidationStepType.LLM_INFERENCE: 0.05
+                }
+            },
+            "debate": {
+                "knowledge_steps": [
+                    {"step_type": "retrieval", "weight": 0.2},
+                    {"step_type": "source_credibility", "weight": 0.3},
+                    {"step_type": "consensus", "weight": 0.5}
+                ],
+                "confidence_weights": {
+                    ValidationStepType.RETRIEVAL: 0.1,
+                    ValidationStepType.SOURCE_CREDIBILITY: 0.3,
+                    ValidationStepType.TECHNICAL_CONSISTENCY: 0.15,
+                    ValidationStepType.COMPLETENESS: 0.2,
+                    ValidationStepType.CONSENSUS: 0.2,
+                    ValidationStepType.LLM_INFERENCE: 0.05
+                }
+            },
+            "quotes": {
+                "knowledge_steps": [
+                    {"step_type": "retrieval", "weight": 0.3},
+                    {"step_type": "source_credibility", "weight": 0.4},
+                    {"step_type": "completeness", "weight": 0.3}
+                ],
+                "confidence_weights": {
+                    ValidationStepType.RETRIEVAL: 0.2,
+                    ValidationStepType.SOURCE_CREDIBILITY: 0.4,
+                    ValidationStepType.TECHNICAL_CONSISTENCY: 0.1,
+                    ValidationStepType.COMPLETENESS: 0.2,
+                    ValidationStepType.CONSENSUS: 0.05,
+                    ValidationStepType.LLM_INFERENCE: 0.05
+                }
+            }
+        }
+
+    def get_pipeline_config(self, query_mode: str) -> Dict[str, Any]:
+        """Get pipeline configuration for query mode"""
+
+        return self.pipeline_configurations.get(query_mode, self.pipeline_configurations["facts"])
+
+    def get_available_configurations(self) -> List[str]:
+        """Get available pipeline configuration names"""
+
+        return list(self.pipeline_configurations.keys())
+
 
 class PipelineProgressTracker:
     """
@@ -461,7 +661,7 @@ class PipelineProgressTracker:
         self.pipeline_summaries = {}
 
     def get_pipeline_summary(self, job_id: str) -> Dict[str, Any]:
-        """Get pipeline execution summary."""
+        """Get pipeline execution summary"""
 
         return self.pipeline_summaries.get(job_id, {
             "total_phases": 5,
@@ -471,10 +671,10 @@ class PipelineProgressTracker:
         })
 
 
-class ValidationTaskError(Exception):
-    """Exception raised when validation tasks fail."""
+class ValidationPipelineError(Exception):
+    """Exception raised when validation pipeline fails"""
     pass
 
 
-# Global instance
-hybrid_validation_engine = HybridValidationEngine()
+# Global pipeline engine instance
+validation_pipeline_engine = ValidationPipelineEngine()
