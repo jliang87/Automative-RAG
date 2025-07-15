@@ -165,7 +165,7 @@ def llm_inference_task(job_id: str, query: str, documents: List[Dict], query_mod
                 "validation_steps_completed": len(retrieval_validation.get("validation_steps", [])),
                 "pipeline_type": retrieval_validation.get("pipeline_type", "unknown"),
 
-                # User guidance
+                # User user_guidance
                 "contribution_opportunities": retrieval_validation.get("contribution_opportunities", []),
                 "guided_trust_loop_enabled": True,
 

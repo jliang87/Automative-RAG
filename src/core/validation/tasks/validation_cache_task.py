@@ -19,7 +19,7 @@ def validation_cache_task(job_id: str, task_data: Dict[str, Any]):
         logger.info(f"Starting validation caching for job {job_id}")
 
         # Import cache manager
-        from src.core.validation.meta_validation.validation_cache_manager import ValidationCacheManager
+        from src.core.validation.meta_validation import ValidationCacheManager
 
         cache_manager = ValidationCacheManager()
 

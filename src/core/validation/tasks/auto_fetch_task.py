@@ -22,7 +22,7 @@ def auto_fetch_task(job_id: str, task_data: Dict[str, Any]):
         query_context = task_data.get("query_context", {})
 
         # Import auto-fetch coordinator
-        from src.core.validation.meta_validation.auto_fetch_coordinator import AutoFetchCoordinator
+        from src.core.validation.meta_validation import AutoFetchCoordinator
 
         auto_fetch_coordinator = AutoFetchCoordinator()
 

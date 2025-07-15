@@ -1,6 +1,6 @@
 """
 Guidance Engine for Validation Failures
-Generates user-friendly guidance for resolving validation issues
+Generates user-friendly user_guidance for resolving validation issues
 """
 
 import logging
@@ -11,14 +11,14 @@ logger = logging.getLogger(__name__)
 
 class GuidanceEngine:
     """
-    Generates user guidance for improving validation
+    Generates user user_guidance for improving validation
     """
 
     def __init__(self):
         self.guidance_templates = self._initialize_guidance_templates()
 
     def _initialize_guidance_templates(self) -> Dict[str, Dict[str, Any]]:
-        """Initialize guidance templates for different validation failures"""
+        """Initialize user_guidance templates for different validation failures"""
 
         return {
             "missing_epa_data": {
@@ -78,7 +78,7 @@ class GuidanceEngine:
         }
 
     def generate_guidance_for_failure(self, failure_type: str, context: Dict[str, Any]) -> Dict[str, Any]:
-        """Generate specific guidance for a validation failure"""
+        """Generate specific user_guidance for a validation failure"""
 
         # Determine failure type from context
         if "epa" in failure_type.lower() or "fuel" in failure_type.lower():

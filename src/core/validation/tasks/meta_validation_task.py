@@ -19,14 +19,14 @@ def meta_validation_task(job_id: str, task_data: Dict[str, Any]):
         logger.info(f"Starting meta-validation for job {job_id}")
 
         # Import meta-validation components
-        from src.core.validation.meta_validator import MetaValidator
+        from src.core.validation.steps.steps_readiness_checker import MetaValidator
         from src.core.validation.guidance.guided_trust_loop import guidance_engine
 
         failure_context = task_data.get("failure_context", {})
         failed_step = task_data.get("failed_step", "unknown")
         query_mode = task_data.get("query_mode", "facts")
 
-        # Analyze failure and generate guidance
+        # Analyze failure and generate user_guidance
         meta_validator = MetaValidator()
 
         # Generate user choice options
@@ -67,7 +67,7 @@ def meta_validation_task(job_id: str, task_data: Dict[str, Any]):
                     "failure_reason": user_choice_request["failure_reason"],
                     "options": user_choice_request["options"],
                     "message": "Validation needs your help to continue",
-                    "guidance": guidance_engine.generate_guidance_for_failure(failed_step, failure_context)
+                    "user_guidance": guidance_engine.generate_guidance_for_failure(failed_step, failure_context)
                 }
             }
         )

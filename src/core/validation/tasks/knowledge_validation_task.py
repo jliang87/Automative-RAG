@@ -19,7 +19,7 @@ def knowledge_validation_task(job_id: str, task_data: Dict[str, Any]):
         logger.info(f"Starting knowledge validation for job {job_id}")
 
         # Import validation components
-        from src.core.validation.validation_engine import validation_engine
+        from src.core.validation.validation_interface import validation_engine
         from src.core.validation.models.validation_models import ValidationContext
 
         query = task_data.get("query", "")

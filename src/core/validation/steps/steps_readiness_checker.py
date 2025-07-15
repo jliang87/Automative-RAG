@@ -7,7 +7,7 @@ import logging
 from typing import Dict, List, Optional, Any
 from datetime import datetime, timedelta
 
-from .models.validation_models import (
+from src.core.validation.models.validation_models import (
     ValidationStepType, ValidationContext, PreconditionFailure,
     ValidationGuidance, ContributionPrompt, ContributionType
 )
@@ -400,7 +400,7 @@ class MetaValidator:
 
 class ValidationGuidanceGenerator:
     """
-    Generates actionable guidance for resolving validation precondition failures
+    Generates actionable user_guidance for resolving validation precondition failures
     """
 
     def generate_guidance(
@@ -409,7 +409,7 @@ class ValidationGuidanceGenerator:
             missing_resources: List[PreconditionFailure],
             context: ValidationContext
     ) -> ValidationGuidance:
-        """Generate specific guidance for resolving validation failures"""
+        """Generate specific user_guidance for resolving validation failures"""
 
         if failed_step == ValidationStepType.TECHNICAL_CONSISTENCY:
             return self._generate_technical_consistency_guidance(missing_resources, context)
@@ -425,7 +425,7 @@ class ValidationGuidanceGenerator:
             missing_resources: List[PreconditionFailure],
             context: ValidationContext
     ) -> ValidationGuidance:
-        """Generate guidance for technical consistency validation failures"""
+        """Generate user_guidance for technical consistency validation failures"""
 
         vehicle_info = self._format_vehicle_info(context)
         suggestions = []
@@ -469,7 +469,7 @@ class ValidationGuidanceGenerator:
             missing_resources: List[PreconditionFailure],
             context: ValidationContext
     ) -> ValidationGuidance:
-        """Generate guidance for source credibility validation failures"""
+        """Generate user_guidance for source credibility validation failures"""
 
         suggestions = [
             {
@@ -496,7 +496,7 @@ class ValidationGuidanceGenerator:
             missing_resources: List[PreconditionFailure],
             context: ValidationContext
     ) -> ValidationGuidance:
-        """Generate guidance for consensus validation failures"""
+        """Generate user_guidance for consensus validation failures"""
 
         vehicle_info = self._format_vehicle_info(context)
         suggestions = [
@@ -523,7 +523,7 @@ class ValidationGuidanceGenerator:
             missing_resources: List[PreconditionFailure],
             context: ValidationContext
     ) -> ValidationGuidance:
-        """Generate generic guidance for validation failures"""
+        """Generate generic user_guidance for validation failures"""
 
         return ValidationGuidance(
             guidance_type="generic_failure",
@@ -550,7 +550,7 @@ class ValidationGuidanceGenerator:
             guidance: ValidationGuidance,
             step_type: ValidationStepType
     ) -> ContributionPrompt:
-        """Create a user contribution prompt from guidance"""
+        """Create a user contribution prompt from user_guidance"""
 
         return ContributionPrompt(
             needed_resource_type=guidance.guidance_type,

@@ -892,7 +892,7 @@ Document {i}:
 
 
 def get_failure_guidance_prompt(failed_step: str, failure_context: Dict[str, Any]) -> str:
-    """Generate guidance prompt for validation failures."""
+    """Generate user_guidance prompt for validation failures."""
 
     return f"""
 VALIDATION FAILURE GUIDANCE
@@ -900,13 +900,13 @@ VALIDATION FAILURE GUIDANCE
 FAILED STEP: {failed_step}
 FAILURE CONTEXT: {failure_context}
 
-TASK: Generate user-friendly guidance for resolving this validation failure.
+TASK: Generate user-friendly user_guidance for resolving this validation failure.
 
-Provide guidance in this format:
+Provide user_guidance in this format:
 1. What went wrong (simple explanation)
 2. What's needed to fix it
 3. Specific suggestions for user action
 4. Expected improvement from user contribution
 
-Keep guidance concise and actionable.
+Keep user_guidance concise and actionable.
 """

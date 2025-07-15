@@ -245,7 +245,7 @@ class ValidationDisplaySystem:
 
     def render_user_guidance(self, result: Dict[str, Any]) -> None:
         """
-        Section 3: User guidance - actionable advice based on validation results.
+        Section 3: User user_guidance - actionable advice based on validation results.
         """
         automotive_validation = result.get("automotive_validation", {})
         confidence_level = automotive_validation.get("confidence_level", "unknown")
@@ -308,7 +308,7 @@ def render_unified_validation_display(result: Dict[str, Any]) -> None:
     # Section 2: Detailed breakdown - expandable (but aware of potential sources display)
     validation_system.render_detailed_validation_breakdown(result)
 
-    # Section 3: User guidance - expandable
+    # Section 3: User user_guidance - expandable
     validation_system.render_user_guidance(result)
 
 
