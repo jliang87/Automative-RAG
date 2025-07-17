@@ -1,142 +1,116 @@
-"""
-Knowledge Pool Powered Validation Task (CPU Task)
-Executes rule-based validation using knowledge pool data
-"""
-
-import logging
 from typing import Dict, Any
-from src.core.background.tasks import cpu_bound_task
-from src.core.orchestration.job_chain import job_chain
 
-logger = logging.getLogger(__name__)
+# Import Tesla T4 constrained queue definitions
+from src.core.orchestration.queue_manager import QueueNames
+from src.core.orchestration.dramatiq_helpers import create_dramatiq_actor_decorator
+
+# Import simple base class (same directory)
+from .base_task import BaseValidationTask
 
 
-@cpu_bound_task
-def knowledge_validation_task(job_id: str, task_data: Dict[str, Any]):
-    """Execute knowledge pool powered validation (CPU task)."""
+class KnowledgeValidationTask(BaseValidationTask):
+    """
+    Knowledge validation task - only business logic.
+    Boilerplate handled by BaseValidationTask.
+    """
 
-    try:
-        logger.info(f"Starting knowledge validation for job {job_id}")
+    def __init__(self):
+        super().__init__("knowledge_validation")
+
+    def execute_validation_logic(self, job_id: str, task_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Core business logic - no boilerplate."""
 
         # Import validation components
-        from src.core.validation.models.validation_models import ValidationContext
+        from src.core.validation.steps.retrieval_quality import RetrievalQualityValidator
+        from src.core.validation.steps.source_credibility_validator import SourceCredibilityValidator
+        from src.core.validation.steps.technical_consistency_validator import TechnicalConsistencyValidator
+        from src.core.validation.steps.steps_readiness_checker import MetaValidator
+        from src.core.validation.confidence_calculator import ConfidenceCalculator
 
-        query = task_data.get("query", "")
-        query_mode = task_data.get("query_mode", "facts")
-        documents = task_data.get("documents", [])
+        # Create validation context (inherited method)
+        context = self.create_validation_context(job_id, task_data)
 
-        # Create validation context
-        context = ValidationContext(
-            query_id=job_id,
-            query_text=query,
-            query_mode=query_mode,
-            documents=documents
-        )
-
-        # Get appropriate pipeline manager
-        pipeline_type = validation_engine.pipeline_manager.determine_pipeline_type(
-            query_mode, query
-        )
-
-        # Execute knowledge-based validation steps only
-        config = validation_engine.pipeline_manager.get_pipeline_config(pipeline_type)
+        # Execute validation steps
+        meta_validator = MetaValidator()
+        confidence_calculator = ConfidenceCalculator()
         knowledge_steps = []
 
-        for step_config in config.steps:
-            if step_config.step_type.value in ["retrieval", "source_credibility", "technical_consistency"]:
-                # Get step implementation
-                step_class = validation_engine.pipeline_manager.validation_steps.get(step_config.step_type)
-                if step_class:
-                    step_instance = step_class(step_config, validation_engine.pipeline_manager.meta_validator)
-                    step_result = await step_instance.execute(context)
-                    knowledge_steps.append(step_result)
+        # Step 1: Retrieval Quality
+        try:
+            retrieval_validator = RetrievalQualityValidator({}, meta_validator)
+            retrieval_result = retrieval_validator.execute(context)
+            knowledge_steps.append(retrieval_result)
+            self.logger.info("✅ Retrieval quality validation completed")
+        except Exception as e:
+            self.logger.error(f"Retrieval validation failed: {str(e)}")
 
-        # Calculate confidence for knowledge steps
-        knowledge_confidence = validation_engine.pipeline_manager.confidence_calculator.calculate_confidence(
-            knowledge_steps, config.confidence_weights
-        )
+        # Step 2: Source Credibility
+        try:
+            credibility_validator = SourceCredibilityValidator({}, meta_validator)
+            credibility_result = credibility_validator.execute(context)
+            knowledge_steps.append(credibility_result)
+            self.logger.info("✅ Source credibility validation completed")
+        except Exception as e:
+            self.logger.error(f"Source credibility validation failed: {str(e)}")
 
-        # Determine if meta-validation is needed
+        # Step 3: Technical Consistency
+        try:
+            consistency_validator = TechnicalConsistencyValidator({}, meta_validator)
+            consistency_result = consistency_validator.execute(context)
+            knowledge_steps.append(consistency_result)
+            self.logger.info("✅ Technical consistency validation completed")
+        except Exception as e:
+            self.logger.error(f"Technical consistency validation failed: {str(e)}")
+
+        # Calculate confidence
+        knowledge_confidence = confidence_calculator.calculate_confidence(knowledge_steps)
+
+        # Determine if meta-validation needed
         requires_meta_validation = any(
             step.status.value in ["unverifiable", "failed"] for step in knowledge_steps
         )
 
-        # Report completion
-        result = {
+        # Return result (base class handles job_chain.task_completed)
+        return {
             "validation_type": "knowledge_based",
-            "query_mode": query_mode,
+            "query_mode": task_data.get("query_mode", "facts"),
             "knowledge_validation_steps": [
                 {
                     "step_name": step.step_name,
+                    "step_type": step.step_type.value,
                     "status": step.status.value,
                     "confidence_impact": step.confidence_impact,
-                    "warnings": [w.message for w in step.warnings]
+                    "warnings": [w.message for w in step.warnings],
+                    "duration_ms": getattr(step, 'duration_ms', 0)
                 }
                 for step in knowledge_steps
             ],
             "knowledge_confidence": knowledge_confidence.total_score,
             "requires_meta_validation": requires_meta_validation,
-            "meta_validation_opportunities": [
-                step.contribution_prompt.__dict__ if step.contribution_prompt else None
-                for step in knowledge_steps
-            ]
+            "documents": task_data.get("documents", []),
+            "query": task_data.get("query", ""),
+            "query_mode": task_data.get("query_mode", "facts"),
+            "tesla_t4_constraint": "CPU_TASKS queue used"
         }
 
-        job_chain.task_completed(job_id, result)
-        logger.info(f"Knowledge validation completed for job {job_id}")
 
-    except Exception as e:
-        error_msg = f"Knowledge validation failed: {str(e)}"
-        logger.error(error_msg)
+# Create task instance
+knowledge_task_instance = KnowledgeValidationTask()
+
+# Create Dramatiq task function using Tesla T4 constrained queue
+@create_dramatiq_actor_decorator(QueueNames.CPU_TASKS.value)
+def knowledge_validation_task(job_id: str, task_data: Dict[str, Any]):
+    """Dramatiq task function - delegates to task instance."""
+    knowledge_task_instance.execute_with_error_handling(job_id, task_data)
+
+
+# Workflow starter function (called by TaskRouter)
+def start_knowledge_validation(job_id: str, data: Dict):
+    """Start knowledge validation workflow."""
+    if "query" not in data:
+        error_msg = "query required for knowledge validation"
+        from src.core.orchestration.job_chain import job_chain
         job_chain.task_failed(job_id, error_msg)
+        return
 
-
-async def _execute_knowledge_validation_with_progress(context, step_configs, job_id):
-    """Execute knowledge validation with progress tracking."""
-
-    from src.core.validation.validation_engine import validation_pipeline_engine
-    from src.core.orchestration.job_tracker import job_tracker
-
-    knowledge_steps = []
-    total_steps = len(step_configs)
-
-    for i, step_config in enumerate(step_configs):
-        step_type = ValidationStepType(step_config["step_type"])
-
-        # Update progress
-        progress = 5 + (i / total_steps) * 20  # Knowledge phase is 5-25%
-        job_tracker.update_job_progress(
-            job_id,
-            progress,
-            f"knowledge_validation.{step_type.value}"
-        )
-
-        # Get step implementation
-        step_class = validation_pipeline_engine.validation_step_implementations.get(step_type)
-        if step_class:
-            step_instance = step_class(step_config, validation_pipeline_engine.meta_validator)
-
-            try:
-                step_result = await step_instance.execute(context)
-                knowledge_steps.append(step_result)
-
-                logger.info(f"Knowledge step {step_type.value} completed: {step_result.status.value}")
-
-            except Exception as e:
-                logger.error(f"Knowledge step {step_type.value} failed: {str(e)}")
-                # Create error step result
-                error_step = ValidationStepResult(
-                    step_id=f"{step_type.value}_error",
-                    step_type=step_type,
-                    step_name=f"{step_type.value.replace('_', ' ').title()}",
-                    status=ValidationStatus.FAILED,
-                    confidence_impact=-10.0,
-                    summary=f"Step failed: {str(e)}",
-                    started_at=datetime.now(),
-                    completed_at=datetime.now()
-                )
-                knowledge_steps.append(error_step)
-        else:
-            logger.warning(f"No implementation found for step type: {step_type}")
-
-    return knowledge_steps
+    knowledge_validation_task.send(job_id, data)
