@@ -12,6 +12,7 @@ import numpy as np
 from src.core.orchestration.job_tracker import job_tracker
 from src.core.orchestration.job_chain import job_chain
 from src.core.query.llm.mode_config import mode_config, QueryMode
+from src.core.orchestration.queue_manager import queue_manager, QueueNames
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +47,7 @@ def apply_token_budget_management(documents, token_budget: int):
     return selected_docs
 
 
-@dramatiq.actor(queue_name="embedding_tasks", store_results=True, max_retries=2)
+@queue_manager.create_task_decorator(QueueNames.EMBEDDING_TASKS.value)
 def retrieve_documents_task(job_id: str, query: str, metadata_filter: Optional[Dict] = None, query_mode: str = "facts"):
     """
     Enhanced document retrieval with full validation pipeline

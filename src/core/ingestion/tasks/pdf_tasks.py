@@ -10,6 +10,7 @@ import dramatiq
 
 from src.core.orchestration.job_tracker import job_tracker
 from src.core.orchestration.job_chain import job_chain
+from src.core.orchestration.queue_manager import queue_manager, QueueNames
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +25,7 @@ except ImportError:
     logger.warning("⚠️ Enhanced ingestion system not available, falling back to basic PDF processing")
 
 
-@dramatiq.actor(queue_name="cpu_tasks", store_results=True, max_retries=2)
+@queue_manager.create_task_decorator(QueueNames.CPU_TASKS.value)
 def process_pdf_task(job_id: str, file_path: str, metadata: Optional[Dict] = None):
     """Process PDF - NOW uses Enhanced Ingestion System for consistent metadata!"""
     try:

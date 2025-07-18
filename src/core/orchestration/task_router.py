@@ -267,7 +267,6 @@ class TaskRouter:
     def validate_queue_configurations(self) -> bool:
         """Validate that all queue configurations respect Tesla T4 constraints."""
         try:
-            from src.core.orchestration.dramatiq_helpers import validate_dramatiq_health
             hardware_info = queue_manager.get_hardware_constraints_info()
 
             logger.info(f"Validating queues for {hardware_info['gpu_constraints']['model']}")

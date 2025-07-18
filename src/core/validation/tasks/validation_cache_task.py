@@ -1,10 +1,7 @@
 from typing import Dict, Any
 
-from src.core.orchestration.queue_manager import QueueNames
-from src.core.orchestration.dramatiq_helpers import create_dramatiq_actor_decorator
-
-# Import simple base class (same directory)
-from .base_task import BaseValidationTask
+from .base_validation_task import BaseValidationTask
+from src.core.orchestration.queue_manager import queue_manager, QueueNames
 
 
 class ValidationCacheTask(BaseValidationTask):
@@ -57,7 +54,7 @@ class ValidationCacheTask(BaseValidationTask):
 validation_cache_task_instance = ValidationCacheTask()
 
 # Create Dramatiq task function
-@create_dramatiq_actor_decorator(QueueNames.CPU_TASKS.value)
+@queue_manager.create_task_decorator(QueueNames.CPU_TASKS.value)
 def validation_cache_task(job_id: str, task_data: Dict[str, Any]):
     """Dramatiq task function - delegates to task instance."""
     validation_cache_task_instance.execute_with_error_handling(job_id, task_data)

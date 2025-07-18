@@ -1,18 +1,15 @@
+"""
+Knowledge Validation Task - Refactored using BaseValidationTask
+"""
+
 from typing import Dict, Any
 
-# Import Tesla T4 constrained queue definitions
-from src.core.orchestration.queue_manager import QueueNames
-from src.core.orchestration.dramatiq_helpers import create_dramatiq_actor_decorator
-
-# Import simple base class (same directory)
-from .base_task import BaseValidationTask
+from .base_validation_task import BaseValidationTask
+from src.core.orchestration.queue_manager import queue_manager, QueueNames
 
 
 class KnowledgeValidationTask(BaseValidationTask):
-    """
-    Knowledge validation task - only business logic.
-    Boilerplate handled by BaseValidationTask.
-    """
+    """Knowledge validation task - only business logic."""
 
     def __init__(self):
         super().__init__("knowledge_validation")
@@ -89,7 +86,6 @@ class KnowledgeValidationTask(BaseValidationTask):
             "requires_meta_validation": requires_meta_validation,
             "documents": task_data.get("documents", []),
             "query": task_data.get("query", ""),
-            "query_mode": task_data.get("query_mode", "facts"),
             "tesla_t4_constraint": "CPU_TASKS queue used"
         }
 
@@ -97,19 +93,20 @@ class KnowledgeValidationTask(BaseValidationTask):
 # Create task instance
 knowledge_task_instance = KnowledgeValidationTask()
 
-# Create Dramatiq task function using Tesla T4 constrained queue
-@create_dramatiq_actor_decorator(QueueNames.CPU_TASKS.value)
+
+# Create Dramatiq task function
+@queue_manager.create_task_decorator(QueueNames.CPU_TASKS.value)
 def knowledge_validation_task(job_id: str, task_data: Dict[str, Any]):
     """Dramatiq task function - delegates to task instance."""
     knowledge_task_instance.execute_with_error_handling(job_id, task_data)
 
 
-# Workflow starter function (called by TaskRouter)
 def start_knowledge_validation(job_id: str, data: Dict):
     """Start knowledge validation workflow."""
+    from src.core.orchestration.job_chain import job_chain
+
     if "query" not in data:
         error_msg = "query required for knowledge validation"
-        from src.core.orchestration.job_chain import job_chain
         job_chain.task_failed(job_id, error_msg)
         return
 

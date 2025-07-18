@@ -10,11 +10,12 @@ import dramatiq
 
 from src.core.orchestration.job_tracker import job_tracker
 from src.core.orchestration.job_chain import job_chain
+from src.core.orchestration.queue_manager import queue_manager, QueueNames
 
 logger = logging.getLogger(__name__)
 
 
-@dramatiq.actor(queue_name="cpu_tasks", store_results=True, max_retries=2)
+@queue_manager.create_task_decorator(QueueNames.CPU_TASKS.value)
 def download_video_task(job_id: str, url: str, metadata: Optional[Dict] = None):
     """Download video - Unicode cleaning happens automatically!"""
     try:
@@ -74,7 +75,7 @@ def download_video_task(job_id: str, url: str, metadata: Optional[Dict] = None):
         job_chain.task_failed(job_id, error_msg)
 
 
-@dramatiq.actor(queue_name="transcription_tasks", store_results=True, max_retries=2)
+@queue_manager.create_task_decorator(QueueNames.TRANSCRIPTION_TASKS.value)
 def transcribe_video_task(job_id: str, media_path: str):
     """Transcribe video - ALREADY uses EnhancedTranscriptProcessor optimally"""
     try:

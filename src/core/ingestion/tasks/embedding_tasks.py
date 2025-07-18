@@ -10,11 +10,12 @@ import dramatiq
 
 from src.core.orchestration.job_tracker import job_tracker
 from src.core.orchestration.job_chain import job_chain
+from src.core.orchestration.queue_manager import queue_manager, QueueNames
 
 logger = logging.getLogger(__name__)
 
 
-@dramatiq.actor(queue_name="embedding_tasks", store_results=True, max_retries=2)
+@queue_manager.create_task_decorator(QueueNames.EMBEDDING_TASKS.value)
 def generate_embeddings_task(job_id: str, documents: List[Dict]):
     """Generate embeddings - Unicode cleaning happens automatically!"""
     try:

@@ -11,11 +11,12 @@ import dramatiq
 from src.core.orchestration.job_tracker import job_tracker
 from src.core.orchestration.job_chain import job_chain
 from src.core.query.llm.mode_config import mode_config, QueryMode
+from src.core.orchestration.queue_manager import queue_manager, QueueNames
 
 logger = logging.getLogger(__name__)
 
 
-@dramatiq.actor(queue_name="inference_tasks", store_results=True, max_retries=2)
+@queue_manager.create_task_decorator(QueueNames.LLM_TASKS.value)
 def llm_inference_task(job_id: str, query: str, documents: List[Dict], query_mode: str = "facts"):
     """
     Enhanced LLM inference with answer validation
@@ -201,7 +202,7 @@ def llm_inference_task(job_id: str, query: str, documents: List[Dict], query_mod
         job_chain.task_failed(job_id, error_msg)
 
 
-@dramatiq.actor(queue_name="inference_tasks", store_results=True, max_retries=2)
+@queue_manager.create_task_decorator(QueueNames.LLM_TASKS.value)
 def process_user_contribution_task(job_id: str, step_type: str, contribution_data: Dict[str, Any]):
     """
     Process user contribution and retry validation (Guided Trust Loop)

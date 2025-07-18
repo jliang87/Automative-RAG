@@ -1,18 +1,11 @@
 from typing import Dict, Any
 
-# Import Tesla T4 constrained queue definitions
-from src.core.orchestration.queue_manager import QueueNames
-from src.core.orchestration.dramatiq_helpers import create_dramatiq_actor_decorator
-
-# Import simple base class (same directory)
-from .base_task import BaseValidationTask
+from .base_validation_task import BaseValidationTask
+from src.core.orchestration.queue_manager import queue_manager, QueueNames
 
 
 class LLMPhaseValidationTask(BaseValidationTask):
-    """
-    LLM validation task - only business logic.
-    Uses Tesla T4 constrained LLM_TASKS queue (shared memory).
-    """
+    """LLM validation task - only business logic."""
 
     def __init__(self):
         super().__init__("llm_phase_validation")
@@ -51,7 +44,6 @@ class LLMPhaseValidationTask(BaseValidationTask):
 
     def _execute_pre_llm_validation(self, task_data: Dict[str, Any]) -> Dict[str, Any]:
         """Execute pre-LLM validation phase."""
-        # TODO: Implement actual LLM validation when prompt manager is available
         return {
             "validation_type": "pre_llm_phase",
             "query_mode": task_data.get("query_mode", "facts"),
@@ -78,7 +70,6 @@ class LLMPhaseValidationTask(BaseValidationTask):
                 "error": "No generated response to validate"
             }
 
-        # TODO: Implement actual post-LLM validation
         return {
             "validation_type": "post_llm_phase",
             "query_mode": task_data.get("query_mode", "facts"),
@@ -134,14 +125,13 @@ class LLMPhaseValidationTask(BaseValidationTask):
 # Create task instance
 llm_phase_task_instance = LLMPhaseValidationTask()
 
-# Create Dramatiq task function using Tesla T4 constrained queue
-@create_dramatiq_actor_decorator(QueueNames.LLM_TASKS.value)
+# Create Dramatiq task function
+@queue_manager.create_task_decorator(QueueNames.LLM_TASKS.value)
 def llm_phase_validation_task(job_id: str, task_data: Dict[str, Any]):
     """Dramatiq task function - delegates to task instance."""
     llm_phase_task_instance.execute_with_error_handling(job_id, task_data)
 
 
-# Workflow starter function (called by TaskRouter)
 def start_llm_phase_validation(job_id: str, data: Dict, phase_type: str):
     """Start LLM phase validation workflow."""
     enhanced_data = {**data, "phase_type": phase_type}
