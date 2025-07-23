@@ -9,7 +9,7 @@ from typing import Dict, List, Any, Optional, Tuple, Set
 from datetime import datetime
 from collections import Counter, defaultdict
 
-from ..models.validation_models import (
+from src.models.schema import (
     ValidationStepResult, ValidationStatus, ValidationStepType,
     ValidationContext, ValidationWarning
 )

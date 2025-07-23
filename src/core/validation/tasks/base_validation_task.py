@@ -34,7 +34,7 @@ class BaseValidationTask(ABC):
     def create_validation_context(self, job_id: str, task_data: Dict[str, Any]):
         """Helper to create validation context."""
         try:
-            from src.core.validation.models.validation_models import ValidationContext
+            from src.models.schema import ValidationContext
             return ValidationContext(
                 query_id=job_id,
                 query_text=task_data.get("query", ""),

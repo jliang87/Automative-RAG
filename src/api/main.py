@@ -6,8 +6,8 @@ from fastapi.openapi.utils import get_openapi
 from contextlib import asynccontextmanager
 import logging
 
-from src.api.routers import auth, ingest, query, system
-from src.api.routers.model import router as model_router
+from src.api import query, auth, ingest, system
+from src.api.model import router as model_router
 from src.api.dependencies import load_all_components
 
 # Define API metadata
