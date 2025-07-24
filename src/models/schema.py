@@ -960,6 +960,51 @@ class BackgroundJobResponse(BaseModel):
             "alternative": "EnhancedBackgroundJobResponse"
         }
 
+class ValidationType(str, Enum):
+    BASIC = "basic"
+    COMPREHENSIVE = "comprehensive"
+    USER_GUIDED = "user_guided"
+
+
+class ValidationWorkflow(BaseModel):
+    validation_id: str
+    job_id: str
+    validation_type: ValidationType
+    steps: List[Any] = []
+    overall_status: str
+    overall_confidence: float
+    validation_passed: bool
+    awaiting_user_input: bool
+    current_step: Optional[str] = None
+    issues_identified: List[str] = []
+    final_recommendations: List[str] = []
+
+
+class QueryModeConfig(BaseModel):
+    mode: QueryMode
+    name: str
+    description: str
+    icon: str
+    is_default: bool = False
+
+
+class SystemCapabilities(BaseModel):
+    available_modes: List[QueryMode]
+    validation_enabled: bool
+    max_query_length: int
+    supported_languages: List[str]
+    version: str
+
+
+class QueryValidationResult(BaseModel):
+    is_valid: bool
+    mode_compatibility: Dict[QueryMode, bool]
+    recommendations: List[str]
+    suggested_mode: QueryMode
+    confidence_score: float
+    suggested_validation_type: Optional[ValidationType] = None
+    validation_recommended: bool = False
+
 
 # ============================================================================
 # Utility Functions for Model Creation
@@ -1145,3 +1190,350 @@ BackgroundJobResponse = EnhancedBackgroundJobResponse
 # Note: The enhanced models are now the primary models.
 # The "Enhanced" prefix will be dropped in future versions,
 # and these will become the standard QueryRequest, QueryResponse, etc.
+
+
+# ==============================================================================
+# Enums (add these if missing)
+# ==============================================================================
+
+class QueryMode(str, Enum):
+    """Available query processing modes."""
+    FACTS = "facts"
+    FEATURES = "features"
+    TRADEOFFS = "tradeoffs"
+    SCENARIOS = "scenarios"
+    DEBATE = "debate"
+    QUOTES = "quotes"
+
+
+class ValidationType(str, Enum):
+    """Types of validation workflows."""
+    BASIC = "basic"
+    COMPREHENSIVE = "comprehensive"
+    USER_GUIDED = "user_guided"
+
+
+class ValidationStatus(str, Enum):
+    """Validation workflow status."""
+    PENDING = "pending"
+    IN_PROGRESS = "in_progress"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class ValidationStepType(str, Enum):
+    """Types of validation steps."""
+    CONTENT_CHECK = "content_check"
+    FACTUAL_VERIFICATION = "factual_verification"
+    USER_CONFIRMATION = "user_confirmation"
+    QUALITY_ASSESSMENT = "quality_assessment"
+
+
+# ==============================================================================
+# Base Models (add these if missing)
+# ==============================================================================
+
+class ValidationConfig(BaseModel):
+    """Configuration for query validation."""
+    enabled: bool = False
+    validation_type: ValidationType = ValidationType.BASIC
+    confidence_threshold: float = Field(default=0.7, ge=0.0, le=1.0)
+    require_user_confirmation: bool = False
+    custom_validation_steps: Optional[List[str]] = None
+
+
+class MetadataFilter(BaseModel):
+    """Metadata filtering for document retrieval."""
+    manufacturer: Optional[str] = None
+    model: Optional[str] = None
+    year: Optional[int] = None
+    category: Optional[str] = None
+    custom_filters: Optional[Dict[str, Any]] = None
+
+
+class DocumentResponse(BaseModel):
+    """Document response from vector store."""
+    id: str
+    content: str
+    metadata: Dict[str, Any] = {}
+    score: float = 0.0
+    relevance_score: Optional[float] = None
+
+
+# ==============================================================================
+# Request Models (add/update these)
+# ==============================================================================
+
+class EnhancedQueryRequest(BaseModel):
+    """Enhanced query request with validation support."""
+    query: str = Field(..., min_length=1, max_length=1000)
+    query_mode: QueryMode = QueryMode.FACTS
+    metadata_filter: Optional[MetadataFilter] = None
+    top_k: int = Field(default=10, ge=1, le=20)
+    prompt_template: Optional[str] = None
+    validation_config: Optional[ValidationConfig] = None
+    include_sources: bool = True
+    response_format: str = "markdown"
+
+
+# ==============================================================================
+# Validation Models (add these if missing)
+# ==============================================================================
+
+class ValidationStep(BaseModel):
+    """Individual validation step."""
+    step_id: str
+    step_type: ValidationStepType
+    name: str
+    description: str
+    status: ValidationStatus = ValidationStatus.PENDING
+    confidence: float = 0.0
+    result: Optional[Dict[str, Any]] = None
+    error_message: Optional[str] = None
+    user_input_required: bool = False
+    completed_at: Optional[datetime] = None
+
+
+class ValidationWorkflow(BaseModel):
+    """Complete validation workflow."""
+    validation_id: str
+    job_id: str
+    validation_type: ValidationType
+    steps: List[ValidationStep] = []
+    overall_status: ValidationStatus = ValidationStatus.PENDING
+    overall_confidence: float = 0.0
+    validation_passed: bool = False
+    awaiting_user_input: bool = False
+    current_step: Optional[ValidationStepType] = None
+    issues_identified: List[str] = []
+    final_recommendations: List[str] = []
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class QueryValidationResult(BaseModel):
+    """Result of query validation for mode compatibility."""
+    is_valid: bool
+    mode_compatibility: Dict[QueryMode, bool]
+    recommendations: List[str]
+    suggested_mode: QueryMode
+    confidence_score: float = Field(ge=0.0, le=1.0)
+    suggested_validation_type: Optional[ValidationType] = None
+    validation_recommended: bool = False
+    reasoning: Optional[str] = None
+
+
+# ==============================================================================
+# Response Models (add/update these)
+# ==============================================================================
+
+class AnalysisStructure(BaseModel):
+    """Structured analysis for complex query modes."""
+    summary: str
+    main_points: List[str] = []
+    detailed_sections: List[Dict[str, str]] = []
+    conclusion: Optional[str] = None
+    recommendations: List[str] = []
+
+
+class ProcessingStatistics(BaseModel):
+    """Statistics about document processing."""
+    total_documents: int = 0
+    documents_used: int = 0
+    average_relevance_score: float = 0.0
+    processing_time_ms: float = 0.0
+    sources_by_type: Dict[str, int] = {}
+
+
+class ModeMetadata(BaseModel):
+    """Metadata specific to the query mode used."""
+    processing_mode: str
+    complexity_level: str = "simple"
+    mode_name: str = ""
+    processing_stats: Optional[ProcessingStatistics] = None
+    validation_enabled: bool = False
+    unified_system: bool = True
+    estimated_time: Optional[int] = None
+
+
+class ValidationSummary(BaseModel):
+    """Summary of validation results."""
+    validation_id: str
+    status: ValidationStatus
+    type: ValidationType
+    confidence: float = 0.0
+    passed: bool = False
+    steps_completed: int = 0
+    total_steps: int = 0
+    awaiting_user_input: bool = False
+    current_step: Optional[ValidationStepType] = None
+    issues_identified: int = 0
+    recommendations: int = 0
+
+
+class EnhancedQueryResponse(BaseModel):
+    """Enhanced response with validation integration."""
+    query: str
+    answer: str
+    documents: List[DocumentResponse] = []
+    query_mode: QueryMode
+    analysis_structure: Optional[AnalysisStructure] = None
+    metadata_filters_used: Optional[MetadataFilter] = None
+    execution_time: float = 0.0
+    status: str = "completed"
+    job_id: str
+    mode_metadata: Optional[ModeMetadata] = None
+    validation: Optional[ValidationWorkflow] = None
+    validation_summary: Optional[ValidationSummary] = None
+    created_at: Optional[datetime] = None
+
+
+class EnhancedBackgroundJobResponse(BaseModel):
+    """Enhanced background job response."""
+    message: str
+    job_id: str
+    job_type: str = "llm_inference"
+    query_mode: QueryMode
+    expected_processing_time: int = 30  # seconds
+    status: str = "processing"
+    complexity_level: str = "simple"
+    validation_enabled: bool = False
+    validation_id: Optional[str] = None
+    validation_type: Optional[ValidationType] = None
+    created_at: Optional[datetime] = None
+
+
+# ==============================================================================
+# System Models (add these if missing)
+# ==============================================================================
+
+class QueryModeConfig(BaseModel):
+    """Configuration for a query mode."""
+    mode: QueryMode
+    name: str
+    description: str
+    icon: str
+    use_case: Optional[str] = None
+    is_default: bool = False
+    two_layer: bool = False
+    examples: List[str] = []
+
+
+class SystemCapabilities(BaseModel):
+    """System capabilities and status."""
+    available_modes: List[QueryMode]
+    validation_enabled: bool = True
+    max_query_length: int = 1000
+    supported_languages: List[str] = ["zh", "en"]
+    version: str = "1.0.0"
+    vector_store_status: str = "connected"
+    redis_status: str = "connected"
+    job_queue_status: str = "active"
+
+
+class SystemHealth(BaseModel):
+    """System health check response."""
+    status: str = "healthy"
+    timestamp: datetime
+    components: Dict[str, str] = {}
+    metrics: Dict[str, Any] = {}
+
+
+# ==============================================================================
+# Error Models (add these if missing)
+# ==============================================================================
+
+class ErrorResponse(BaseModel):
+    """Standard error response."""
+    error: str
+    detail: Optional[str] = None
+    error_code: Optional[str] = None
+    job_id: Optional[str] = None
+    timestamp: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ValidationError(BaseModel):
+    """Validation-specific error."""
+    validation_id: str
+    step_id: Optional[str] = None
+    error_type: str
+    message: str
+    recoverable: bool = True
+    suggested_action: Optional[str] = None
+
+
+# ==============================================================================
+# Additional Utility Models (add these if missing)
+# ==============================================================================
+
+class JobStatus(BaseModel):
+    """Job status information."""
+    job_id: str
+    status: str
+    progress: float = Field(ge=0.0, le=1.0)
+    current_step: Optional[str] = None
+    estimated_completion: Optional[datetime] = None
+    error: Optional[str] = None
+
+
+class QueueStatus(BaseModel):
+    """Queue status information."""
+    active_jobs: int = 0
+    pending_jobs: int = 0
+    completed_jobs_today: int = 0
+    failed_jobs_today: int = 0
+    average_processing_time: float = 0.0
+    queue_health: str = "healthy"
+
+
+class DebugInfo(BaseModel):
+    """Debug information for development."""
+    query: str
+    documents_retrieved: int
+    search_time_ms: float
+    processing_steps: List[str] = []
+    internal_metrics: Dict[str, Any] = {}
+
+
+# ==============================================================================
+# Model Configuration (add this at the end)
+# ==============================================================================
+
+# Configure all models to use enum values in JSON
+for model_class in [
+    ValidationConfig, EnhancedQueryRequest, ValidationStep, ValidationWorkflow,
+    QueryValidationResult, EnhancedQueryResponse, EnhancedBackgroundJobResponse,
+    QueryModeConfig, SystemCapabilities
+]:
+    if hasattr(model_class, 'model_config'):
+        model_class.model_config = {"use_enum_values": True}
+
+
+# ==============================================================================
+# Instructions for Integration
+# ==============================================================================
+
+"""
+To integrate these models into your existing src/models/schema.py:
+
+1. Compare with your existing file to see which models already exist
+2. Add only the missing models and enums
+3. Update existing models if they're missing fields
+4. Make sure all imports are present at the top of your file
+5. If any model exists but has different fields, merge them carefully
+
+Key models that MUST exist for the system to work:
+- QueryMode enum with all 6 values
+- EnhancedQueryRequest 
+- EnhancedQueryResponse
+- EnhancedBackgroundJobResponse
+- QueryModeConfig
+- SystemCapabilities
+- QueryValidationResult
+- ValidationConfig
+- MetadataFilter
+- DocumentResponse
+
+If you're unsure about any conflicts, you can copy this entire file as your new schema.py
+"""
