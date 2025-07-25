@@ -7,7 +7,7 @@ import logging
 from typing import Dict, List, Optional
 import statistics
 
-from src.models.schema import (
+from src.models import (
     ValidationStepResult, ValidationStepType, ValidationStatus,
     ConfidenceBreakdown, ConfidenceLevel
 )

@@ -340,45 +340,6 @@ async def get_worker_status():
         )
 
 
-# NEW: System migration info endpoint
-@app.get("/migration", tags=["Migration"])
-async def get_migration_info():
-    """Get information about the unified system migration."""
-    return {
-        "migration_status": "completed",
-        "version": "2.0.0",
-        "changes": {
-            "removed": [
-                "Normal query endpoints (/query with QueryRequest)",
-                "Separate enhanced query endpoint (/query/enhanced)"
-            ],
-            "unified": [
-                "Single query endpoint (/query with UnifiedQueryRequest)",
-                "Facts mode as default (replaces normal queries)",
-                "All responses in unified format"
-            ],
-            "benefits": [
-                "Simplified API surface",
-                "Consistent response format",
-                "Intuitive default behavior",
-                "Better user experience"
-            ]
-        },
-        "compatibility": {
-            "breaking_changes": True,
-            "legacy_models": "deprecated_but_aliased",
-            "migration_path": "update_to_unified_models"
-        },
-        "query_modes": {
-            "facts": {
-                "role": "default_mode",
-                "replaces": "normal_queries",
-                "description": "Direct verification of specifications"
-            },
-            "others": "enhanced_analysis_modes"
-        }
-    }
-
 
 # NEW: Default query mode endpoint
 @app.get("/query/default-mode", tags=["Unified Query System"])

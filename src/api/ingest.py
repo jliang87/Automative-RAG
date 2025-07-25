@@ -9,7 +9,7 @@ import json
 
 from src.core.orchestration.job_chain import job_chain, JobType
 from src.core.orchestration.job_tracker import job_tracker
-from src.models.schema import ManualIngestRequest, BackgroundJobResponse
+from src.models import ManualIngestRequest, BackgroundJobResponse  # Updated import
 
 logger = logging.getLogger(__name__)
 

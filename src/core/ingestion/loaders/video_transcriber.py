@@ -9,7 +9,7 @@ import logging
 from langchain_core.documents import Document
 from faster_whisper import WhisperModel
 
-from src.models.schema import DocumentSource
+from src.models import DocumentSource
 from src.config.settings import settings
 # ✅ FIXED IMPORT - Only import what exists
 from src.core.ingestion.loaders.enhanced_transcript_processor import EnhancedTranscriptProcessor

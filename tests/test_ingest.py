@@ -92,7 +92,7 @@ def test_process_text(vector_store):
     """Test processing manual text entry."""
 
     # Create a manual ingest request
-    from src.models.schema import DocumentMetadata, DocumentSource, ManualIngestRequest
+    from src.models import DocumentMetadata, DocumentSource, ManualIngestRequest
 
     request = ManualIngestRequest(
         content="The 2023 Toyota Camry has 208 horsepower.",

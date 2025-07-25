@@ -7,7 +7,7 @@ import logging
 from typing import Dict, List, Optional, Any
 from datetime import datetime, timedelta
 
-from src.models.schema import (
+from src.models import (
     ValidationStepType, ValidationContext, PreconditionFailure,
     ValidationGuidance, ContributionPrompt, ContributionType
 )

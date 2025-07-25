@@ -1,7 +1,7 @@
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Any, Optional
 from fastapi import APIRouter, Path, Query as FastAPIQuery, Depends
 
-from src.models.schema import (
+from src.models import (  # Updated import
     EnhancedQueryRequest,
     EnhancedQueryResponse,
     EnhancedBackgroundJobResponse,

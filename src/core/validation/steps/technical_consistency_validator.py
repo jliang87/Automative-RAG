@@ -8,7 +8,7 @@ import re
 from typing import Dict, List, Any, Optional, Tuple
 from datetime import datetime
 
-from src.models.schema import (
+from src.models import (
     ValidationStepResult, ValidationStatus, ValidationStepType,
     ValidationContext, ValidationWarning
 )

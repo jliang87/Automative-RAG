@@ -1,6 +1,8 @@
 import logging
 from typing import List, Dict, Any, Optional
 
+from src.models import QueryMode  # Updated import
+
 logger = logging.getLogger(__name__)
 
 
@@ -14,9 +16,6 @@ class SystemService:
 
     async def get_query_modes(self) -> List[Dict[str, Any]]:
         """Get available query modes."""
-        # Import here to avoid circular imports
-        from src.models.schema import QueryMode
-
         modes = [
             {
                 "mode": QueryMode.FACTS.value,
@@ -115,8 +114,6 @@ class SystemService:
 
     async def get_system_capabilities(self) -> Dict[str, Any]:
         """Get system capabilities."""
-        from src.models.schema import QueryMode
-
         # Get vector store stats
         try:
             vector_stats = self.vector_store.get_stats()

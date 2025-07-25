@@ -2,7 +2,7 @@ import logging
 from typing import Optional, List, Dict, Any
 from fastapi import HTTPException, Path
 
-from src.models.schema import (
+from src.models import (  # Updated import
     EnhancedQueryRequest,
     EnhancedQueryResponse,
     EnhancedBackgroundJobResponse,

@@ -1,7 +1,7 @@
 import streamlit as st
 import re
 from typing import List, Dict, Optional, Tuple
-from src.models.schema import QueryMode
+from src.models import QueryMode
 
 
 class SmartQuerySuggester:
