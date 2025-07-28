@@ -5,11 +5,15 @@ Multi-dimensional confidence scoring with meta-validation adjustments
 
 import logging
 from typing import Dict, List, Optional
-import statistics
+from datetime import datetime
 
 from src.models import (
     ValidationStepResult, ValidationStepType, ValidationStatus,
     ConfidenceBreakdown, ConfidenceLevel
+)
+from src.models.knowledge_models import (
+    ConfidenceWeights, ConfidenceCalculationConfig,
+    SourceAuthority, ValidationReferenceDatabase
 )
 
 logger = logging.getLogger(__name__)
@@ -17,28 +21,45 @@ logger = logging.getLogger(__name__)
 
 class ConfidenceCalculator:
     """
-    Calculates multi-dimensional confidence scores for validation results
+    Calculates multi-dimensional confidence scores using model-driven configuration
     """
 
-    def __init__(self):
-        # Default confidence weights for different step types
+    def __init__(self,
+                 config: Optional[ConfidenceCalculationConfig] = None,
+                 source_authorities: Optional[List[SourceAuthority]] = None):
+        # Use model-based configuration instead of hardcoded weights
+        self.config = config or ConfidenceCalculationConfig()
+
+        # Build authority lookup from model data
+        self.source_authority_lookup = {}
+        if source_authorities:
+            for authority in source_authorities:
+                self.source_authority_lookup[authority.domain] = authority
+
+        # Legacy compatibility - convert to dict for existing code
         self.default_weights = {
-            ValidationStepType.SOURCE_CREDIBILITY: 0.4,
-            ValidationStepType.TECHNICAL_CONSISTENCY: 0.3,
-            ValidationStepType.COMPLETENESS: 0.2,
-            ValidationStepType.CONSENSUS: 0.1,
-            ValidationStepType.LLM_INFERENCE: 0.1,
-            ValidationStepType.RETRIEVAL: 0.05
+            ValidationStepType.SOURCE_CREDIBILITY: self.config.weights.source_credibility,
+            ValidationStepType.TECHNICAL_CONSISTENCY: self.config.weights.technical_consistency,
+            ValidationStepType.COMPLETENESS: self.config.weights.completeness,
+            ValidationStepType.CONSENSUS: self.config.weights.consensus,
+            ValidationStepType.LLM_INFERENCE: self.config.weights.llm_inference,
+            ValidationStepType.RETRIEVAL: self.config.weights.retrieval
         }
 
-        # Status score multipliers
+        # Status score multipliers remain the same
         self.status_multipliers = {
             ValidationStatus.PASSED: 1.0,
             ValidationStatus.WARNING: 0.7,
             ValidationStatus.FAILED: 0.0,
-            ValidationStatus.UNVERIFIABLE: 0.0,  # Handled separately
+            ValidationStatus.UNVERIFIABLE: 0.0,
             ValidationStatus.PENDING: 0.0
         }
+
+    def get_source_authority_score(self, domain: str) -> float:
+        """Get authority score from model data instead of hardcoded lookup"""
+        if domain in self.source_authority_lookup:
+            return self.source_authority_lookup[domain].authority_score
+        return 0.5  # Default for unknown sources
 
     def calculate_confidence(
         self,

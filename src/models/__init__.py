@@ -293,6 +293,48 @@ from .system_models import (
     Notification,
 )
 
+from .knowledge_models import (
+    # Reference data models
+    AutomotiveSpecification,
+    FuelEconomyReference,
+    EngineSpecification,
+    SafetyRating,
+    VehicleDimensions,
+
+    # Authority models
+    SourceAuthority,
+    SourceAuthorityDatabase,
+
+    # Constraint models
+    PhysicsConstraint,
+    ValidationConstraints,
+
+    # Database models
+    ValidationReferenceDatabase,
+    ReferenceDataQuery,
+    ReferenceDataMatch,
+
+    # Consensus models
+    FactualClaim,
+    ConsensusAnalysisResult,
+
+    # Configuration models
+    ConfidenceWeights,
+    ConfidenceCalculationConfig,
+
+    # Auto-fetch models
+    AutoFetchTarget,
+    AutoFetchResult,
+
+    # Migration models
+    HardcodedDataMigration,
+
+    # Helper functions
+    create_epa_fuel_economy_reference,
+    create_source_authority,
+    create_physics_constraint
+)
+
 
 # ============================================================================
 # Export lists for different use cases

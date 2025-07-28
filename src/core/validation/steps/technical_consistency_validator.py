@@ -1,6 +1,6 @@
 """
-Technical Consistency Validator
-Validates technical specifications consistency for automotive information
+Technical Consistency Validator - COMPLETE UPDATED VERSION
+Validates technical specifications consistency for automotive information using models
 """
 
 import logging
@@ -12,6 +12,11 @@ from src.models import (
     ValidationStepResult, ValidationStatus, ValidationStepType,
     ValidationContext, ValidationWarning
 )
+from src.models.knowledge_models import (
+    ValidationReferenceDatabase, FuelEconomyReference, EngineSpecification,
+    SafetyRating, VehicleDimensions, PhysicsConstraint, ValidationConstraints,
+    SourceType
+)
 from .steps_readiness_checker import MetaValidator, PreconditionResult
 
 logger = logging.getLogger(__name__)
@@ -19,84 +24,269 @@ logger = logging.getLogger(__name__)
 
 class TechnicalConsistencyValidator:
     """
-    Validates consistency of technical specifications across sources
+    Validates consistency of technical specifications across sources using model-driven reference data
     """
 
-    def __init__(self, step_config: Dict[str, Any], meta_validator: MetaValidator):
+    def __init__(self,
+                 step_config: Dict[str, Any],
+                 meta_validator: MetaValidator,
+                 reference_database: Optional[ValidationReferenceDatabase] = None,
+                 physics_constraints: Optional[ValidationConstraints] = None):
         self.step_config = step_config
         self.meta_validator = meta_validator
         self.step_type = ValidationStepType.TECHNICAL_CONSISTENCY
 
-        # Reference data for validation
-        self.reference_data = self._initialize_reference_data()
-        self.physics_constraints = self._initialize_physics_constraints()
+        # Use model-based reference data instead of hardcoded dict
+        self.reference_database = reference_database or self._load_default_reference_database()
+        self.physics_constraints = physics_constraints or self._load_default_physics_constraints()
 
-    def _initialize_reference_data(self) -> Dict[str, Any]:
-        """Initialize reference technical data for validation"""
-        return {
-            "epa_fuel_economy": {
-                # Sample EPA data for validation
-                "2023_toyota_camry": {"city_mpg": 22, "highway_mpg": 32, "combined_mpg": 26},
-                "2023_honda_accord": {"city_mpg": 23, "highway_mpg": 34, "combined_mpg": 27},
-                "2023_ford_f150": {"city_mpg": 18, "highway_mpg": 24, "combined_mpg": 20},
-            },
-            "manufacturer_specs": {
-                "toyota_camry_2023": {
-                    "engine": "2.5L 4-cylinder",
-                    "horsepower": 203,
-                    "torque": 184,
-                    "transmission": "8-speed automatic",
-                    "weight": 3340
-                },
-                "honda_accord_2023": {
-                    "engine": "1.5L turbo 4-cylinder",
-                    "horsepower": 192,
-                    "torque": 192,
-                    "transmission": "CVT",
-                    "weight": 3131
-                }
-            },
-            "safety_ratings": {
-                "2023_toyota_camry": {"nhtsa_overall": 5, "iihs_top_safety_pick": True},
-                "2023_honda_accord": {"nhtsa_overall": 5, "iihs_top_safety_pick": True}
+        # Build lookup tables for performance
+        self._build_reference_lookups()
+
+    def _load_default_reference_database(self) -> ValidationReferenceDatabase:
+        """Load default reference database using models instead of hardcoded data"""
+
+        # Create model instances for EPA fuel economy data
+        fuel_economy_data = [
+            FuelEconomyReference(
+                reference_id="epa_2023_toyota_camry",
+                manufacturer="toyota",
+                model="camry",
+                year=2023,
+                city_mpg=22,
+                highway_mpg=32,
+                combined_mpg=26,
+                fuel_type="Regular Gasoline",
+                source_type=SourceType.REGULATORY,
+                source_url="https://www.fueleconomy.gov",
+                verified_date=datetime.now()
+            ),
+            FuelEconomyReference(
+                reference_id="epa_2023_honda_accord",
+                manufacturer="honda",
+                model="accord",
+                year=2023,
+                city_mpg=23,
+                highway_mpg=34,
+                combined_mpg=27,
+                fuel_type="Regular Gasoline",
+                source_type=SourceType.REGULATORY,
+                source_url="https://www.fueleconomy.gov",
+                verified_date=datetime.now()
+            ),
+            FuelEconomyReference(
+                reference_id="epa_2023_ford_f150",
+                manufacturer="ford",
+                model="f150",
+                year=2023,
+                city_mpg=18,
+                highway_mpg=24,
+                combined_mpg=20,
+                fuel_type="Regular Gasoline",
+                source_type=SourceType.REGULATORY,
+                source_url="https://www.fueleconomy.gov",
+                verified_date=datetime.now()
+            )
+        ]
+
+        # Create model instances for engine specifications
+        engine_specifications = [
+            EngineSpecification(
+                spec_id="toyota_camry_2023_engine",
+                manufacturer="toyota",
+                model="camry",
+                year=2023,
+                horsepower=203,
+                torque=184,
+                displacement=2.5,
+                engine_type="4-cylinder",
+                fuel_type="Regular Gasoline",
+                source_type=SourceType.OFFICIAL,
+                verified=True
+            ),
+            EngineSpecification(
+                spec_id="honda_accord_2023_engine",
+                manufacturer="honda",
+                model="accord",
+                year=2023,
+                horsepower=192,
+                torque=192,
+                displacement=1.5,
+                engine_type="4-cylinder Turbo",
+                fuel_type="Regular Gasoline",
+                source_type=SourceType.OFFICIAL,
+                verified=True
+            )
+        ]
+
+        # Create model instances for safety ratings
+        safety_ratings = [
+            SafetyRating(
+                rating_id="nhtsa_2023_toyota_camry",
+                manufacturer="toyota",
+                model="camry",
+                year=2023,
+                nhtsa_overall=5,
+                nhtsa_frontal=5,
+                nhtsa_side=5,
+                nhtsa_rollover=4,
+                iihs_top_safety_pick=True,
+                source_type=SourceType.REGULATORY,
+                test_date=datetime.now()
+            ),
+            SafetyRating(
+                rating_id="nhtsa_2023_honda_accord",
+                manufacturer="honda",
+                model="accord",
+                year=2023,
+                nhtsa_overall=5,
+                nhtsa_frontal=5,
+                nhtsa_side=5,
+                nhtsa_rollover=4,
+                iihs_top_safety_pick=True,
+                source_type=SourceType.REGULATORY,
+                test_date=datetime.now()
+            )
+        ]
+
+        # Create model instances for vehicle dimensions
+        vehicle_dimensions = [
+            VehicleDimensions(
+                spec_id="toyota_camry_2023_dimensions",
+                manufacturer="toyota",
+                model="camry",
+                year=2023,
+                length=192.7,
+                width=72.4,
+                height=56.9,
+                wheelbase=111.2,
+                curb_weight=3340,
+                cargo_volume=15.1,
+                source_type=SourceType.OFFICIAL,
+                verified=True
+            )
+        ]
+
+        total_entries = len(fuel_economy_data) + len(engine_specifications) + len(safety_ratings) + len(vehicle_dimensions)
+
+        return ValidationReferenceDatabase(
+            fuel_economy_data=fuel_economy_data,
+            engine_specifications=engine_specifications,
+            safety_ratings=safety_ratings,
+            vehicle_dimensions=vehicle_dimensions,
+            last_updated=datetime.now(),
+            total_entries=total_entries,
+            coverage_stats={
+                "fuel_economy": len(fuel_economy_data),
+                "engine_specs": len(engine_specifications),
+                "safety_ratings": len(safety_ratings),
+                "dimensions": len(vehicle_dimensions)
             }
-        }
+        )
 
-    def _initialize_physics_constraints(self) -> Dict[str, Dict[str, Any]]:
-        """Initialize physics constraints for validation"""
-        return {
-            "fuel_economy": {
-                "reasonable_ranges": {
+    def _load_default_physics_constraints(self) -> ValidationConstraints:
+        """Load physics constraints using models instead of hardcoded data"""
+
+        # Fuel economy physics constraints
+        fuel_economy_constraints = [
+            PhysicsConstraint(
+                constraint_id="highway_vs_city_mpg",
+                constraint_type="fuel_economy",
+                rule_expression="highway_mpg >= city_mpg",
+                description="Highway MPG should be greater than or equal to city MPG",
+                severity="warning",
+                applies_to=["gasoline", "hybrid"],
+                reasonable_ranges={
                     "city_mpg": {"min": 8, "max": 60},
                     "highway_mpg": {"min": 10, "max": 80},
                     "combined_mpg": {"min": 9, "max": 70}
-                },
-                "physics_rules": [
-                    "highway_mpg >= city_mpg",  # Highway typically better than city
-                    "city_mpg * 0.8 <= combined_mpg <= highway_mpg * 0.8 + city_mpg * 0.2"
-                    # Combined is weighted average
-                ]
-            },
-            "engine_specs": {
-                "reasonable_ranges": {
+                }
+            ),
+            PhysicsConstraint(
+                constraint_id="combined_mpg_average",
+                constraint_type="fuel_economy",
+                rule_expression="city_mpg * 0.8 <= combined_mpg <= highway_mpg * 0.8 + city_mpg * 0.2",
+                description="Combined MPG should be a weighted average of city and highway",
+                severity="warning",
+                applies_to=["all"],
+                reasonable_ranges={}
+            )
+        ]
+
+        # Engine physics constraints
+        engine_constraints = [
+            PhysicsConstraint(
+                constraint_id="positive_power_values",
+                constraint_type="engine",
+                rule_expression="horsepower > 0 AND torque > 0",
+                description="Engine power values must be positive",
+                severity="error",
+                applies_to=["all"],
+                reasonable_ranges={
                     "horsepower": {"min": 100, "max": 800},
                     "torque": {"min": 100, "max": 700},
-                    "displacement": {"min": 1.0, "max": 8.0}  # Liters
-                },
-                "physics_rules": [
-                    "horsepower > 0",
-                    "torque > 0"
-                ]
-            },
-            "vehicle_dimensions": {
-                "reasonable_ranges": {
-                    "weight": {"min": 2000, "max": 8000},  # lbs
-                    "length": {"min": 140, "max": 250},  # inches
-                    "width": {"min": 60, "max": 90},  # inches
-                    "height": {"min": 50, "max": 85}  # inches
+                    "displacement": {"min": 1.0, "max": 8.0}
                 }
-            }
-        }
+            )
+        ]
+
+        # Dimension constraints
+        dimension_constraints = [
+            PhysicsConstraint(
+                constraint_id="reasonable_vehicle_dimensions",
+                constraint_type="dimensions",
+                rule_expression="length > 0 AND width > 0 AND height > 0 AND weight > 0",
+                description="Vehicle dimensions must be positive values",
+                severity="error",
+                applies_to=["all"],
+                reasonable_ranges={
+                    "weight": {"min": 2000, "max": 8000},
+                    "length": {"min": 140, "max": 250},
+                    "width": {"min": 60, "max": 90},
+                    "height": {"min": 50, "max": 85}
+                }
+            )
+        ]
+
+        return ValidationConstraints(
+            fuel_economy_constraints=fuel_economy_constraints,
+            engine_constraints=engine_constraints,
+            dimension_constraints=dimension_constraints,
+            performance_constraints=[],
+            default_tolerance=0.1,
+            strict_mode=False
+        )
+
+    def _build_reference_lookups(self):
+        """Build lookup tables for efficient reference data access"""
+        self.fuel_economy_lookup = {}
+        self.engine_spec_lookup = {}
+        self.safety_rating_lookup = {}
+        self.dimension_lookup = {}
+
+        # Build fuel economy lookup
+        for ref in self.reference_database.fuel_economy_data:
+            key = self._build_vehicle_key_from_ref(ref.manufacturer, ref.model, ref.year)
+            self.fuel_economy_lookup[key] = ref
+
+        # Build engine spec lookup
+        for ref in self.reference_database.engine_specifications:
+            key = self._build_vehicle_key_from_ref(ref.manufacturer, ref.model, ref.year)
+            self.engine_spec_lookup[key] = ref
+
+        # Build safety rating lookup
+        for ref in self.reference_database.safety_ratings:
+            key = self._build_vehicle_key_from_ref(ref.manufacturer, ref.model, ref.year)
+            self.safety_rating_lookup[key] = ref
+
+        # Build dimension lookup
+        for ref in self.reference_database.vehicle_dimensions:
+            key = self._build_vehicle_key_from_ref(ref.manufacturer, ref.model, ref.year)
+            self.dimension_lookup[key] = ref
+
+    def _build_vehicle_key_from_ref(self, manufacturer: str, model: str, year: int) -> str:
+        """Build vehicle key from reference data"""
+        return f"{year}_{manufacturer.lower()}_{model.lower()}"
 
     async def execute(self, context: ValidationContext) -> ValidationStepResult:
         """Execute technical consistency validation"""
@@ -124,7 +314,7 @@ class TechnicalConsistencyValidator:
             return self._create_error_result(start_time, str(e))
 
     async def _perform_validation(self, context: ValidationContext) -> ValidationStepResult:
-        """Perform the actual technical consistency validation"""
+        """Perform the actual technical consistency validation using models"""
 
         documents = context.documents
         warnings = []
@@ -138,11 +328,12 @@ class TechnicalConsistencyValidator:
                 extracted_specs.append(specs)
                 sources_analyzed.append(specs.get("source_id", f"document_{i}"))
 
-        # Perform consistency checks
+        # Perform consistency checks using model-driven validation
         consistency_results = {
             "fuel_economy_consistency": self._check_fuel_economy_consistency(extracted_specs),
             "engine_specs_consistency": self._check_engine_specs_consistency(extracted_specs),
             "safety_ratings_consistency": self._check_safety_ratings_consistency(extracted_specs),
+            "dimension_consistency": self._check_dimension_consistency(extracted_specs),
             "physics_validation": self._validate_physics_constraints(extracted_specs),
             "cross_reference_validation": self._validate_against_reference_data(extracted_specs, context)
         }
@@ -214,7 +405,11 @@ class TechnicalConsistencyValidator:
             "reference_data_matches": len(reference_mismatches) == 0,
             "official_sources_used": sum(1 for spec in extracted_specs
                                          if spec.get("source_type") == "official"),
-            "specifications_found": self._summarize_specifications(extracted_specs)
+            "specifications_found": self._summarize_specifications(extracted_specs),
+            "reference_database_entries": self.reference_database.total_entries,
+            "physics_constraints_applied": len(self.physics_constraints.fuel_economy_constraints +
+                                             self.physics_constraints.engine_constraints +
+                                             self.physics_constraints.dimension_constraints)
         }
 
         return ValidationStepResult(
@@ -229,6 +424,317 @@ class TechnicalConsistencyValidator:
             warnings=warnings,
             sources_used=sources_analyzed
         )
+
+    def _validate_against_reference_data(self, extracted_specs: List[Dict], context: ValidationContext) -> Dict[str, Any]:
+        """Validate extracted specifications against model-based reference databases"""
+
+        issues = []
+        matches_found = 0
+
+        # Try to match vehicle from context
+        vehicle_key = self._build_vehicle_key(context)
+
+        for spec in extracted_specs:
+            source_id = spec["source_id"]
+
+            # Check fuel economy against EPA data using models
+            if "fuel_economy" in spec["extracted_specs"]:
+                epa_ref = self._find_fuel_economy_reference(context, vehicle_key)
+                if epa_ref:
+                    matches_found += 1
+                    fuel_issues = self._compare_with_epa_reference(
+                        spec["extracted_specs"]["fuel_economy"], epa_ref, source_id
+                    )
+                    issues.extend(fuel_issues)
+
+            # Check engine specs against manufacturer data using models
+            if "engine" in spec["extracted_specs"]:
+                engine_ref = self._find_engine_reference(context, vehicle_key)
+                if engine_ref:
+                    matches_found += 1
+                    engine_issues = self._compare_with_engine_reference(
+                        spec["extracted_specs"]["engine"], engine_ref, source_id
+                    )
+                    issues.extend(engine_issues)
+
+            # Check safety ratings using models
+            if "safety" in spec["extracted_specs"]:
+                safety_ref = self._find_safety_reference(context, vehicle_key)
+                if safety_ref:
+                    matches_found += 1
+                    safety_issues = self._compare_with_safety_reference(
+                        spec["extracted_specs"]["safety"], safety_ref, source_id
+                    )
+                    issues.extend(safety_issues)
+
+        return {
+            "status": "inconsistent" if issues else "consistent",
+            "issues": issues,
+            "reference_matches": matches_found,
+            "total_reference_entries_checked": self.reference_database.total_entries
+        }
+
+    def _find_fuel_economy_reference(self, context: ValidationContext, vehicle_key: Optional[str]) -> Optional[FuelEconomyReference]:
+        """Find matching fuel economy reference using model-based lookup"""
+        if vehicle_key and vehicle_key in self.fuel_economy_lookup:
+            return self.fuel_economy_lookup[vehicle_key]
+
+        # Fallback to manual search if key lookup fails
+        for ref in self.reference_database.fuel_economy_data:
+            if self._matches_vehicle_context(ref.manufacturer, ref.model, ref.year, context):
+                return ref
+        return None
+
+    def _find_engine_reference(self, context: ValidationContext, vehicle_key: Optional[str]) -> Optional[EngineSpecification]:
+        """Find matching engine specification using model-based lookup"""
+        if vehicle_key and vehicle_key in self.engine_spec_lookup:
+            return self.engine_spec_lookup[vehicle_key]
+
+        # Fallback to manual search
+        for ref in self.reference_database.engine_specifications:
+            if self._matches_vehicle_context(ref.manufacturer, ref.model, ref.year, context):
+                return ref
+        return None
+
+    def _find_safety_reference(self, context: ValidationContext, vehicle_key: Optional[str]) -> Optional[SafetyRating]:
+        """Find matching safety rating using model-based lookup"""
+        if vehicle_key and vehicle_key in self.safety_rating_lookup:
+            return self.safety_rating_lookup[vehicle_key]
+
+        # Fallback to manual search
+        for ref in self.reference_database.safety_ratings:
+            if self._matches_vehicle_context(ref.manufacturer, ref.model, ref.year, context):
+                return ref
+        return None
+
+    def _matches_vehicle_context(self, ref_manufacturer: str, ref_model: str, ref_year: int, context: ValidationContext) -> bool:
+        """Check if reference data matches vehicle context"""
+        manufacturer_match = (not context.manufacturer or
+                            ref_manufacturer.lower() == context.manufacturer.lower())
+        model_match = (not context.model or
+                      ref_model.lower() == context.model.lower())
+        year_match = (not context.year or ref_year == context.year)
+
+        return manufacturer_match and model_match and year_match
+
+    def _compare_with_epa_reference(self, extracted_fuel: Dict, epa_ref: FuelEconomyReference, source_id: str) -> List[Dict]:
+        """Compare extracted fuel economy with EPA reference using models"""
+        issues = []
+        tolerance = 2  # Allow 2 MPG tolerance
+
+        # Compare city MPG
+        if "city_mpg" in extracted_fuel and epa_ref.city_mpg:
+            if abs(extracted_fuel["city_mpg"] - epa_ref.city_mpg) > tolerance:
+                issues.append({
+                    "message": f"EPA data mismatch for city MPG",
+                    "explanation": f"Source: {extracted_fuel['city_mpg']} MPG, EPA: {epa_ref.city_mpg} MPG",
+                    "suggestion": "Verify against official EPA database",
+                    "severity": "medium",
+                    "source": source_id,
+                    "reference_id": epa_ref.reference_id
+                })
+
+        # Compare highway MPG
+        if "highway_mpg" in extracted_fuel and epa_ref.highway_mpg:
+            if abs(extracted_fuel["highway_mpg"] - epa_ref.highway_mpg) > tolerance:
+                issues.append({
+                    "message": f"EPA data mismatch for highway MPG",
+                    "explanation": f"Source: {extracted_fuel['highway_mpg']} MPG, EPA: {epa_ref.highway_mpg} MPG",
+                    "suggestion": "Verify against official EPA database",
+                    "severity": "medium",
+                    "source": source_id,
+                    "reference_id": epa_ref.reference_id
+                })
+
+        # Compare combined MPG
+        if "combined_mpg" in extracted_fuel and epa_ref.combined_mpg:
+            if abs(extracted_fuel["combined_mpg"] - epa_ref.combined_mpg) > tolerance:
+                issues.append({
+                    "message": f"EPA data mismatch for combined MPG",
+                    "explanation": f"Source: {extracted_fuel['combined_mpg']} MPG, EPA: {epa_ref.combined_mpg} MPG",
+                    "suggestion": "Verify against official EPA database",
+                    "severity": "medium",
+                    "source": source_id,
+                    "reference_id": epa_ref.reference_id
+                })
+
+        return issues
+
+    def _compare_with_engine_reference(self, extracted_engine: Dict, engine_ref: EngineSpecification, source_id: str) -> List[Dict]:
+        """Compare extracted engine specs with reference using models"""
+        issues = []
+
+        # Compare horsepower (allow 5% tolerance)
+        if "horsepower" in extracted_engine and engine_ref.horsepower:
+            tolerance = engine_ref.horsepower * 0.05
+            if abs(extracted_engine["horsepower"] - engine_ref.horsepower) > tolerance:
+                issues.append({
+                    "message": "Horsepower mismatch with reference data",
+                    "explanation": f"Source: {extracted_engine['horsepower']} HP, Reference: {engine_ref.horsepower} HP",
+                    "suggestion": "Verify against official manufacturer specifications",
+                    "severity": "medium",
+                    "source": source_id,
+                    "reference_id": engine_ref.spec_id
+                })
+
+        # Compare torque (allow 5% tolerance)
+        if "torque" in extracted_engine and engine_ref.torque:
+            tolerance = engine_ref.torque * 0.05
+            if abs(extracted_engine["torque"] - engine_ref.torque) > tolerance:
+                issues.append({
+                    "message": "Torque mismatch with reference data",
+                    "explanation": f"Source: {extracted_engine['torque']} lb-ft, Reference: {engine_ref.torque} lb-ft",
+                    "suggestion": "Verify against official manufacturer specifications",
+                    "severity": "medium",
+                    "source": source_id,
+                    "reference_id": engine_ref.spec_id
+                })
+
+        return issues
+
+    def _compare_with_safety_reference(self, extracted_safety: Dict, safety_ref: SafetyRating, source_id: str) -> List[Dict]:
+        """Compare extracted safety ratings with reference using models"""
+        issues = []
+
+        # Compare NHTSA overall rating
+        if "nhtsa_overall" in extracted_safety and safety_ref.nhtsa_overall:
+            if extracted_safety["nhtsa_overall"] != safety_ref.nhtsa_overall:
+                issues.append({
+                    "message": "NHTSA overall rating mismatch",
+                    "explanation": f"Source: {extracted_safety['nhtsa_overall']} stars, Reference: {safety_ref.nhtsa_overall} stars",
+                    "suggestion": "Verify against official NHTSA database",
+                    "severity": "high",
+                    "source": source_id,
+                    "reference_id": safety_ref.rating_id
+                })
+
+        # Compare IIHS Top Safety Pick status
+        if "iihs_top_safety_pick" in extracted_safety and safety_ref.iihs_top_safety_pick is not None:
+            if extracted_safety["iihs_top_safety_pick"] != safety_ref.iihs_top_safety_pick:
+                issues.append({
+                    "message": "IIHS Top Safety Pick status mismatch",
+                    "explanation": f"Source: {extracted_safety['iihs_top_safety_pick']}, Reference: {safety_ref.iihs_top_safety_pick}",
+                    "suggestion": "Verify against official IIHS database",
+                    "severity": "medium",
+                    "source": source_id,
+                    "reference_id": safety_ref.rating_id
+                })
+
+        return issues
+
+    def _validate_physics_constraints(self, extracted_specs: List[Dict]) -> Dict[str, Any]:
+        """Validate extracted specifications against physics constraints using models"""
+
+        issues = []
+
+        for spec in extracted_specs:
+            source_id = spec["source_id"]
+
+            # Validate fuel economy physics using model constraints
+            if "fuel_economy" in spec["extracted_specs"]:
+                fuel_data = spec["extracted_specs"]["fuel_economy"]
+                fuel_issues = self._validate_fuel_economy_physics_with_models(fuel_data, source_id)
+                issues.extend(fuel_issues)
+
+            # Validate engine specs physics using model constraints
+            if "engine" in spec["extracted_specs"]:
+                engine_data = spec["extracted_specs"]["engine"]
+                engine_issues = self._validate_engine_physics_with_models(engine_data, source_id)
+                issues.extend(engine_issues)
+
+            # Validate dimensions physics using model constraints
+            if "dimensions" in spec["extracted_specs"]:
+                dimension_data = spec["extracted_specs"]["dimensions"]
+                dimension_issues = self._validate_dimension_physics_with_models(dimension_data, source_id)
+                issues.extend(dimension_issues)
+
+        return {
+            "status": "inconsistent" if issues else "consistent",
+            "issues": issues,
+            "physics_checks_performed": len(extracted_specs),
+            "constraints_applied": len(self.physics_constraints.fuel_economy_constraints +
+                                    self.physics_constraints.engine_constraints +
+                                    self.physics_constraints.dimension_constraints)
+        }
+
+    def _validate_fuel_economy_physics_with_models(self, fuel_data: Dict, source_id: str) -> List[Dict]:
+        """Validate fuel economy data against model-based physics constraints"""
+
+        issues = []
+
+        for constraint in self.physics_constraints.fuel_economy_constraints:
+            # Check reasonable ranges
+            for mpg_type, value in fuel_data.items():
+                if mpg_type in constraint.reasonable_ranges:
+                    range_constraint = constraint.reasonable_ranges[mpg_type]
+                    if not (range_constraint["min"] <= value <= range_constraint["max"]):
+                        issues.append({
+                            "message": f"Unrealistic {mpg_type}: {value}",
+                            "explanation": f"Value outside reasonable range ({range_constraint['min']}-{range_constraint['max']})",
+                            "suggestion": "Verify this specification",
+                            "severity": "high" if constraint.severity == "error" else "medium",
+                            "source": source_id,
+                            "constraint_id": constraint.constraint_id
+                        })
+
+            # Check physics rules
+            if constraint.rule_expression == "highway_mpg >= city_mpg":
+                if "city_mpg" in fuel_data and "highway_mpg" in fuel_data:
+                    if fuel_data["highway_mpg"] < fuel_data["city_mpg"]:
+                        issues.append({
+                            "message": "Highway MPG lower than city MPG",
+                            "explanation": f"Highway: {fuel_data['highway_mpg']}, City: {fuel_data['city_mpg']}",
+                            "suggestion": constraint.description,
+                            "severity": "medium" if constraint.severity == "warning" else "high",
+                            "source": source_id,
+                            "constraint_id": constraint.constraint_id
+                        })
+
+        return issues
+
+    def _validate_engine_physics_with_models(self, engine_data: Dict, source_id: str) -> List[Dict]:
+        """Validate engine specifications against model-based physics constraints"""
+
+        issues = []
+
+        for constraint in self.physics_constraints.engine_constraints:
+            # Check reasonable ranges
+            for spec_type, value in engine_data.items():
+                if spec_type in constraint.reasonable_ranges:
+                    range_constraint = constraint.reasonable_ranges[spec_type]
+                    if not (range_constraint["min"] <= value <= range_constraint["max"]):
+                        issues.append({
+                            "message": f"Unrealistic {spec_type}: {value}",
+                            "explanation": f"Value outside reasonable range ({range_constraint['min']}-{range_constraint['max']})",
+                            "suggestion": "Verify this specification",
+                            "severity": "high" if constraint.severity == "error" else "medium",
+                            "source": source_id,
+                            "constraint_id": constraint.constraint_id
+                        })
+
+        return issues
+
+    def _validate_dimension_physics_with_models(self, dimension_data: Dict, source_id: str) -> List[Dict]:
+        """Validate dimension data against model-based physics constraints"""
+
+        issues = []
+
+        for constraint in self.physics_constraints.dimension_constraints:
+            # Check reasonable ranges
+            for dim_type, value in dimension_data.items():
+                if dim_type in constraint.reasonable_ranges:
+                    range_constraint = constraint.reasonable_ranges[dim_type]
+                    if not (range_constraint["min"] <= value <= range_constraint["max"]):
+                        issues.append({
+                            "message": f"Unrealistic {dim_type}: {value}",
+                            "explanation": f"Value outside reasonable range ({range_constraint['min']}-{range_constraint['max']})",
+                            "suggestion": "Verify this specification",
+                            "severity": "high" if constraint.severity == "error" else "medium",
+                            "source": source_id,
+                            "constraint_id": constraint.constraint_id
+                        })
+
+        return issues
 
     def _extract_technical_specs(self, doc: Dict[str, Any], doc_index: int) -> Optional[Dict[str, Any]]:
         """Extract technical specifications from a document"""
