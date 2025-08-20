@@ -8,9 +8,6 @@ from src.config.settings import settings
 from src.core.query.retrieval.vectorstore import QdrantStore
 from src.core.orchestration.job_tracker import JobTracker
 
-# Import the controllers (services will be imported conditionally)
-from src.controllers.query_controller import QueryController, ValidationController, SystemController
-
 # Configure logging
 logger = logging.getLogger(__name__)
 
@@ -119,35 +116,12 @@ def init_services():
 
     # Import services dynamically to avoid circular imports
     try:
-        if validation_service is None:
-            logger.info("🚀 Initializing Validation Service...")
-            from src.services.validation_service import ValidationService
-            validation_service = ValidationService(
-                redis_client=get_redis_client(),
-                job_tracker=get_job_tracker()
-            )
-            logger.info("✅ Validation Service Initialized!")
-
-        if orchestration_service is None:
-            logger.info("🚀 Initializing Orchestration Service...")
-            from src.services.orchestration_service import OrchestrationService
-            orchestration_service = OrchestrationService(
-                vector_store=get_vector_store(),
-                job_tracker=get_job_tracker()
-            )
-            logger.info("✅ Orchestration Service Initialized!")
 
         if document_processing_service is None:
             logger.info("🚀 Initializing Document Processing Service...")
-            from src.services.document_processing_service import DocumentProcessingService
+            from src.services.document_service import DocumentProcessingService
             document_processing_service = DocumentProcessingService()
             logger.info("✅ Document Processing Service Initialized!")
-
-        if response_processing_service is None:
-            logger.info("🚀 Initializing Response Processing Service...")
-            from src.services.response_processing_service import ResponseProcessingService
-            response_processing_service = ResponseProcessingService()
-            logger.info("✅ Response Processing Service Initialized!")
 
         if system_service is None:
             logger.info("🚀 Initializing System Service...")

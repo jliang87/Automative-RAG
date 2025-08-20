@@ -46,49 +46,6 @@ from .query_models import (
     QueryValidationResult,
 )
 
-# ============================================================================
-# Import validation models
-# ============================================================================
-from .validation_models import (
-    # Warning and error models
-    ValidationWarning,
-    PreconditionFailure,
-    ValidationGuidance,
-    ContributionPrompt,
-
-    # Step and chain results
-    ValidationStepResult,
-    ConfidenceBreakdown,
-    ValidationChainResult,
-
-    # User interaction models
-    UserChoice,
-    UserContribution,
-    LearningCredit,
-    ValidationUpdate,
-
-    # Configuration models
-    ValidationStepConfig,
-    ValidationPipelineConfig,
-
-    # Main workflow models
-    ValidationWorkflow,
-    ValidationContext,
-
-    # Progress and UI models
-    ValidationProgressResponse,
-    UserChoiceRequest,
-    UserChoiceResponse,
-    ValidationRestartRequest,
-
-    # Knowledge base models
-    AutomotiveReference,
-    SourceAuthority,
-
-    # Utility functions
-    create_validation_step_result,
-    create_pipeline_config,
-)
 
 # ============================================================================
 # Import document models
@@ -183,53 +140,6 @@ from .job_models import (
     JobStatistics,
 )
 
-# ============================================================================
-# Import auth models
-# ============================================================================
-from .auth_models import (
-    # Core auth models
-    TokenResponse,
-    TokenRequest,
-    UserInfo,
-    UserSession,
-    Permission,
-    Role,
-
-    # API key models
-    APIKey,
-    APIKeyRequest,
-    APIKeyResponse,
-
-    # OAuth models
-    OAuthProvider,
-    OAuthToken,
-    ExternalUserInfo,
-
-    # Security models
-    LoginAttempt,
-    SecurityEvent,
-    AuditLog,
-
-    # Password models
-    PasswordPolicy,
-    PasswordReset,
-    PasswordChangeRequest,
-    PasswordResetRequest,
-
-    # MFA models
-    MFADevice,
-    MFAChallenge,
-    MFAVerification,
-
-    # Rate limiting models
-    RateLimit,
-    RateLimitStatus,
-    SecuritySettings,
-
-    # Error models
-    AuthenticationError,
-    AuthorizationError,
-)
 
 # ============================================================================
 # Import system models
@@ -293,47 +203,6 @@ from .system_models import (
     Notification,
 )
 
-from .knowledge_models import (
-    # Reference data models
-    AutomotiveSpecification,
-    FuelEconomyReference,
-    EngineSpecification,
-    SafetyRating,
-    VehicleDimensions,
-
-    # Authority models
-    SourceAuthority,
-    SourceAuthorityDatabase,
-
-    # Constraint models
-    PhysicsConstraint,
-    ValidationConstraints,
-
-    # Database models
-    ValidationReferenceDatabase,
-    ReferenceDataQuery,
-    ReferenceDataMatch,
-
-    # Consensus models
-    FactualClaim,
-    ConsensusAnalysisResult,
-
-    # Configuration models
-    ConfidenceWeights,
-    ConfidenceCalculationConfig,
-
-    # Auto-fetch models
-    AutoFetchTarget,
-    AutoFetchResult,
-
-    # Migration models
-    HardcodedDataMigration,
-
-    # Helper functions
-    create_epa_fuel_economy_reference,
-    create_source_authority,
-    create_physics_constraint
-)
 
 
 # ============================================================================
@@ -394,32 +263,6 @@ __all__ = [
     "EnhancedQueryResponse",
     "EnhancedBackgroundJobResponse",
 
-    # Consolidated validation models
-    "ValidationWorkflow",
-    "ValidationConfig",
-    "ValidationStepResult",
-    "ValidationContext",
-    "UserChoice",
-    "LearningCredit",
-    "ValidationUpdate",
-    "UserContribution",
-    "ValidationProgressResponse",
-    "UserChoiceRequest",
-    "UserChoiceResponse",
-    "ValidationRestartRequest",
-
-    # Validation support models
-    "ValidationWarning",
-    "PreconditionFailure",
-    "ValidationGuidance",
-    "ContributionPrompt",
-    "ConfidenceBreakdown",
-    "ValidationChainResult",
-    "ValidationStepConfig",
-    "ValidationPipelineConfig",
-    "AutomotiveReference",
-    "SourceAuthority",
-
     # Supporting models
     "DocumentResponse",
     "QueryModeConfig",
@@ -435,10 +278,6 @@ __all__ = [
     "ManualIngestRequest",
     "IngestResponse",
     "DocumentMetadata",
-
-    # Auth models
-    "TokenResponse",
-    "TokenRequest",
 
     # Job models
     "JobDetails",

@@ -10,7 +10,6 @@ from src.models import (  # Updated import
     QueryValidationResult,
     QueryMode
 )
-from src.controllers.query_controller import QueryController, ValidationController, SystemController
 
 # Fixed imports - use individual controller dependencies
 from src.api.dependencies import get_query_controller, get_validation_controller, get_system_controller
